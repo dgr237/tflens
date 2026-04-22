@@ -38,6 +38,13 @@ Two modes:
 			if len(args) == 1 {
 				ws = args[0]
 			}
+			if base == BranchAutoKeyword {
+				auto, err := resolveAutoBase(ws)
+				if err != nil {
+					return err
+				}
+				base = auto
+			}
 			return runDiffBranch(cmd, ws, base)
 		}
 		if len(args) != 2 {
@@ -50,7 +57,7 @@ Two modes:
 
 func init() {
 	diffCmd.Flags().String("branch", "",
-		"compare the workspace's module calls against git ref <base> (e.g. main)")
+		"compare the workspace's module calls against git ref <base>; pass 'auto' to detect (@{upstream} → origin/HEAD → main → master)")
 	rootCmd.AddCommand(diffCmd)
 }
 
@@ -141,7 +148,7 @@ func runDiffBranch(cmd *cobra.Command, workspace, baseRef string) error {
 	defer cleanup()
 
 	pairs := pairModuleCalls(oldProj, newProj)
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].name < pairs[j].name })
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
 
 	results := make([]branchModuleResult, 0, len(pairs))
 	totalBreaking := 0
@@ -221,14 +228,14 @@ func printBranchResults(baseRef string, results []branchModuleResult) {
 func printOneBranchResult(r branchModuleResult) {
 	switch r.pair.status {
 	case statusAdded:
-		fmt.Printf("Module %q: ADDED (source=%s", r.pair.name, r.pair.newSource)
+		fmt.Printf("Module %q: ADDED (source=%s", r.pair.key, r.pair.newSource)
 		if r.pair.newVersion != "" {
 			fmt.Printf(", version=%s", r.pair.newVersion)
 		}
 		fmt.Println(")")
 		return
 	case statusRemoved:
-		fmt.Printf("Module %q: REMOVED (was source=%s", r.pair.name, r.pair.oldSource)
+		fmt.Printf("Module %q: REMOVED (was source=%s", r.pair.key, r.pair.oldSource)
 		if r.pair.oldVersion != "" {
 			fmt.Printf(", version=%s", r.pair.oldVersion)
 		}
@@ -237,7 +244,7 @@ func printOneBranchResult(r branchModuleResult) {
 	}
 
 	// changed
-	fmt.Printf("Module %q:", r.pair.name)
+	fmt.Printf("Module %q:", r.pair.key)
 	if r.pair.oldSource != r.pair.newSource {
 		fmt.Printf(" source %s → %s", r.pair.oldSource, r.pair.newSource)
 	}
@@ -297,7 +304,7 @@ func buildBranchJSON(baseRef, workspace string, results []branchModuleResult) an
 			continue
 		}
 		entry := branchModuleJSON{
-			Name:       r.pair.name,
+			Name:       r.pair.key,
 			Status:     statusString(r.pair.status),
 			OldSource:  r.pair.oldSource,
 			OldVersion: r.pair.oldVersion,

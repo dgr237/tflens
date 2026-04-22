@@ -92,6 +92,41 @@ func gitShowPrefix(cwd string) (string, error) {
 	return strings.TrimRight(strings.TrimSpace(out), "/"), nil
 }
 
+// BranchAutoKeyword is the user-facing keyword that triggers base-ref
+// auto-detection, i.e. `tflens diff --branch auto`. Chosen over pflag's
+// NoOptDefVal because that would make `--branch main <ws>` parse as
+// `--branch=<auto>` plus a positional `main` — worse UX than an
+// explicit keyword.
+const BranchAutoKeyword = "auto"
+
+// resolveAutoBase picks a sensible base ref for branch mode when the
+// user passed --branch with no value. Tries (in order): the current
+// branch's upstream, origin/HEAD's symbolic target, then bare "main"
+// and "master". Returns the first resolvable ref as a human-readable
+// name (e.g. "origin/main"). Returns an error if nothing matches so the
+// user knows they need to pass --branch <ref> explicitly.
+func resolveAutoBase(workspace string) (string, error) {
+	if out, err := runGit(workspace, "rev-parse", "--abbrev-ref", "@{upstream}"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			return ref, nil
+		}
+	}
+	if out, err := runGit(workspace, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
+		ref := strings.TrimSpace(out)
+		// If origin/HEAD is unset, git either errors or echoes the
+		// ref name back. Reject the echo so we fall through.
+		if ref != "" && ref != "origin/HEAD" {
+			return ref, nil
+		}
+	}
+	for _, ref := range []string{"main", "master"} {
+		if err := gitRevParse(workspace, ref); err == nil {
+			return ref, nil
+		}
+	}
+	return "", fmt.Errorf("could not auto-detect base ref (tried @{upstream}, origin/HEAD, main, master); pass --branch <ref> explicitly")
+}
+
 func gitWorktreeAdd(top, dest, ref string) error {
 	_, err := runGit(top, "worktree", "add", "--detach", "--quiet", dest, ref)
 	if err != nil {
@@ -128,78 +163,124 @@ const (
 	statusRemoved                          // present in old, absent in new
 )
 
-// modulePair holds a paired module call from old and new workspaces.
-// For statusAdded, oldNode is nil. For statusRemoved, newNode is nil.
+// modulePair describes one module call's state across old and new
+// workspaces. Calls are identified by their dotted key path from the
+// root workspace — e.g. "vpc" for a root-level call, "vpc.sg" for a
+// sub-module's call to "sg".
 type modulePair struct {
-	name                   string
-	status                 moduleCallStatus
+	key       string // dotted path, e.g. "vpc.sg"
+	localName string // leaf segment ("sg") — the call name as declared in its parent
+	status    moduleCallStatus
+
 	oldSource, newSource   string
 	oldVersion, newVersion string
-	oldNode, newNode       *loader.ModuleNode
+
+	// Parents are the ModuleNodes containing the call (i.e. the modules
+	// with the `module "<localName>" {}` block). Used for whatif's
+	// CrossValidateCall. nil when the call does not exist on that side.
+	oldParent, newParent *loader.ModuleNode
+	// Children are the resolved module nodes on each side. nil when the
+	// call does not exist, or when the source did not resolve (e.g.
+	// --offline against a registry source).
+	oldNode, newNode *loader.ModuleNode
 }
 
-// pairModuleCalls joins the root-level module calls of two projects by
-// name, producing one modulePair per unique call name.
-func pairModuleCalls(oldProj, newProj *loader.Project) []modulePair {
-	oldCalls := rootModuleCalls(oldProj)
-	newCalls := rootModuleCalls(newProj)
+// collectedCall bundles everything we record per module call while
+// walking a project tree.
+type collectedCall struct {
+	source, version string
+	parent          *loader.ModuleNode
+	child           *loader.ModuleNode // may be nil when the call did not resolve
+}
 
-	names := map[string]struct{}{}
-	for n := range oldCalls {
-		names[n] = struct{}{}
+// collectModuleCalls walks p's module tree and returns every module call
+// keyed by its dotted path from the root.
+func collectModuleCalls(p *loader.Project) map[string]collectedCall {
+	out := map[string]collectedCall{}
+	if p == nil || p.Root == nil {
+		return out
 	}
-	for n := range newCalls {
-		names[n] = struct{}{}
+	var walk func(prefix string, node *loader.ModuleNode)
+	walk = func(prefix string, node *loader.ModuleNode) {
+		if node == nil || node.Module == nil {
+			return
+		}
+		for _, e := range node.Module.Filter(analysis.KindModule) {
+			key := e.Name
+			if prefix != "" {
+				key = prefix + "." + e.Name
+			}
+			child := node.Children[e.Name]
+			out[key] = collectedCall{
+				source:  node.Module.ModuleSource(e.Name),
+				version: node.Module.ModuleVersion(e.Name),
+				parent:  node,
+				child:   child,
+			}
+			if child != nil {
+				walk(key, child)
+			}
+		}
+	}
+	walk("", p.Root)
+	return out
+}
+
+// pairModuleCalls joins every module call in both projects by dotted key.
+// Covers the whole tree: a change to a sub-sub-module is still reported.
+func pairModuleCalls(oldProj, newProj *loader.Project) []modulePair {
+	oldCalls := collectModuleCalls(oldProj)
+	newCalls := collectModuleCalls(newProj)
+
+	keys := map[string]struct{}{}
+	for k := range oldCalls {
+		keys[k] = struct{}{}
+	}
+	for k := range newCalls {
+		keys[k] = struct{}{}
 	}
 
 	var out []modulePair
-	for name := range names {
-		oldC, hasOld := oldCalls[name]
-		newC, hasNew := newCalls[name]
-		p := modulePair{name: name}
+	for key := range keys {
+		oldC, hasOld := oldCalls[key]
+		newC, hasNew := newCalls[key]
+		p := modulePair{key: key, localName: leafSegment(key)}
 		switch {
 		case !hasOld:
 			p.status = statusAdded
 			p.newSource = newC.source
 			p.newVersion = newC.version
-			p.newNode = newProj.Root.Children[name]
+			p.newParent = newC.parent
+			p.newNode = newC.child
 		case !hasNew:
 			p.status = statusRemoved
 			p.oldSource = oldC.source
 			p.oldVersion = oldC.version
-			p.oldNode = oldProj.Root.Children[name]
+			p.oldParent = oldC.parent
+			p.oldNode = oldC.child
 		default:
 			p.status = statusChanged
 			p.oldSource = oldC.source
 			p.oldVersion = oldC.version
+			p.oldParent = oldC.parent
+			p.oldNode = oldC.child
 			p.newSource = newC.source
 			p.newVersion = newC.version
-			p.oldNode = oldProj.Root.Children[name]
-			p.newNode = newProj.Root.Children[name]
+			p.newParent = newC.parent
+			p.newNode = newC.child
 		}
 		out = append(out, p)
 	}
 	return out
 }
 
-type callInfo struct {
-	source  string
-	version string
+func leafSegment(dotted string) string {
+	if i := strings.LastIndex(dotted, "."); i >= 0 {
+		return dotted[i+1:]
+	}
+	return dotted
 }
 
-func rootModuleCalls(p *loader.Project) map[string]callInfo {
-	out := map[string]callInfo{}
-	if p == nil || p.Root == nil || p.Root.Module == nil {
-		return out
-	}
-	for _, e := range p.Root.Module.Filter(analysis.KindModule) {
-		out[e.Name] = callInfo{
-			source:  p.Root.Module.ModuleSource(e.Name),
-			version: p.Root.Module.ModuleVersion(e.Name),
-		}
-	}
-	return out
-}
 
 // loadOldProjectForBranch loads the workspace checked out at baseRef
 // using its own resolver chain. It returns the loaded project and a

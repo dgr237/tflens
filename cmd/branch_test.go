@@ -66,7 +66,7 @@ func TestPairModuleCallsChangedAddedRemoved(t *testing.T) {
 
 	byName := map[string]modulePair{}
 	for _, p := range pairModuleCalls(old, new_) {
-		byName[p.name] = p
+		byName[p.key] = p
 	}
 
 	if p, ok := byName["same"]; !ok || p.status != statusChanged {
@@ -290,6 +290,140 @@ func TestWhatifBranchUnknownCallName(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "nonexistent") {
 		t.Errorf("error should mention the call name, got:\n%s", out)
+	}
+}
+
+// makeNestedBranchRepo builds a git repo whose workspace contains a
+// root module calling "vpc", which in turn calls "sg". On branch main,
+// sg has required variable "x"; on branch feature, sg's required
+// variable is renamed to "y" — a breaking change nested two levels
+// deep.
+func makeNestedBranchRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+
+	parent := filepath.Join(repo, "workspace")
+	vpc := filepath.Join(parent, "vpc")
+	sg := filepath.Join(vpc, "sg")
+	if err := os.MkdirAll(sg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(parent, "main.tf"),
+		"module \"vpc\" {\n  source = \"./vpc\"\n}\n")
+	write(filepath.Join(vpc, "main.tf"),
+		"module \"sg\" {\n  source = \"./sg\"\n  x      = \"initial\"\n}\n")
+	write(filepath.Join(sg, "variables.tf"),
+		"variable \"x\" {\n  type = string\n}\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "main: nested vpc → sg")
+
+	run("checkout", "-q", "-b", "feature")
+	write(filepath.Join(sg, "variables.tf"),
+		"variable \"y\" {\n  type = string\n}\n")
+	// Update vpc to keep feature branch internally consistent.
+	write(filepath.Join(vpc, "main.tf"),
+		"module \"sg\" {\n  source = \"./sg\"\n  y      = \"feature\"\n}\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "feature: rename sg.x → sg.y")
+
+	return parent
+}
+
+func TestDiffBranchReportsNestedSubmoduleChange(t *testing.T) {
+	ws := makeNestedBranchRepo(t)
+	bin := buildTflens(t)
+
+	cmd := exec.Command(bin, "--offline", "diff", "--branch", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 for breaking nested change, got err=%v\nstderr=%s", err, stderr.String())
+	}
+
+	var out branchJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
+	}
+	// Expect an entry keyed by the dotted path "vpc.sg" with a breaking change.
+	var sg *branchModuleJSON
+	for i, m := range out.Modules {
+		if m.Name == "vpc.sg" {
+			sg = &out.Modules[i]
+			break
+		}
+	}
+	if sg == nil {
+		t.Fatalf("expected a module entry for vpc.sg, got: %+v", out.Modules)
+	}
+	if sg.Summary.Breaking == 0 {
+		t.Errorf("vpc.sg should report breaking changes, got summary=%+v", sg.Summary)
+	}
+}
+
+func TestWhatifBranchByNestedCallName(t *testing.T) {
+	ws := makeNestedBranchRepo(t)
+	bin := buildTflens(t)
+
+	// Filter by dotted key vpc.sg; whatif should use the vpc module
+	// (not the root) as the parent for CrossValidateCall.
+	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws, "vpc.sg")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 for direct impact on vpc.sg, got err=%v\nstderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"name": "vpc.sg"`) {
+		t.Errorf("expected JSON keyed by vpc.sg, got: %s", stdout.String())
+	}
+}
+
+func TestDiffBranchAutoDetectsBase(t *testing.T) {
+	ws := makeBranchRepo(t)
+	bin := buildTflens(t)
+
+	// --branch auto with no explicit ref should find "main" via the
+	// local-branches fallback (no upstream, no origin/HEAD in this
+	// freshly init'd repo).
+	cmd := exec.Command(bin, "--offline", "diff", "--branch", "auto", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 (breaking change), got err=%v\nstderr=%s", err, stderr.String())
+	}
+	var out struct {
+		BaseRef string `json:"base_ref"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
+	}
+	if out.BaseRef != "main" {
+		t.Errorf("auto-detected base_ref = %q, want main", out.BaseRef)
 	}
 }
 

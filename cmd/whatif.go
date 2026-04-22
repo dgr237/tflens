@@ -53,6 +53,13 @@ Two modes:
 			if len(args) == 2 {
 				name = args[1]
 			}
+			if base == BranchAutoKeyword {
+				auto, err := resolveAutoBase(ws)
+				if err != nil {
+					return err
+				}
+				base = auto
+			}
 			return runWhatifBranch(cmd, ws, base, name)
 		}
 		if len(args) != 3 {
@@ -65,7 +72,7 @@ Two modes:
 
 func init() {
 	whatifCmd.Flags().String("branch", "",
-		"simulate upgrades derived from the working-tree vs git ref <base>")
+		"simulate upgrades derived from the working-tree vs git ref <base>; pass 'auto' to detect")
 	rootCmd.AddCommand(whatifCmd)
 }
 
@@ -249,7 +256,7 @@ func runWhatifBranch(cmd *cobra.Command, workspace, baseRef, only string) error 
 	if only != "" {
 		filtered := pairs[:0]
 		for _, p := range pairs {
-			if p.name == only {
+			if p.key == only || p.localName == only {
 				filtered = append(filtered, p)
 			}
 		}
@@ -268,7 +275,7 @@ func runWhatifBranch(cmd *cobra.Command, workspace, baseRef, only string) error 
 		if p.status == statusAdded {
 			continue
 		}
-		r := buildWhatifCallResult(oldProj, p)
+		r := buildWhatifCallResult(p)
 		totalImpact += len(r.directImpact)
 		calls = append(calls, r)
 	}
@@ -291,7 +298,7 @@ type whatifCallResult struct {
 	apiChanges   []diff.Change // empty when we cannot compute (removed or missing child)
 }
 
-func buildWhatifCallResult(oldProj *loader.Project, p modulePair) whatifCallResult {
+func buildWhatifCallResult(p modulePair) whatifCallResult {
 	r := whatifCallResult{pair: p}
 	// Direct impact: does the old parent's usage break under the new
 	// child's API? For "removed" calls there's no new child, so we can
@@ -299,10 +306,16 @@ func buildWhatifCallResult(oldProj *loader.Project, p modulePair) whatifCallResu
 	if p.status == statusRemoved {
 		return r
 	}
-	if p.newNode == nil {
+	if p.newNode == nil || p.oldParent == nil {
+		// No child API available OR the old side doesn't have a
+		// parent to cross-validate against (e.g. nested call's parent
+		// was itself added in the new tree).
+		if p.oldNode != nil && p.newNode != nil {
+			r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
+		}
 		return r
 	}
-	r.directImpact = loader.CrossValidateCall(oldProj.Root.Module, p.name, p.newNode.Module)
+	r.directImpact = loader.CrossValidateCall(p.oldParent.Module, p.localName, p.newNode.Module)
 	if p.oldNode != nil {
 		r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
 	}
@@ -327,11 +340,11 @@ func printWhatifBranchResults(baseRef, workspace string, calls []whatifCallResul
 func printOneWhatifCall(workspace string, r whatifCallResult) {
 	if r.pair.status == statusRemoved {
 		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
-			r.pair.name, r.pair.oldSource, r.pair.oldVersion)
+			r.pair.key, r.pair.oldSource, r.pair.oldVersion)
 		return
 	}
 	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.pair.name, workspace, len(r.directImpact))
+		r.pair.key, workspace, len(r.directImpact))
 	if len(r.directImpact) == 0 {
 		fmt.Println("  (none — callers at base are compatible with the new child)")
 	} else {
@@ -354,7 +367,7 @@ func printOneWhatifCall(workspace string, r whatifCallResult) {
 		}
 	}
 	fmt.Println()
-	fmt.Printf("  API changes for module.%s:\n", r.pair.name)
+	fmt.Printf("  API changes for module.%s:\n", r.pair.key)
 	section := func(title string, list []diff.Change) {
 		if len(list) == 0 {
 			return
@@ -396,7 +409,7 @@ func whatifBranchJSONPayload(baseRef, workspace string, calls []whatifCallResult
 	out := whatifBranchJSON{BaseRef: baseRef, Workspace: workspace}
 	for _, r := range calls {
 		entry := whatifCallJSON{
-			Name:   r.pair.name,
+			Name:   r.pair.key,
 			Status: statusString(r.pair.status),
 		}
 		for _, e := range r.directImpact {
