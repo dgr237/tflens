@@ -109,7 +109,7 @@ func TestStatediffDetectsLocalInducedDeletion(t *testing.T) {
   ]
 }`)
 
-	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--state", statePath, "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "statediff", "--ref", "main", "--state", statePath, "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -174,7 +174,7 @@ func TestStatediffWithoutStateStillFlagsLocal(t *testing.T) {
 	ws := makeStatediffRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "statediff", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -236,7 +236,7 @@ moved {
 	run("commit", "--quiet", "-m", "feature: rename via moved")
 
 	bin := buildTflens(t)
-	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "statediff", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -309,7 +309,7 @@ resource "aws_instance" "web" {
 	run("commit", "--quiet", "-m", "feature: shrink n")
 
 	bin := buildTflens(t)
-	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "statediff", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -369,7 +369,7 @@ func TestStatediffCleanExitOnNoChanges(t *testing.T) {
 	run("checkout", "-q", "-b", "feature")
 
 	bin := buildTflens(t)
-	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", ws)
+	cmd := exec.Command(bin, "--offline", "statediff", "--ref", "main", ws)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("statediff: %v\n%s", err, out)

@@ -13,19 +13,20 @@ import (
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// prepareBranchCheckout stages a git worktree checked out at baseRef so
+// prepareRefCheckout stages a git worktree checked out at baseRef so
 // the caller can load it as a second workspace. newDir is the caller's
-// "current" workspace — typically the cwd on a feature branch. The
-// returned oldDir is the workspace's equivalent path inside the
-// worktree. cleanup MUST be called (usually deferred) to remove the
-// worktree.
+// "current" workspace — typically cwd on a feature branch. baseRef can
+// be any ref git rev-parse understands (branch, tag, SHA, HEAD~3,
+// origin/main, …). The returned oldDir is the workspace's equivalent
+// path inside the worktree. cleanup MUST be called (usually deferred)
+// to remove the worktree.
 //
 // The workspace's position within the repo is obtained via
 // `git rev-parse --show-prefix` rather than filepath.Rel on top-vs-newDir.
 // This avoids tripping over Windows 8.3 short names (RUNNER~1 vs
 // runneradmin) and macOS /private/var symlinks, both of which cause git
 // and Go to disagree about the canonical path form.
-func prepareBranchCheckout(newDir, baseRef string) (oldDir string, cleanup func(), err error) {
+func prepareRefCheckout(newDir, baseRef string) (oldDir string, cleanup func(), err error) {
 	newAbs, err := filepath.Abs(newDir)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolving workspace path: %w", err)
@@ -42,7 +43,7 @@ func prepareBranchCheckout(newDir, baseRef string) (oldDir string, cleanup func(
 		return "", nil, fmt.Errorf("locating workspace within repo: %w", err)
 	}
 
-	worktreeDir, err := os.MkdirTemp("", "tflens-branch-*")
+	worktreeDir, err := os.MkdirTemp("", "tflens-ref-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp worktree dir: %w", err)
 	}
@@ -79,11 +80,11 @@ func gitRevParse(top, ref string) error {
 }
 
 // gitShowPrefix returns the workspace's path relative to the repository
-// root, with forward slashes and a trailing slash, or "" when the
-// workspace IS the repository root. Authoritative for locating the
-// equivalent path inside a sibling worktree, avoiding disagreements
-// between Go's filepath and the on-disk path form that varies by OS
-// (8.3 short names on Windows, /private/var symlinks on macOS).
+// root, with forward slashes, or "" when the workspace IS the repository
+// root. Authoritative for locating the equivalent path inside a sibling
+// worktree, avoiding disagreements between Go's filepath and the on-disk
+// path form that varies by OS (8.3 short names on Windows, /private/var
+// symlinks on macOS).
 func gitShowPrefix(cwd string) (string, error) {
 	out, err := runGit(cwd, "rev-parse", "--show-prefix")
 	if err != nil {
@@ -92,20 +93,20 @@ func gitShowPrefix(cwd string) (string, error) {
 	return strings.TrimRight(strings.TrimSpace(out), "/"), nil
 }
 
-// BranchAutoKeyword is the user-facing keyword that triggers base-ref
-// auto-detection, i.e. `tflens diff --branch auto`. Chosen over pflag's
-// NoOptDefVal because that would make `--branch main <ws>` parse as
-// `--branch=<auto>` plus a positional `main` — worse UX than an
-// explicit keyword.
-const BranchAutoKeyword = "auto"
+// RefAutoKeyword is the user-facing keyword that triggers base-ref
+// auto-detection, e.g. `tflens diff --ref auto`. Chosen over pflag's
+// NoOptDefVal because that would make `--ref main <ws>` parse as
+// `--ref=<auto>` plus a positional `main` — worse UX than an explicit
+// keyword.
+const RefAutoKeyword = "auto"
 
-// resolveAutoBase picks a sensible base ref for branch mode when the
-// user passed --branch with no value. Tries (in order): the current
-// branch's upstream, origin/HEAD's symbolic target, then bare "main"
-// and "master". Returns the first resolvable ref as a human-readable
-// name (e.g. "origin/main"). Returns an error if nothing matches so the
-// user knows they need to pass --branch <ref> explicitly.
-func resolveAutoBase(workspace string) (string, error) {
+// resolveAutoRef picks a sensible base ref when the user passed --ref
+// auto. Tries (in order): the current branch's upstream, origin/HEAD's
+// symbolic target, then bare "main" and "master". Returns the first
+// resolvable ref as a human-readable name (e.g. "origin/main"). Returns
+// an error if nothing matches so the user knows they need to pass --ref
+// <ref> explicitly.
+func resolveAutoRef(workspace string) (string, error) {
 	if out, err := runGit(workspace, "rev-parse", "--abbrev-ref", "@{upstream}"); err == nil {
 		if ref := strings.TrimSpace(out); ref != "" {
 			return ref, nil
@@ -113,8 +114,8 @@ func resolveAutoBase(workspace string) (string, error) {
 	}
 	if out, err := runGit(workspace, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
 		ref := strings.TrimSpace(out)
-		// If origin/HEAD is unset, git either errors or echoes the
-		// ref name back. Reject the echo so we fall through.
+		// If origin/HEAD is unset, git either errors or echoes the ref
+		// name back. Reject the echo so we fall through.
 		if ref != "" && ref != "origin/HEAD" {
 			return ref, nil
 		}
@@ -124,7 +125,7 @@ func resolveAutoBase(workspace string) (string, error) {
 			return ref, nil
 		}
 	}
-	return "", fmt.Errorf("could not auto-detect base ref (tried @{upstream}, origin/HEAD, main, master); pass --branch <ref> explicitly")
+	return "", fmt.Errorf("could not auto-detect base ref (tried @{upstream}, origin/HEAD, main, master); pass --ref <ref> explicitly")
 }
 
 func gitWorktreeAdd(top, dest, ref string) error {
@@ -281,12 +282,11 @@ func leafSegment(dotted string) string {
 	return dotted
 }
 
-
-// loadOldProjectForBranch loads the workspace checked out at baseRef
-// using its own resolver chain. It returns the loaded project and a
-// cleanup func for the backing git worktree.
-func loadOldProjectForBranch(cmd *cobra.Command, newWs, baseRef string) (*loader.Project, func(), error) {
-	oldDir, cleanup, err := prepareBranchCheckout(newWs, baseRef)
+// loadOldProjectForRef loads the workspace checked out at baseRef using
+// its own resolver chain. It returns the loaded project and a cleanup
+// func for the backing git worktree.
+func loadOldProjectForRef(cmd *cobra.Command, newWs, baseRef string) (*loader.Project, func(), error) {
+	oldDir, cleanup, err := prepareRefCheckout(newWs, baseRef)
 	if err != nil {
 		return nil, nil, err
 	}

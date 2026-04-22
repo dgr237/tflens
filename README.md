@@ -44,7 +44,7 @@ Global flags accepted on every subcommand:
 
 ```
 tflens --format json validate ./my-workspace | jq '.cross_module_issues[]'
-tflens --offline diff --branch main ./my-workspace
+tflens --offline diff --ref main ./my-workspace
 ```
 
 ## Commands
@@ -60,10 +60,10 @@ tflens --offline diff --branch main ./my-workspace
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
 | `diff <old> <new>` | Compare two module versions and classify changes as Breaking, NonBreaking, or Informational |
-| `diff --branch <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
+| `diff --ref <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
 | `whatif <workspace> <module> <new-dir>` | Simulate upgrading a specific module call in a workspace to a candidate new version; report what would break |
-| `whatif --branch <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
-| `statediff --branch <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
+| `whatif --ref <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
+| `statediff --ref <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
 | `lsp` | Run as a Language Server Protocol server over stdio (for editor integration) |
@@ -233,7 +233,7 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 - **Backend configuration diffs** (`terraform { backend "s3" { ... } }`) — not currently parsed. More commonly in root modules than in reusable modules.
 - **Provisioner blocks** (`provisioner "local-exec"`, `connection`) — not currently parsed; their presence or absence affects teardown and creation but is not flagged.
 - **Nested moved-block expressions with indices.** `moved { from = aws_vpc.main[0], to = aws_vpc.main["a"] }` is not recognised; only bare resource references in `from` / `to` are parsed.
-- **Cross-module diffs in explicit mode.** `tflens diff <old> <new>` compares exactly the two directories you supply — it does not recurse into child modules. Use `tflens diff --branch <base>` (or `whatif --branch`, `statediff --branch`) when you want the whole tree walked; those commands pair module calls across branches by dotted key (e.g. `vpc.sg`) and diff each child module resolved on each side.
+- **Cross-module diffs in explicit mode.** `tflens diff <old> <new>` compares exactly the two directories you supply — it does not recurse into child modules. Use `tflens diff --ref <base>` (or `whatif --ref`, `statediff --ref`) when you want the whole tree walked; those commands pair module calls across branches by dotted key (e.g. `vpc.sg`) and diff each child module resolved on each side.
 - **Children that cannot be resolved offline.** Branch-mode commands only diff children that both resolvers can materialise. In `--offline` mode or against registry/git sources missing from the cache and from `.terraform/modules/modules.json`, the child is skipped rather than reported.
 
 ## What-if upgrade analysis (`whatif`)
@@ -256,21 +256,21 @@ Point at a workspace, the module call you want to simulate, and a directory cont
 ### Branch mode
 
 ```
-tflens whatif --branch <base> [workspace] [call-name]
+tflens whatif --ref <base> [workspace] [call-name]
 ```
 
-The candidate new version is whatever the working tree resolves to. The "current" caller is the workspace checked out at git ref `<base>`. Useful for CI-gating an upgrade PR: on a feature branch that bumps `version = "..."` or refactors a local child, run `tflens whatif --branch main` to see whether callers on main would break.
+The candidate new version is whatever the working tree resolves to. The "current" caller is the workspace checked out at git ref `<base>`. Useful for CI-gating an upgrade PR: on a feature branch that bumps `version = "..."` or refactors a local child, run `tflens whatif --ref main` to see whether callers on main would break.
 
 With no `call-name`, every module call that differs between `<base>` and the working tree is simulated and aggregated; pass a name to scope to one call.
 
 Both modes exit non-zero when the direct-impact list is non-empty — suitable for CI gating.
 
-`tflens diff --branch <base> [workspace]` is the complementary command: same workspace-vs-base comparison, but reports the full API diff per module call rather than cross-validation. Use `diff --branch` to review a module-bump PR; use `whatif --branch` to gate it.
+`tflens diff --ref <base> [workspace]` is the complementary command: same workspace-vs-base comparison, but reports the full API diff per module call rather than cross-validation. Use `diff --ref` to review a module-bump PR; use `whatif --ref` to gate it.
 
 ## State-level hazard detection (`statediff`)
 
 ```
-tflens statediff --branch <base> [workspace] [--state state.json]
+tflens statediff --ref <base> [workspace] [--state state.json]
 ```
 
 A static hazard detector for PRs that may unintentionally add, destroy, or re-instance resources. It answers: *if I merge this branch, which of my state's resource instances are at risk?*
@@ -293,7 +293,7 @@ Exit code is 1 when any resource add/remove or sensitive local fires.
 
 ## Module resolution
 
-Commands that traverse a workspace (`validate`, `whatif`, `diff --branch`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
+Commands that traverse a workspace (`validate`, `whatif`, `diff --ref`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
 
 1. **Local path** — `source = "./x"` and `source = "../y"` resolve relative to the caller's directory. Always tried.
 2. **`.terraform/modules/modules.json`** — if the manifest produced by `terraform init` is present, every module call is resolved through it by dotted key path (`vpc`, `vpc.sg`, etc.). Always tried.

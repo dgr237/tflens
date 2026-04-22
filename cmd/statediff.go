@@ -16,36 +16,43 @@ import (
 )
 
 var statediffCmd = &cobra.Command{
-	Use:   "statediff --branch <base> [workspace]",
+	Use:   "statediff --ref <base> [workspace]",
 	Short: "Identify resources a PR may create, destroy, or re-instance",
-	Long: `statediff compares two branches at the resource identity level and
-surfaces changes that may alter Terraform state when the PR is merged:
+	Long: `statediff compares the working tree against a git ref at the resource
+identity level and surfaces changes that may alter Terraform state when
+the PR is merged:
 
-  1. Resource declarations added or removed between branches.
-  2. Locals whose value expression changed AND whose dependency chain
-     reaches a count or for_each meta-argument — the common way a
-     seemingly-small edit silently destroys instances.
-  3. When --state <file> is given: for every flagged resource, the
+  1. Resource declarations added or removed between the two trees.
+  2. Locals or variable defaults whose value expression changed AND
+     whose dependency chain reaches a count or for_each meta-argument —
+     the common way a seemingly-small edit silently destroys instances.
+  3. Renames declared via ` + "`moved {}`" + ` blocks, recognised so the same
+     resource under a new name is not double-reported as add + remove.
+  4. When --state <file> is given: for every flagged resource, the
      instances currently in state (so a reviewer can see the concrete
      addresses that may be affected).
 
-Exits non-zero when anything is flagged, for CI gating.
+Exits non-zero when anything is flagged (renames and state orphans do
+not count). Suitable for CI gating.
+
+The ref can be any git ref (branch, tag, SHA, origin/main, HEAD~3, …);
+pass 'auto' to detect one.
 
 What it does NOT do: attribute-level plan simulation. That needs
 provider schemas and expression evaluation — run 'terraform plan' for
 that. statediff is a static hazard detector, not a plan replacement.`,
 	Args: cobra.RangeArgs(0, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		base, _ := cmd.Flags().GetString("branch")
+		base, _ := cmd.Flags().GetString("ref")
 		if base == "" {
-			return fmt.Errorf("statediff requires --branch <base>")
+			return fmt.Errorf("statediff requires --ref <base>")
 		}
 		ws := "."
 		if len(args) == 1 {
 			ws = args[0]
 		}
-		if base == BranchAutoKeyword {
-			auto, err := resolveAutoBase(ws)
+		if base == RefAutoKeyword {
+			auto, err := resolveAutoRef(ws)
 			if err != nil {
 				return err
 			}
@@ -57,7 +64,7 @@ that. statediff is a static hazard detector, not a plan replacement.`,
 }
 
 func init() {
-	statediffCmd.Flags().String("branch", "", "base git ref to compare against; pass 'auto' to detect")
+	statediffCmd.Flags().String("ref", "", "base git ref to compare against (branch, tag, SHA, …); pass 'auto' to detect")
 	statediffCmd.Flags().String("state", "", "optional Terraform state v4 JSON file for instance cross-reference")
 	rootCmd.AddCommand(statediffCmd)
 }
@@ -67,7 +74,7 @@ func runStatediff(cmd *cobra.Command, workspace, baseRef, statePath string) erro
 	if err != nil {
 		return fmt.Errorf("loading workspace: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForBranch(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
 	if err != nil {
 		return err
 	}

@@ -33,17 +33,17 @@ Two modes:
   tflens whatif <workspace> <name> <new-version-path>
       Explicit: parent is <workspace>, candidate child is at <path>.
 
-  tflens whatif --branch <base> [workspace] [name]
-      Branch: parent is the workspace checked out at git ref <base>;
-      candidate child is whatever the working tree resolves to now.
-      With no <name>, every module call that differs between base and
-      working tree is simulated.`,
+  tflens whatif --ref <base> [workspace] [name]
+      Ref: parent is the workspace checked out at the given git ref
+      (branch, tag, SHA, …); candidate child is whatever the working
+      tree resolves to now. With no <name>, every module call that
+      differs between base and working tree is simulated.`,
 	Args: cobra.RangeArgs(0, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		base, _ := cmd.Flags().GetString("branch")
+		base, _ := cmd.Flags().GetString("ref")
 		if base != "" {
 			if len(args) > 2 {
-				return fmt.Errorf("--branch mode takes at most 2 positional args (workspace, name); got %d", len(args))
+				return fmt.Errorf("--ref mode takes at most 2 positional args (workspace, name); got %d", len(args))
 			}
 			ws := "."
 			name := ""
@@ -53,17 +53,17 @@ Two modes:
 			if len(args) == 2 {
 				name = args[1]
 			}
-			if base == BranchAutoKeyword {
-				auto, err := resolveAutoBase(ws)
+			if base == RefAutoKeyword {
+				auto, err := resolveAutoRef(ws)
 				if err != nil {
 					return err
 				}
 				base = auto
 			}
-			return runWhatifBranch(cmd, ws, base, name)
+			return runWhatifRef(cmd, ws, base, name)
 		}
 		if len(args) != 3 {
-			return fmt.Errorf("whatif requires <workspace> <name> <new-version-path>, or --branch <base> [workspace] [name]")
+			return fmt.Errorf("whatif requires <workspace> <name> <new-version-path>, or --ref <base> [workspace] [name]")
 		}
 		runWhatif(cmd, args[0], args[1], args[2])
 		return nil
@@ -71,8 +71,8 @@ Two modes:
 }
 
 func init() {
-	whatifCmd.Flags().String("branch", "",
-		"simulate upgrades derived from the working-tree vs git ref <base>; pass 'auto' to detect")
+	whatifCmd.Flags().String("ref", "",
+		"simulate upgrades derived from the working tree vs a git ref (branch, tag, SHA, …); pass 'auto' to detect")
 	rootCmd.AddCommand(whatifCmd)
 }
 
@@ -236,17 +236,17 @@ func runWhatif(cmd *cobra.Command, workspace, moduleCallName, newVersionPath str
 	}
 }
 
-// ---- branch mode ------------------------------------------------------
+// ---- ref mode ------------------------------------------------------
 
-// runWhatifBranch simulates merging the working tree's module upgrades
+// runWhatifRef simulates merging the working tree's module upgrades
 // against callers at baseRef. If only is non-empty it restricts to that
 // one call name; otherwise every call that differs is simulated.
-func runWhatifBranch(cmd *cobra.Command, workspace, baseRef, only string) error {
+func runWhatifRef(cmd *cobra.Command, workspace, baseRef, only string) error {
 	newProj, err := loadProject(cmd, workspace)
 	if err != nil {
 		return fmt.Errorf("loading workspace: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForBranch(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
 	if err != nil {
 		return err
 	}

@@ -118,13 +118,13 @@ func binName() string {
 	return "tflens-e2e"
 }
 
-// makeBranchRepo creates a git repo containing a workspace with a
+// makeRefTestRepo creates a git repo containing a workspace with a
 // local-source child module. On branch `main` the child declares
 // `variable "x" { type = string }` (required). On branch `feature`
 // the child declares `variable "y" { type = string }` (required) and
 // `x` is gone — an API-breaking change. The returned path is the
 // workspace dir inside the repo, currently checked out to feature.
-func makeBranchRepo(t *testing.T) string {
+func makeRefTestRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -175,11 +175,11 @@ func makeBranchRepo(t *testing.T) string {
 	return parent
 }
 
-func TestDiffBranchReportsBreakingLocalChange(t *testing.T) {
-	ws := makeBranchRepo(t)
+func TestDiffRefReportsBreakingLocalChange(t *testing.T) {
+	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "diff", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -189,7 +189,7 @@ func TestDiffBranchReportsBreakingLocalChange(t *testing.T) {
 		t.Fatalf("expected exit 1 for breaking change, got err=%v\nstderr=%s", err, stderr.String())
 	}
 
-	var out branchJSON
+	var out refJSON
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -221,11 +221,11 @@ func TestDiffBranchReportsBreakingLocalChange(t *testing.T) {
 	}
 }
 
-func TestWhatifBranchReportsDirectImpactForAllChangedCalls(t *testing.T) {
-	ws := makeBranchRepo(t)
+func TestWhatifRefReportsDirectImpactForAllChangedCalls(t *testing.T) {
+	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "whatif", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -259,11 +259,11 @@ func TestWhatifBranchReportsDirectImpactForAllChangedCalls(t *testing.T) {
 	}
 }
 
-func TestWhatifBranchByCallName(t *testing.T) {
-	ws := makeBranchRepo(t)
+func TestWhatifRefByCallName(t *testing.T) {
+	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws, "child")
+	cmd := exec.Command(bin, "--offline", "whatif", "--ref", "main", "--format=json", ws, "child")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -279,11 +279,11 @@ func TestWhatifBranchByCallName(t *testing.T) {
 	}
 }
 
-func TestWhatifBranchUnknownCallName(t *testing.T) {
-	ws := makeBranchRepo(t)
+func TestWhatifRefUnknownCallName(t *testing.T) {
+	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", ws, "nonexistent")
+	cmd := exec.Command(bin, "--offline", "whatif", "--ref", "main", ws, "nonexistent")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected error for unknown call name, got clean exit; output:\n%s", out)
@@ -293,12 +293,12 @@ func TestWhatifBranchUnknownCallName(t *testing.T) {
 	}
 }
 
-// makeNestedBranchRepo builds a git repo whose workspace contains a
+// makeNestedRefTestRepo builds a git repo whose workspace contains a
 // root module calling "vpc", which in turn calls "sg". On branch main,
 // sg has required variable "x"; on branch feature, sg's required
 // variable is renamed to "y" — a breaking change nested two levels
 // deep.
-func makeNestedBranchRepo(t *testing.T) string {
+func makeNestedRefTestRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -349,11 +349,11 @@ func makeNestedBranchRepo(t *testing.T) string {
 	return parent
 }
 
-func TestDiffBranchReportsNestedSubmoduleChange(t *testing.T) {
-	ws := makeNestedBranchRepo(t)
+func TestDiffRefReportsNestedSubmoduleChange(t *testing.T) {
+	ws := makeNestedRefTestRepo(t)
 	bin := buildTflens(t)
 
-	cmd := exec.Command(bin, "--offline", "diff", "--branch", "main", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -362,12 +362,12 @@ func TestDiffBranchReportsNestedSubmoduleChange(t *testing.T) {
 		t.Fatalf("expected exit 1 for breaking nested change, got err=%v\nstderr=%s", err, stderr.String())
 	}
 
-	var out branchJSON
+	var out refJSON
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
 	// Expect an entry keyed by the dotted path "vpc.sg" with a breaking change.
-	var sg *branchModuleJSON
+	var sg *refModuleJSON
 	for i, m := range out.Modules {
 		if m.Name == "vpc.sg" {
 			sg = &out.Modules[i]
@@ -382,13 +382,13 @@ func TestDiffBranchReportsNestedSubmoduleChange(t *testing.T) {
 	}
 }
 
-func TestWhatifBranchByNestedCallName(t *testing.T) {
-	ws := makeNestedBranchRepo(t)
+func TestWhatifRefByNestedCallName(t *testing.T) {
+	ws := makeNestedRefTestRepo(t)
 	bin := buildTflens(t)
 
 	// Filter by dotted key vpc.sg; whatif should use the vpc module
 	// (not the root) as the parent for CrossValidateCall.
-	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws, "vpc.sg")
+	cmd := exec.Command(bin, "--offline", "whatif", "--ref", "main", "--format=json", ws, "vpc.sg")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -401,14 +401,14 @@ func TestWhatifBranchByNestedCallName(t *testing.T) {
 	}
 }
 
-func TestDiffBranchAutoDetectsBase(t *testing.T) {
-	ws := makeBranchRepo(t)
+func TestDiffRefAutoDetectsBase(t *testing.T) {
+	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
 	// --branch auto with no explicit ref should find "main" via the
 	// local-branches fallback (no upstream, no origin/HEAD in this
 	// freshly init'd repo).
-	cmd := exec.Command(bin, "--offline", "diff", "--branch", "auto", "--format=json", ws)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "auto", "--format=json", ws)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -427,8 +427,8 @@ func TestDiffBranchAutoDetectsBase(t *testing.T) {
 	}
 }
 
-func TestDiffBranchNoChanges(t *testing.T) {
-	// Same as makeBranchRepo but without the feature commit — just main.
+func TestDiffRefNoChanges(t *testing.T) {
+	// Same as makeRefTestRepo but without the feature commit — just main.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
@@ -457,7 +457,7 @@ func TestDiffBranchNoChanges(t *testing.T) {
 	run("checkout", "-q", "-b", "feature")
 
 	bin := buildTflens(t)
-	cmd := exec.Command(bin, "--offline", "diff", "--branch", "main", ws)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", ws)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("diff --branch: %v\n%s", err, out)

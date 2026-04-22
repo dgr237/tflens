@@ -22,33 +22,34 @@ Exits non-zero when any Breaking changes exist (suitable for CI gating).
 
 Two modes:
 
-  tflens diff <old> <new>           Explicit: compare two module directories.
-  tflens diff --branch <base> [ws]  Branch: compare every module call in ws
-                                    (default cwd) against its counterpart at
-                                    git ref <base>. Reports per-call diffs
-                                    plus added/removed calls.`,
+  tflens diff <old> <new>        Explicit: compare two module directories.
+  tflens diff --ref <base> [ws]  Ref: compare every module call in ws
+                                 (default cwd) against its counterpart at
+                                 the given git ref (branch, tag, SHA,
+                                 origin/main, HEAD~3, …). Reports per-call
+                                 diffs plus added/removed calls.`,
 	Args: cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		base, _ := cmd.Flags().GetString("branch")
+		base, _ := cmd.Flags().GetString("ref")
 		if base != "" {
 			if len(args) > 1 {
-				return fmt.Errorf("--branch mode takes at most one positional arg (workspace); got %d", len(args))
+				return fmt.Errorf("--ref mode takes at most one positional arg (workspace); got %d", len(args))
 			}
 			ws := "."
 			if len(args) == 1 {
 				ws = args[0]
 			}
-			if base == BranchAutoKeyword {
-				auto, err := resolveAutoBase(ws)
+			if base == RefAutoKeyword {
+				auto, err := resolveAutoRef(ws)
 				if err != nil {
 					return err
 				}
 				base = auto
 			}
-			return runDiffBranch(cmd, ws, base)
+			return runDiffRef(cmd, ws, base)
 		}
 		if len(args) != 2 {
-			return fmt.Errorf("diff requires <old> <new>, or --branch <base> [workspace]")
+			return fmt.Errorf("diff requires <old> <new>, or --ref <base> [workspace]")
 		}
 		runDiff(cmd, args[0], args[1])
 		return nil
@@ -56,8 +57,8 @@ Two modes:
 }
 
 func init() {
-	diffCmd.Flags().String("branch", "",
-		"compare the workspace's module calls against git ref <base>; pass 'auto' to detect (@{upstream} → origin/HEAD → main → master)")
+	diffCmd.Flags().String("ref", "",
+		"compare the workspace's module calls against a git ref (branch, tag, SHA, …); pass 'auto' to detect (@{upstream} → origin/HEAD → main → master)")
 	rootCmd.AddCommand(diffCmd)
 }
 
@@ -134,14 +135,14 @@ func runDiff(cmd *cobra.Command, oldPath, newPath string) {
 	}
 }
 
-// ---- branch mode ------------------------------------------------------
+// ---- ref mode ------------------------------------------------------
 
-func runDiffBranch(cmd *cobra.Command, workspace, baseRef string) error {
+func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
 	newProj, err := loadProject(cmd, workspace)
 	if err != nil {
 		return fmt.Errorf("loading workspace: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForBranch(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
 	if err != nil {
 		return err
 	}
@@ -150,10 +151,10 @@ func runDiffBranch(cmd *cobra.Command, workspace, baseRef string) error {
 	pairs := pairModuleCalls(oldProj, newProj)
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
 
-	results := make([]branchModuleResult, 0, len(pairs))
+	results := make([]refModuleResult, 0, len(pairs))
 	totalBreaking := 0
 	for _, p := range pairs {
-		r := branchModuleResult{pair: p}
+		r := refModuleResult{pair: p}
 		if p.status == statusChanged && p.oldNode != nil && p.newNode != nil {
 			r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
 			for _, c := range r.changes {
@@ -166,31 +167,31 @@ func runDiffBranch(cmd *cobra.Command, workspace, baseRef string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(buildBranchJSON(baseRef, workspace, results), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, workspace, results), exitCodeFor(totalBreaking))
 		return nil
 	}
 
-	printBranchResults(baseRef, results)
+	printRefResults(baseRef, results)
 	if totalBreaking > 0 {
 		os.Exit(1)
 	}
 	return nil
 }
 
-// branchModuleResult is the per-module-call result of a branch diff.
+// refModuleResult is the per-module-call result of a branch diff.
 // For added/removed calls, changes is empty — they're reported structurally.
-type branchModuleResult struct {
+type refModuleResult struct {
 	pair    modulePair
 	changes []diff.Change
 }
 
-func (r branchModuleResult) hasContentChanges() bool { return len(r.changes) > 0 }
+func (r refModuleResult) hasContentChanges() bool { return len(r.changes) > 0 }
 
-func (r branchModuleResult) attrsChanged() bool {
+func (r refModuleResult) attrsChanged() bool {
 	return r.pair.oldSource != r.pair.newSource || r.pair.oldVersion != r.pair.newVersion
 }
 
-func (r branchModuleResult) interesting() bool {
+func (r refModuleResult) interesting() bool {
 	switch r.pair.status {
 	case statusAdded, statusRemoved:
 		return true
@@ -208,7 +209,7 @@ func exitCodeFor(breaking int) int {
 
 // ---- text rendering ----
 
-func printBranchResults(baseRef string, results []branchModuleResult) {
+func printRefResults(baseRef string, results []refModuleResult) {
 	any := false
 	for _, r := range results {
 		if !r.interesting() {
@@ -218,14 +219,14 @@ func printBranchResults(baseRef string, results []branchModuleResult) {
 			fmt.Println()
 		}
 		any = true
-		printOneBranchResult(r)
+		printOneRefResult(r)
 	}
 	if !any {
 		fmt.Printf("No module-call changes detected vs %s.\n", baseRef)
 	}
 }
 
-func printOneBranchResult(r branchModuleResult) {
+func printOneRefResult(r refModuleResult) {
 	switch r.pair.status {
 	case statusAdded:
 		fmt.Printf("Module %q: ADDED (source=%s", r.pair.key, r.pair.newSource)
@@ -297,13 +298,13 @@ func printOneBranchResult(r branchModuleResult) {
 
 // ---- JSON rendering ----
 
-func buildBranchJSON(baseRef, workspace string, results []branchModuleResult) any {
-	out := branchJSON{BaseRef: baseRef, Workspace: workspace}
+func buildRefJSON(baseRef, workspace string, results []refModuleResult) any {
+	out := refJSON{BaseRef: baseRef, Workspace: workspace}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
 		}
-		entry := branchModuleJSON{
+		entry := refModuleJSON{
 			Name:       r.pair.key,
 			Status:     statusString(r.pair.status),
 			OldSource:  r.pair.oldSource,
@@ -330,14 +331,14 @@ func buildBranchJSON(baseRef, workspace string, results []branchModuleResult) an
 	return out
 }
 
-type branchJSON struct {
+type refJSON struct {
 	BaseRef   string             `json:"base_ref"`
 	Workspace string             `json:"workspace"`
-	Modules   []branchModuleJSON `json:"modules"`
-	Summary   branchSummaryJSON  `json:"summary"`
+	Modules   []refModuleJSON `json:"modules"`
+	Summary   refSummaryJSON  `json:"summary"`
 }
 
-type branchModuleJSON struct {
+type refModuleJSON struct {
 	Name       string            `json:"name"`
 	Status     string            `json:"status"`
 	OldSource  string            `json:"old_source,omitempty"`
@@ -345,10 +346,10 @@ type branchModuleJSON struct {
 	NewSource  string            `json:"new_source,omitempty"`
 	NewVersion string            `json:"new_version,omitempty"`
 	Changes    []jsonChange      `json:"changes,omitempty"`
-	Summary    branchSummaryJSON `json:"summary"`
+	Summary    refSummaryJSON `json:"summary"`
 }
 
-type branchSummaryJSON struct {
+type refSummaryJSON struct {
 	Breaking      int `json:"breaking"`
 	NonBreaking   int `json:"non_breaking"`
 	Informational int `json:"informational"`
