@@ -1,8 +1,11 @@
 // Package loader handles filesystem concerns: finding .tf files, parsing
-// directories, and resolving local submodule references.
+// directories, and walking a project's module tree. Child-module location
+// is delegated to pkg/resolver.
 package loader
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +13,7 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/ast"
 	"github.com/dgr237/tflens/pkg/parser"
+	"github.com/dgr237/tflens/pkg/resolver"
 )
 
 // FileError holds the parse errors for a single source file.
@@ -77,15 +81,8 @@ func walkNode(n *ModuleNode, fn func(*ModuleNode) bool) {
 }
 
 // LoadProject loads the root module at rootDir and recursively loads any
-// child modules whose directories can be resolved.
-//
-// Resolution order for each module call:
-//  1. If .terraform/modules/modules.json exists in rootDir and has an entry
-//     for this module call's key path, use the directory it points to. This
-//     is how registry and Git sources are resolved after `terraform init`.
-//  2. Otherwise, if the `source` attribute is a local path (./foo, ../bar),
-//     resolve it relative to the parent module's directory.
-//  3. Otherwise, skip silently — the child cannot be loaded statically.
+// child modules whose directories can be resolved by the default resolver
+// chain (manifest first, then local paths).
 //
 // Parse errors are collected and returned alongside the (partial) project.
 func LoadProject(rootDir string) (*Project, []FileError, error) {
@@ -95,19 +92,29 @@ func LoadProject(rootDir string) (*Project, []FileError, error) {
 	}
 
 	var allErrors []FileError
-	manifest, err := readManifest(absRoot)
-	if err != nil {
-		// Bad JSON in the manifest is worth flagging but not fatal — fall
-		// back to local-source-only resolution.
+	manifestResolver, warn := resolver.NewManifestResolver(absRoot)
+	if warn != nil {
 		allErrors = append(allErrors, FileError{
-			Path:   filepath.Join(absRoot, ".terraform", "modules", "modules.json"),
-			Errors: []parser.ParseError{{Msg: err.Error()}},
+			Path:   warn.Path,
+			Errors: []parser.ParseError{{Msg: warn.Msg}},
 		})
-		manifest = nil
 	}
+	chain := resolver.NewChain(manifestResolver, resolver.NewLocalResolver())
+	return LoadProjectWith(absRoot, chain, allErrors)
+}
 
+// LoadProjectWith is LoadProject with an injected resolver, for tests and
+// for callers (e.g. registry-backed resolvers in later PRs) that need a
+// custom chain. seedErrors is prepended to the returned FileError slice so
+// warnings raised while constructing the resolver can be preserved.
+func LoadProjectWith(rootDir string, r resolver.Resolver, seedErrors []FileError) (*Project, []FileError, error) {
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving root path: %w", err)
+	}
+	allErrors := append([]FileError(nil), seedErrors...)
 	visited := make(map[string]*ModuleNode)
-	root, err := loadModuleNode(absRoot, "", 0, manifest, visited, &allErrors)
+	root, err := loadModuleNode(context.Background(), absRoot, "", 0, r, visited, &allErrors)
 	if err != nil {
 		return nil, allErrors, err
 	}
@@ -118,9 +125,9 @@ const maxModuleDepth = 10
 
 // loadModuleNode parses one module directory and recursively its children.
 // parentKey is the dotted key path of this module in the workspace (empty
-// for the root); it is extended with each child's name when looking the
-// child up in the manifest.
-func loadModuleNode(dir, parentKey string, depth int, manifest *moduleManifest, visited map[string]*ModuleNode, allErrors *[]FileError) (*ModuleNode, error) {
+// for the root); it is extended with each child's name when forming the
+// child's Ref.
+func loadModuleNode(ctx context.Context, dir, parentKey string, depth int, r resolver.Resolver, visited map[string]*ModuleNode, allErrors *[]FileError) (*ModuleNode, error) {
 	if depth > maxModuleDepth {
 		return nil, fmt.Errorf("maximum module nesting depth (%d) exceeded at %s", maxModuleDepth, dir)
 	}
@@ -148,15 +155,28 @@ func loadModuleNode(dir, parentKey string, depth int, manifest *moduleManifest, 
 		if parentKey != "" {
 			childKey = parentKey + "." + e.Name
 		}
-		childDir := resolveChildDir(dir, childKey, mod.ModuleSource(e.Name), manifest)
-		if childDir == "" {
-			continue // unresolvable (remote source, no manifest entry)
+		ref := resolver.Ref{
+			Source:    mod.ModuleSource(e.Name),
+			Version:   mod.ModuleVersion(e.Name),
+			ParentDir: dir,
+			Key:       childKey,
 		}
-		child, err := loadModuleNode(childDir, childKey, depth+1, manifest, visited, allErrors)
+		resolved, err := r.Resolve(ctx, ref)
+		if err != nil {
+			if errors.Is(err, resolver.ErrNotApplicable) {
+				continue // unresolvable (remote source, no manifest entry)
+			}
+			*allErrors = append(*allErrors, FileError{
+				Path:   ref.Source,
+				Errors: []parser.ParseError{{Msg: err.Error()}},
+			})
+			continue
+		}
+		child, err := loadModuleNode(ctx, resolved.Dir, childKey, depth+1, r, visited, allErrors)
 		if err != nil {
 			// Non-fatal: report and continue loading other modules.
 			*allErrors = append(*allErrors, FileError{
-				Path:   childDir,
+				Path:   resolved.Dir,
 				Errors: []parser.ParseError{{Msg: err.Error()}},
 			})
 			continue
@@ -164,25 +184,6 @@ func loadModuleNode(dir, parentKey string, depth int, manifest *moduleManifest, 
 		node.Children[e.Name] = child
 	}
 	return node, nil
-}
-
-// resolveChildDir picks a directory for a child module call. Manifest entries
-// (from `terraform init`) take priority; local `source` paths are the
-// fallback. Returns an empty string when the child cannot be resolved.
-func resolveChildDir(parentDir, childKey, source string, manifest *moduleManifest) string {
-	if d := manifest.lookup(childKey); d != "" {
-		return d
-	}
-	if isLocalSource(source) {
-		return filepath.Clean(filepath.Join(parentDir, source))
-	}
-	return ""
-}
-
-// isLocalSource reports whether a Terraform module source is a local path
-// (starts with ./ or ../).
-func isLocalSource(source string) bool {
-	return strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
 }
 
 // parseDir reads and parses all .tf files in dir (non-recursively).
