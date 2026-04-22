@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Kind distinguishes how an entry was obtained, which changes its on-disk
@@ -77,14 +78,46 @@ func (c *Cache) Path(k Key) string {
 	if subdir == "" {
 		subdir = "_root"
 	}
+	host := sanitize(k.Host)
+	pathSeg := sanitize(k.Path)
+	ver := sanitize(k.Version)
+	sub := sanitize(subdir)
 	switch k.Kind {
 	case KindRegistry:
-		return filepath.Join(c.root, "registry", k.Host, k.Path, k.Version)
+		return filepath.Join(c.root, "registry", host, pathSeg, ver)
 	case KindGit:
-		return filepath.Join(c.root, "git", k.Host, k.Path, k.Version, subdir)
+		return filepath.Join(c.root, "git", host, pathSeg, ver, sub)
 	default:
-		return filepath.Join(c.root, "unknown", k.Host, k.Path, k.Version, subdir)
+		return filepath.Join(c.root, "unknown", host, pathSeg, ver, sub)
 	}
+}
+
+// sanitize %-encodes characters that are illegal in Windows path
+// components (and are therefore unsafe in any cross-platform cache). It
+// preserves '/' so multi-segment keys like "namespace/name/provider" or
+// "foo/bar.git" stay laid out as nested directories.
+func sanitize(s string) string {
+	const illegal = `<>:"\|?*%`
+	needs := false
+	for _, r := range s {
+		if r < 0x20 || strings.ContainsRune(illegal, r) {
+			needs = true
+			break
+		}
+	}
+	if !needs {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for _, r := range s {
+		if r < 0x20 || strings.ContainsRune(illegal, r) {
+			fmt.Fprintf(&b, "%%%02X", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Has reports whether the entry for k is populated on disk.
