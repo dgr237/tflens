@@ -31,25 +31,48 @@ type fakeRegistry struct {
 	downloadURL  string // set after Start to a URL on this same server
 	callCount    map[string]*int64
 	overrideMode string // "" | "git" to force a git:: download URL
+	// requireToken, when non-empty, causes every request to return 401
+	// unless its Authorization header is "Bearer <requireToken>".
+	requireToken string
+	// capturedAuth records the Authorization header seen by the tarball
+	// endpoint (which may live on a different host in real deployments
+	// but is same-host here).
+	capturedAuth map[string]string // path -> auth header
 }
 
 func newFakeRegistry(t *testing.T, versions []string) *fakeRegistry {
 	t.Helper()
 	tarball := buildTinyModuleTarball(t)
 	fr := &fakeRegistry{
-		versions:  versions,
-		tarball:   tarball,
-		callCount: map[string]*int64{"download": new(int64), "versions": new(int64)},
+		versions:     versions,
+		tarball:      tarball,
+		callCount:    map[string]*int64{"download": new(int64), "versions": new(int64)},
+		capturedAuth: map[string]string{},
 	}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/.well-known/terraform.json", func(w http.ResponseWriter, r *http.Request) {
+	// wrap applies requireToken gating around any handler.
+	wrap := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			fr.capturedAuth[r.URL.Path] = r.Header.Get("Authorization")
+			if fr.requireToken != "" {
+				got := r.Header.Get("Authorization")
+				if got != "Bearer "+fr.requireToken {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+			}
+			h(w, r)
+		}
+	}
+
+	mux.HandleFunc("/.well-known/terraform.json", wrap(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"modules.v1": "/v1/modules/",
 		})
-	})
+	}))
 
-	mux.HandleFunc("/v1/modules/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/modules/", wrap(func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/v1/modules/")
 		switch {
 		case strings.HasSuffix(rest, "/versions"):
@@ -72,12 +95,12 @@ func newFakeRegistry(t *testing.T, versions []string) *fakeRegistry {
 		default:
 			http.NotFound(w, r)
 		}
-	})
+	}))
 
-	mux.HandleFunc("/archive.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/archive.tar.gz", wrap(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
 		_, _ = w.Write(fr.tarball)
-	})
+	}))
 
 	// Use a TLS server so the "https" URL produced by discovery is valid —
 	// otherwise the HTTPS-only check in fetchAndExtract rejects the URL.
@@ -274,6 +297,83 @@ func TestRegistryResolveGitBackedReturnsClearError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "VCS") {
 		t.Errorf("error should mention VCS sources, got: %v", err)
+	}
+}
+
+func TestRegistryResolveSendsBearerToHostWithCredentials(t *testing.T) {
+	fr := newFakeRegistry(t, []string{"1.0.0"})
+	fr.requireToken = "supersecret"
+	defer fr.Close()
+
+	parsed, err := url.Parse(fr.URL)
+	if err != nil {
+		t.Fatalf("parse fake URL: %v", err)
+	}
+	c := cache.New(t.TempDir())
+	r, err := resolver.NewRegistryResolver(resolver.RegistryConfig{
+		Cache:       c,
+		HTTPClient:  fr.Client(),
+		DefaultHost: parsed.Host,
+		Credentials: resolver.StaticCredentials{parsed.Host: "supersecret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Resolve(context.Background(), resolver.Ref{Source: "ns/name/aws", Version: "1.0.0"}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+}
+
+func TestRegistryResolveFailsWhenRequiredTokenMissing(t *testing.T) {
+	fr := newFakeRegistry(t, []string{"1.0.0"})
+	fr.requireToken = "required"
+	defer fr.Close()
+	r, _ := newResolverForFake(t, fr) // no credentials configured
+
+	_, err := r.Resolve(context.Background(), resolver.Ref{Source: "ns/name/aws", Version: "1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("expected 401 error, got %v", err)
+	}
+}
+
+func TestRegistryResolveDoesNotLeakTokenToOtherHost(t *testing.T) {
+	// Two servers: the "registry" (holds credentials) redirects the
+	// download URL to the "cdn" (different host, no credentials). The
+	// CDN should receive no Authorization header.
+	cdn := newFakeRegistry(t, nil)
+	defer cdn.Close()
+
+	reg := newFakeRegistry(t, []string{"1.0.0"})
+	reg.downloadURL = cdn.URL + "/archive.tar.gz"
+	reg.requireToken = "secret"
+	defer reg.Close()
+
+	regHost, _ := url.Parse(reg.URL)
+	cdnHost, _ := url.Parse(cdn.URL)
+
+	// Use one HTTPS client that trusts both self-signed certs.
+	// httptest.Server.Client() already does — reg.Client() accepts cdn's
+	// cert too because httptest uses the same CA for all TLS servers in
+	// a test binary.
+	c := cache.New(t.TempDir())
+	r, err := resolver.NewRegistryResolver(resolver.RegistryConfig{
+		Cache:       c,
+		HTTPClient:  reg.Client(),
+		DefaultHost: regHost.Host,
+		Credentials: resolver.StaticCredentials{regHost.Host: "secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Resolve(context.Background(), resolver.Ref{Source: "ns/name/aws", Version: "1.0.0"}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	// The CDN must have received an empty Authorization header — the
+	// registry token must NOT have followed the redirect.
+	_ = cdnHost
+	if got := cdn.capturedAuth["/archive.tar.gz"]; got != "" {
+		t.Errorf("cross-host tarball fetch leaked Authorization header: %q", got)
 	}
 }
 

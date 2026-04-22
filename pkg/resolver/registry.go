@@ -32,6 +32,11 @@ type RegistryConfig struct {
 	// one (the common "ns/name/provider" form). Defaults to
 	// DefaultRegistryHost.
 	DefaultHost string
+	// Credentials supplies bearer tokens for registry hosts. A token is
+	// sent only to requests whose URL host matches a configured entry,
+	// so a cross-host redirect (e.g. registry → CDN for tarball) does
+	// not leak the token.
+	Credentials CredentialsSource
 }
 
 // RegistryResolver resolves Terraform Registry module sources by speaking
@@ -137,7 +142,7 @@ func (r *RegistryResolver) discover(ctx context.Context, host string) (string, e
 	r.discoveryMu.Unlock()
 
 	u := "https://" + host + "/.well-known/terraform.json"
-	body, err := r.getJSON(ctx, u, nil)
+	body, err := r.getJSON(ctx, u)
 	if err != nil {
 		return "", err
 	}
@@ -167,7 +172,7 @@ func (r *RegistryResolver) discover(ctx context.Context, host string) (string, e
 
 func (r *RegistryResolver) listVersions(ctx context.Context, base string, src registrySource) ([]constraint.V, error) {
 	u := base + path.Join(src.ns, src.name, src.provider, "versions")
-	body, err := r.getJSON(ctx, u, nil)
+	body, err := r.getJSON(ctx, u)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +223,7 @@ func (r *RegistryResolver) getDownloadURL(ctx context.Context, base string, src 
 	if err != nil {
 		return "", err
 	}
+	r.authorize(req)
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return "", err
@@ -266,6 +272,7 @@ func (r *RegistryResolver) fetchAndExtract(ctx context.Context, rawURL, destDir 
 	if err != nil {
 		return err
 	}
+	r.authorize(req)
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("downloading tarball: %w", err)
@@ -277,18 +284,15 @@ func (r *RegistryResolver) fetchAndExtract(ctx context.Context, rawURL, destDir 
 	return extractTarGz(resp.Body, destDir)
 }
 
-// getJSON issues a GET, applies optional per-request header tweaks, and
-// returns the body bounded to 1 MiB. The caller is responsible for
-// unmarshalling.
-func (r *RegistryResolver) getJSON(ctx context.Context, u string, decorate func(*http.Request)) ([]byte, error) {
+// getJSON issues an authorised GET and returns the body bounded to 1 MiB.
+// The caller is responsible for unmarshalling.
+func (r *RegistryResolver) getJSON(ctx context.Context, u string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	if decorate != nil {
-		decorate(req)
-	}
+	r.authorize(req)
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -298,4 +302,17 @@ func (r *RegistryResolver) getJSON(ctx context.Context, u string, decorate func(
 		return nil, fmt.Errorf("GET %s: %d", u, resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// authorize adds a Bearer token to req iff the request targets a host
+// with a configured credential. This host-exact match means redirects to
+// a third-party CDN (e.g. registry → GitHub archive) never leak the
+// registry token.
+func (r *RegistryResolver) authorize(req *http.Request) {
+	if r.cfg.Credentials == nil {
+		return
+	}
+	if tok := r.cfg.Credentials.Token(req.URL.Host); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 }
