@@ -1,0 +1,18 @@
+# Build output
+/tflens
+/tflens.exe
+
+# IDE
+/.idea/
+/.vscode/
+
+# Claude Code local overrides
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
