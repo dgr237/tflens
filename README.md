@@ -63,6 +63,7 @@ tflens --offline diff --branch main ./my-workspace
 | `diff --branch <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
 | `whatif <workspace> <module> <new-dir>` | Simulate upgrading a specific module call in a workspace to a candidate new version; report what would break |
 | `whatif --branch <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
+| `statediff --branch <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
 | `lsp` | Run as a Language Server Protocol server over stdio (for editor integration) |
@@ -265,6 +266,29 @@ Both modes exit non-zero when the direct-impact list is non-empty — suitable f
 
 `tflens diff --branch <base> [workspace]` is the complementary command: same workspace-vs-base comparison, but reports the full API diff per module call rather than cross-validation. Use `diff --branch` to review a module-bump PR; use `whatif --branch` to gate it.
 
+## State-level hazard detection (`statediff`)
+
+```
+tflens statediff --branch <base> [workspace] [--state state.json]
+```
+
+A static hazard detector for PRs that may unintentionally add, destroy, or re-instance resources. It answers: *if I merge this branch, which of my state's resource instances are at risk?*
+
+It reports:
+
+- **Resource identity adds and removes** — every `resource "TYPE" "NAME"` declaration that appears in one branch but not the other. A missing declaration is the most direct path to a destroy.
+- **Sensitive locals** — locals whose value expression changed between branches, whose dependency chain reaches a `count` or `for_each` meta-argument. This is the silent class of bug: trim a list in `locals { regions = [...] }` and a `for_each = toset(local.regions)` resource quietly loses an instance. No attribute in the resource block itself changed — tools that only diff resource blocks miss it.
+- **State cross-reference** — when `--state state.json` is given, every flagged resource is annotated with the instances currently in state. A reviewer sees concrete addresses (`aws_instance.web["us-west-2"]`) rather than abstract warnings.
+- **State orphans** — addresses in state that have no corresponding declaration in the working tree. These indicate pre-existing drift and are reported separately; they do NOT contribute to the exit code since they are not caused by this PR.
+
+Exit code is 1 when any resource add/remove or sensitive local fires.
+
+### What it does not do
+
+- **Plan simulation.** Attribute-level diffs (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) need provider schemas and expression evaluation — that is `terraform plan`'s job. `statediff` is a complementary, cheap, schema-free check that catches a different class of hazard than plan.
+- **Full expression evaluation.** A sensitive local with `count = length(local.xs) > 0 ? 1 : 0` is flagged as "may change" without us knowing whether `length` actually crosses the boundary. The signal is a warning, not a definitive answer.
+- **Variable-driven changes across module callers.** A `count = var.n` resource where the caller on one branch passes `n = 3` and the other passes `n = 1` is not currently followed across module boundaries.
+
 ## Module resolution
 
 Commands that traverse a workspace (`validate`, `whatif`, `diff --branch`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
@@ -384,6 +408,7 @@ Code is organised under `pkg/`:
 | `constraint` | SemVer parsing and Terraform-style version constraint evaluation (`~>`, `>=`, ...) |
 | `cache` | Content-addressable disk cache for downloaded module sources |
 | `resolver` | Pluggable `Resolver` chain (local path, `.terraform/modules/modules.json`, Terraform Registry, git) with credential support |
+| `tfstate` | Terraform state v4 JSON parser; exposes resource identity + instance keys for cross-reference |
 
 The CLI layer lives in top-level `cmd/` (cobra), with one file per subcommand. `main.go` just calls `cmd.Execute()`.
 
