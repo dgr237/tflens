@@ -19,6 +19,12 @@ import (
 // returned oldDir is the workspace's equivalent path inside the
 // worktree. cleanup MUST be called (usually deferred) to remove the
 // worktree.
+//
+// The workspace's position within the repo is obtained via
+// `git rev-parse --show-prefix` rather than filepath.Rel on top-vs-newDir.
+// This avoids tripping over Windows 8.3 short names (RUNNER~1 vs
+// runneradmin) and macOS /private/var symlinks, both of which cause git
+// and Go to disagree about the canonical path form.
 func prepareBranchCheckout(newDir, baseRef string) (oldDir string, cleanup func(), err error) {
 	newAbs, err := filepath.Abs(newDir)
 	if err != nil {
@@ -31,26 +37,29 @@ func prepareBranchCheckout(newDir, baseRef string) (oldDir string, cleanup func(
 	if err := gitRevParse(top, baseRef); err != nil {
 		return "", nil, fmt.Errorf("base ref %q not found: %w", baseRef, err)
 	}
+	prefix, err := gitShowPrefix(newAbs)
+	if err != nil {
+		return "", nil, fmt.Errorf("locating workspace within repo: %w", err)
+	}
 
 	worktreeDir, err := os.MkdirTemp("", "tflens-branch-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp worktree dir: %w", err)
 	}
+	// git worktree add requires the destination to not exist — MkdirTemp
+	// just made it, so remove it first.
+	_ = os.Remove(worktreeDir)
 	if err := gitWorktreeAdd(top, worktreeDir, baseRef); err != nil {
-		_ = os.RemoveAll(worktreeDir)
 		return "", nil, err
 	}
 
-	rel, err := filepath.Rel(top, newAbs)
-	if err != nil {
-		gitWorktreeRemove(top, worktreeDir)
-		return "", nil, fmt.Errorf("computing workspace path relative to repo root: %w", err)
+	oldDir = worktreeDir
+	if prefix != "" {
+		oldDir = filepath.Join(worktreeDir, filepath.FromSlash(prefix))
 	}
-	oldDir = filepath.Join(worktreeDir, rel)
 
 	cleanup = func() {
 		gitWorktreeRemove(top, worktreeDir)
-		// Safety net if the remove refused (dirty worktree etc).
 		_ = os.RemoveAll(worktreeDir)
 	}
 	return oldDir, cleanup, nil
@@ -67,6 +76,20 @@ func gitTopLevel(cwd string) (string, error) {
 func gitRevParse(top, ref string) error {
 	_, err := runGit(top, "rev-parse", "--verify", ref+"^{commit}")
 	return err
+}
+
+// gitShowPrefix returns the workspace's path relative to the repository
+// root, with forward slashes and a trailing slash, or "" when the
+// workspace IS the repository root. Authoritative for locating the
+// equivalent path inside a sibling worktree, avoiding disagreements
+// between Go's filepath and the on-disk path form that varies by OS
+// (8.3 short names on Windows, /private/var symlinks on macOS).
+func gitShowPrefix(cwd string) (string, error) {
+	out, err := runGit(cwd, "rev-parse", "--show-prefix")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(strings.TrimSpace(out), "/"), nil
 }
 
 func gitWorktreeAdd(top, dest, ref string) error {

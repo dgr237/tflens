@@ -1,0 +1,5 @@
+# Normalise all text files to LF in the working tree on every platform.
+# The printer's parse→print round-trip tests (and any tool that hashes
+# file bytes) rely on the file form being identical across developer
+# machines and CI runners.
+* text=auto eol=lf
