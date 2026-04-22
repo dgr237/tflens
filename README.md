@@ -1,8 +1,10 @@
 # tflens
 
-A standalone Terraform/HCL parser and analysis tool, written in Go. The only runtime dependency is [spf13/cobra](https://github.com/spf13/cobra) for the CLI layer; all parsing, analysis, and diff logic is dependency-free.
+A standalone Terraform/HCL parser and analysis tool, written in Go. The only runtime dependency is [spf13/cobra](https://github.com/spf13/cobra) for the CLI layer; all parsing, analysis, diff, constraint, and module-resolution logic is dependency-free.
 
-Parses `.tf` files into an AST, builds a dependency graph, validates references and types, and diffs two module versions to surface breaking changes. Does not execute Terraform, does not need provider schemas, does not touch the network.
+Parses `.tf` files into an AST, builds a dependency graph, validates references and types, and diffs two module versions to surface breaking changes. Does not execute Terraform and does not need provider schemas.
+
+Optionally fetches module sources (Terraform Registry or git) on demand so downstream analysis can traverse into them — see [Module resolution](#module-resolution). Pass `--offline` to disable network fetches; local paths and `.terraform/modules/modules.json` entries are always resolved regardless.
 
 ## Install / build
 
@@ -22,7 +24,7 @@ go build -o tflens .
 go test ./...
 ```
 
-Requires Go 1.22+.
+Requires Go 1.25+. For network-mode module resolution (registry / git), `git` must also be available on `$PATH`.
 
 Every subcommand has auto-generated help:
 
@@ -35,13 +37,14 @@ tflens diff --help
 Shell completion scripts (bash / zsh / fish / PowerShell) are available via
 `tflens completion <shell>`.
 
-A global `--format json` flag is accepted on every data-producing subcommand
-(`inventory`, `deps`, `impact`, `unused`, `cycles`, `validate`, `diff`,
-`whatif`). Structured output goes to stdout; warnings remain on stderr as
-plain text, so stdout stays pipeable:
+Global flags accepted on every subcommand:
+
+- `--format json` — emit structured output on stdout; warnings stay on stderr as plain text, so stdout stays pipeable.
+- `--offline` — disable registry and git fetches; only local paths and `.terraform/modules/modules.json` entries are resolved.
 
 ```
 tflens --format json validate ./my-workspace | jq '.cross_module_issues[]'
+tflens --offline diff --branch main ./my-workspace
 ```
 
 ## Commands
@@ -57,7 +60,9 @@ tflens --format json validate ./my-workspace | jq '.cross_module_issues[]'
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
 | `diff <old> <new>` | Compare two module versions and classify changes as Breaking, NonBreaking, or Informational |
+| `diff --branch <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
 | `whatif <workspace> <module> <new-dir>` | Simulate upgrading a specific module call in a workspace to a candidate new version; report what would break |
+| `whatif --branch <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
 | `lsp` | Run as a Language Server Protocol server over stdio (for editor integration) |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
@@ -110,10 +115,7 @@ Parse errors are reported with position information (`file:line:column`). Line (
 - When the argument's type is inferable (literal, built-in function return, or `var.X` with a declared type) and the child variable has a declared type, incompatible types are flagged.
 - Recursion is transitive: root → middle → leaf modules are all cross-checked.
 
-Child module resolution:
-1. **`.terraform/modules/modules.json`** — if the manifest produced by `terraform init` is present, every module call is resolved through it (by dotted key path: `vpc`, `vpc.sg`, etc.). This makes registry and Git sources fully checkable.
-2. **Local path sources** — `source = "./x"` and `source = "../y"` resolve relative to the parent module directory. Used both as a fallback when no manifest exists and for entries the manifest does not cover.
-3. **Unresolvable** — module calls whose directory cannot be determined are silently skipped. For registry/Git modules, run `terraform init` first so the manifest is populated.
+See [Module resolution](#module-resolution) below for how `source = "..."` is turned into a directory on disk.
 
 A broken `modules.json` is reported as a warning but does not abort the rest of the validation.
 
@@ -124,7 +126,7 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 - **Provider attribute types.** The shape of `aws_vpc.main.cidr_block` depends on the AWS provider schema, which this tool does not embed.
 - **Condition semantics.** `validation { condition = ... }`, `precondition`, and `postcondition` block contents are not evaluated. Their presence is recorded but the conditions themselves are opaque.
 - **`count` with string literals.** Terraform silently coerces `"3"` to `3`, so we allow it.
-- **Cross-module validation for unresolved remote sources.** Parent → child checks require the child's directory to be resolvable — either via a local path (`./x`, `../y`) or via the post-`terraform init` manifest at `.terraform/modules/modules.json`. Without either, registry and Git sources cannot be loaded and are silently skipped. Run `terraform init` first if you want these covered.
+- **Cross-module validation in `--offline` mode for unresolved remote sources.** When `--offline` is set, parent → child checks require the child's directory to be resolvable — either via a local path (`./x`, `../y`) or via the post-`terraform init` manifest at `.terraform/modules/modules.json`. Registry and git sources cannot be loaded in that mode and are silently skipped. Either run `terraform init` first or drop `--offline`.
 - **Cross-module validation where argument types are opaque.** A parent passing `aws_vpc.main.cidr_block` to a typed child variable produces no type-mismatch error because the resource attribute's type cannot be resolved without provider schemas.
 - **Runtime values.** Defaults that call `timestamp()`, `uuid()`, or similar are not evaluated.
 - **Prerelease/build metadata in semver.** Stripped during parsing.
@@ -232,22 +234,67 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 
 ## What-if upgrade analysis (`whatif`)
 
-`tflens whatif <workspace> <module-call-name> <new-version-path>` answers the question: *if I bumped this module to a new version, would my current usage still work?*
+`whatif` answers: *if I bumped this module to a new version, would my current usage still work?* It has two modes.
+
+### Explicit mode
 
 ```
-tflens whatif ./my-stack vpc /tmp/vpc-v6
+tflens whatif <workspace> <module-call-name> <new-version-path>
 ```
 
-The tool:
+Point at a workspace, the module call you want to simulate, and a directory containing the candidate new version (a local checkout at a tag, an extracted tarball, or a separate `.terraform/modules/<name>` tree).
 
-1. Loads the workspace and locates the current version of `module.<name>` via the normal resolution rules (manifest → local source).
+1. Loads the workspace and locates the current version of `module.<name>` via the normal resolution rules.
 2. Loads the candidate new version as a standalone module from `<new-version-path>`.
 3. **Direct impact:** runs cross-validation of the parent's `module "<name>" { ... }` block against the *candidate* — reports missing required inputs, unknown arguments, and type mismatches the upgrade would introduce.
 4. **Module API changes:** runs a full `diff` between the currently-installed child and the candidate for context (Breaking / NonBreaking / Informational).
 
-Exits non-zero when the direct-impact list is non-empty. Suitable for CI gating a proposed module upgrade before merging the `version = ` change.
+### Branch mode
 
-Use the candidate source that matches how you would install it: a local checkout at a tag, an extracted tarball, or the downloaded content from a separate `.terraform/modules/<name>` tree.
+```
+tflens whatif --branch <base> [workspace] [call-name]
+```
+
+The candidate new version is whatever the working tree resolves to. The "current" caller is the workspace checked out at git ref `<base>`. Useful for CI-gating an upgrade PR: on a feature branch that bumps `version = "..."` or refactors a local child, run `tflens whatif --branch main` to see whether callers on main would break.
+
+With no `call-name`, every module call that differs between `<base>` and the working tree is simulated and aggregated; pass a name to scope to one call.
+
+Both modes exit non-zero when the direct-impact list is non-empty — suitable for CI gating.
+
+`tflens diff --branch <base> [workspace]` is the complementary command: same workspace-vs-base comparison, but reports the full API diff per module call rather than cross-validation. Use `diff --branch` to review a module-bump PR; use `whatif --branch` to gate it.
+
+## Module resolution
+
+Commands that traverse a workspace (`validate`, `whatif`, `diff --branch`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
+
+1. **Local path** — `source = "./x"` and `source = "../y"` resolve relative to the caller's directory. Always tried.
+2. **`.terraform/modules/modules.json`** — if the manifest produced by `terraform init` is present, every module call is resolved through it by dotted key path (`vpc`, `vpc.sg`, etc.). Always tried.
+3. **Terraform Registry** — sources of the form `ns/name/provider` or `host/ns/name/provider` (plus optional `//subdir`). Service discovery (`/.well-known/terraform.json`) → version list → `version` constraint (`~>`, `>=`, `<`, `=`, `!=`) resolved to a concrete version → tarball or git download → extracted into the cache. Skipped in `--offline` mode.
+4. **Git** — `source = "git::<url>"` (HTTPS, SSH, or file:// for tests) plus the bare VCS shorthand `github.com/foo/bar`, `bitbucket.org/foo/bar`, `gitlab.com/foo/bar`, `codeberg.org/foo/bar`. Honours `?ref=` and `//subdir`. Skipped in `--offline` mode.
+
+### Cache
+
+Downloaded modules are stored under the OS user cache directory (e.g. `~/.cache/tflens/modules` on Linux, `%LocalAppData%\tflens\modules` on Windows). The cache is content-addressable and immutable: a given (host, path, concrete-version) tuple is only ever downloaded once. Delete the directory to force re-fetches.
+
+### Private registries
+
+Credentials for private registries are read from the Terraform CLI config file (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere). The format is identical to Terraform's:
+
+```
+credentials "app.terraform.io" {
+  token = "your-api-token"
+}
+
+credentials "registry.example.com" {
+  token = "..."
+}
+```
+
+Bearer tokens are sent **only** to requests whose `URL.Host` exactly matches a configured entry. This means a registry that redirects its tarball download URL at a third-party CDN (typical for GitHub-backed public modules) never receives the token.
+
+### Version constraints
+
+`~>`, `>=`, `<=`, `>`, `<`, `=`, `!=` are supported, comma-separated clauses are intersected. Version comparison follows SemVer 2.0.0, including prerelease precedence (§11). Prerelease matching is currently mathematical: `1.5.0-beta` satisfies `>= 1.0.0`.
 
 ## Fundamental limitations
 
@@ -330,8 +377,11 @@ Code is organised under `pkg/`:
 | `parser` | Recursive-descent / Pratt parser with error recovery |
 | `printer` | Idempotent AST-to-HCL printer (including `PrintExpr` for single expressions) |
 | `analysis` | Entity collection, dependency graph, type system, validation, graph algorithms (cycles, topo-sort, impact, unreferenced) |
-| `loader` | Multi-file / directory / recursive submodule loading, `.terraform/modules/modules.json` resolution, cross-module input validation |
+| `loader` | Multi-file / directory / recursive submodule loading, cross-module input validation |
 | `diff` | Two-module comparison with semver-aware constraint classification |
+| `constraint` | SemVer parsing and Terraform-style version constraint evaluation (`~>`, `>=`, ...) |
+| `cache` | Content-addressable disk cache for downloaded module sources |
+| `resolver` | Pluggable `Resolver` chain (local path, `.terraform/modules/modules.json`, Terraform Registry, git) with credential support |
 
 The CLI layer lives in top-level `cmd/` (cobra), with one file per subcommand. `main.go` just calls `cmd.Execute()`.
 
