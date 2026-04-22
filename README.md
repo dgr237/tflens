@@ -63,6 +63,8 @@ tflens --offline diff --branch main ./my-workspace
 | `diff --branch <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
 | `whatif <workspace> <module> <new-dir>` | Simulate upgrading a specific module call in a workspace to a candidate new version; report what would break |
 | `whatif --branch <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
+| `cache info` | Show the cache location, entry count, and total size |
+| `cache clear` | Delete every cached module |
 | `lsp` | Run as a Language Server Protocol server over stdio (for editor integration) |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
