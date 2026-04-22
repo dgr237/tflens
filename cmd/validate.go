@@ -34,7 +34,7 @@ func init() {
 }
 
 func runValidate(cmd *cobra.Command, path string) {
-	mod, crossErrs := loadForValidate(path)
+	mod, crossErrs := loadForValidate(cmd, path)
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
@@ -100,7 +100,7 @@ func runValidate(cmd *cobra.Command, path string) {
 // loadForValidate returns the root module for validation plus any
 // cross-module errors discovered by walking into locally-referenced child
 // modules. For a single .tf file, cross-module checks are skipped (no tree).
-func loadForValidate(path string) (*analysis.Module, []analysis.ValidationError) {
+func loadForValidate(cmd *cobra.Command, path string) (*analysis.Module, []analysis.ValidationError) {
 	info, err := os.Stat(path)
 	if err != nil {
 		fatalf("%v", err)
@@ -108,15 +108,9 @@ func loadForValidate(path string) (*analysis.Module, []analysis.ValidationError)
 	if !info.IsDir() {
 		return mustLoadModule(path), nil
 	}
-	project, fileErrs, err := loader.LoadProject(path)
+	project, err := loadProject(cmd, path)
 	if err != nil {
 		fatalf("loading project: %v", err)
-	}
-	for _, fe := range fileErrs {
-		fmt.Fprintf(os.Stderr, "warning: parse errors in %s\n", fe.Path)
-		for _, e := range fe.Errors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
 	}
 	return project.Root.Module, loader.CrossValidate(project)
 }

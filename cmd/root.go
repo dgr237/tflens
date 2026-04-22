@@ -16,8 +16,14 @@ var rootCmd = &cobra.Command{
 
 It parses .tf files into an AST, builds a dependency graph, validates
 references and types, and diffs two module versions to surface breaking
-changes. It does not execute Terraform, does not need provider schemas,
-and does not touch the network.`,
+changes. It does not execute Terraform and does not need provider
+schemas.
+
+By default, module calls whose source is a Terraform Registry address or
+a git URL are fetched on demand (and cached for next time) so downstream
+analysis can traverse into them. Pass --offline to disable network
+fetches — local paths and .terraform/modules/modules.json entries are
+still resolved.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -25,6 +31,8 @@ and does not touch the network.`,
 func init() {
 	rootCmd.PersistentFlags().String("format", "text",
 		"output format: text or json. When json, structured output goes to stdout; warnings stay on stderr")
+	rootCmd.PersistentFlags().Bool("offline", false,
+		"disable registry and git fetches; only local paths and .terraform/modules/modules.json are resolved")
 }
 
 // Execute runs the CLI. It is called from main().

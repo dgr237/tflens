@@ -45,15 +45,9 @@ func runWhatif(cmd *cobra.Command, workspace, moduleCallName, newVersionPath str
 	if !info.IsDir() {
 		fatalf("whatif requires a workspace directory, got a file")
 	}
-	project, fileErrs, err := loader.LoadProject(workspace)
+	project, err := loadProject(cmd, workspace)
 	if err != nil {
 		fatalf("loading workspace: %v", err)
-	}
-	for _, fe := range fileErrs {
-		fmt.Fprintf(os.Stderr, "warning: parse errors in %s\n", fe.Path)
-		for _, e := range fe.Errors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
 	}
 	parent := project.Root.Module
 
