@@ -38,6 +38,10 @@ type fakeRegistry struct {
 	// endpoint (which may live on a different host in real deployments
 	// but is same-host here).
 	capturedAuth map[string]string // path -> auth header
+	// gitDownloadURL overrides the hardcoded placeholder git:: URL sent
+	// back on /download when overrideMode == "git". Empty means use the
+	// placeholder (for tests that don't need a real repo).
+	gitDownloadURL string
 }
 
 func newFakeRegistry(t *testing.T, versions []string) *fakeRegistry {
@@ -86,9 +90,12 @@ func newFakeRegistry(t *testing.T, versions []string) *fakeRegistry {
 			})
 		case strings.HasSuffix(rest, "/download"):
 			atomic.AddInt64(fr.callCount["download"], 1)
-			if fr.overrideMode == "git" {
+			switch {
+			case fr.overrideMode == "git" && fr.gitDownloadURL != "":
+				w.Header().Set("X-Terraform-Get", fr.gitDownloadURL)
+			case fr.overrideMode == "git":
 				w.Header().Set("X-Terraform-Get", "git::https://github.com/example/repo?ref=v1.0.0")
-			} else {
+			default:
 				w.Header().Set("X-Terraform-Get", fr.downloadURL)
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -282,21 +289,24 @@ func TestRegistryResolveNoMatchingVersionIsError(t *testing.T) {
 	}
 }
 
-func TestRegistryResolveGitBackedReturnsClearError(t *testing.T) {
+func TestRegistryResolveGitBackedWithoutGitFetcherErrors(t *testing.T) {
+	// When the registry returns a git:: URL but no GitFetcher is wired
+	// into the config, the user should see a clear error rather than an
+	// opaque download failure.
 	fr := newFakeRegistry(t, []string{"1.0.0"})
 	fr.overrideMode = "git"
 	defer fr.Close()
-	r, _ := newResolverForFake(t, fr)
+	r, _ := newResolverForFake(t, fr) // no GitFetcher
 
 	_, err := r.Resolve(context.Background(), resolver.Ref{
 		Source:  "ns/name/aws",
 		Version: "1.0.0",
 	})
 	if err == nil {
-		t.Fatal("expected error for git-backed download URL")
+		t.Fatal("expected error for git-backed download URL with no GitFetcher")
 	}
-	if !strings.Contains(err.Error(), "VCS") {
-		t.Errorf("error should mention VCS sources, got: %v", err)
+	if !strings.Contains(err.Error(), "git-backed") || !strings.Contains(err.Error(), "GitFetcher") {
+		t.Errorf("error should name the missing GitFetcher, got: %v", err)
 	}
 }
 

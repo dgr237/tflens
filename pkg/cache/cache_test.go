@@ -38,22 +38,21 @@ func TestPathRegistryLayout(t *testing.T) {
 	}
 }
 
-func TestPathGitLayoutIncludesSubdir(t *testing.T) {
+func TestPathGitLayoutStopsAtVersion(t *testing.T) {
+	// Path for git ends at {version} regardless of Subdir — one clone of
+	// a repo+ref serves all //subdir consumers.
 	c := cache.New("/root")
 	got := c.Path(gitKey())
-	want := filepath.Clean("/root/git/github.com/foo/bar.git/v1.2.3/modules/vpc")
+	want := filepath.Clean("/root/git/github.com/foo/bar.git/v1.2.3")
 	if got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
-}
 
-func TestPathGitRepoRootUsesPlaceholder(t *testing.T) {
-	c := cache.New("/root")
-	k := gitKey()
-	k.Subdir = ""
-	got := c.Path(k)
-	if !strings.HasSuffix(filepath.ToSlash(got), "/v1.2.3/_root") {
-		t.Errorf("Path = %q, want suffix .../v1.2.3/_root", got)
+	// Changing Subdir does NOT change Path — they share the cache entry.
+	k2 := gitKey()
+	k2.Subdir = "different/subdir"
+	if c.Path(k2) != got {
+		t.Errorf("different subdirs produced different paths: %q vs %q", got, c.Path(k2))
 	}
 }
 

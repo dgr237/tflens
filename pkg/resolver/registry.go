@@ -37,6 +37,17 @@ type RegistryConfig struct {
 	// so a cross-host redirect (e.g. registry → CDN for tarball) does
 	// not leak the token.
 	Credentials CredentialsSource
+	// GitFetcher handles git-backed download URLs (X-Terraform-Get with
+	// a "git::" prefix — the common case for public registry modules
+	// hosted on GitHub). When nil, git-backed downloads return an error.
+	GitFetcher GitFetcher
+}
+
+// GitFetcher fetches a git-backed download URL into its own cache and
+// returns the resulting directory. Implementations manage their own
+// caching; RegistryResolver does not wrap them in its registry cache.
+type GitFetcher interface {
+	FetchGit(ctx context.Context, rawURL string) (string, error)
 }
 
 // RegistryResolver resolves Terraform Registry module sources by speaking
@@ -106,28 +117,43 @@ func (r *RegistryResolver) Resolve(ctx context.Context, ref Ref) (*Resolved, err
 		Version: chosen.String(),
 	}
 	if r.cfg.Cache.Has(key) {
-		return finaliseResolved(r.cfg.Cache.Path(key), src.subdir, chosen.String())
+		return finaliseResolved(r.cfg.Cache.Path(key), src.subdir, chosen.String(), KindRegistry)
+	}
+
+	downloadURL, err := r.getDownloadURL(ctx, base, src, chosen.String())
+	if err != nil {
+		return nil, err
+	}
+
+	// Git-backed download URLs live in the git cache, not the registry
+	// cache — this avoids duplicating a clone for every (ns/name/prov)
+	// that maps to the same repo+ref.
+	if strings.HasPrefix(downloadURL, "git::") {
+		if r.cfg.GitFetcher == nil {
+			return nil, fmt.Errorf("registry download URL %q is git-backed but no GitFetcher is configured", downloadURL)
+		}
+		baseDir, err := r.cfg.GitFetcher.FetchGit(ctx, strings.TrimPrefix(downloadURL, "git::"))
+		if err != nil {
+			return nil, fmt.Errorf("fetching git-backed registry module: %w", err)
+		}
+		return finaliseResolved(baseDir, src.subdir, chosen.String(), KindGit)
 	}
 
 	dir, err := r.cfg.Cache.Put(key, func(tmp string) error {
-		downloadURL, err := r.getDownloadURL(ctx, base, src, chosen.String())
-		if err != nil {
-			return err
-		}
 		return r.fetchAndExtract(ctx, downloadURL, tmp)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return finaliseResolved(dir, src.subdir, chosen.String())
+	return finaliseResolved(dir, src.subdir, chosen.String(), KindRegistry)
 }
 
-func finaliseResolved(baseDir, subdir, version string) (*Resolved, error) {
+func finaliseResolved(baseDir, subdir, version string, kind Kind) (*Resolved, error) {
 	dir := baseDir
 	if subdir != "" {
 		dir = filepath.Join(baseDir, filepath.FromSlash(subdir))
 	}
-	return &Resolved{Dir: dir, Version: version, Kind: KindRegistry}, nil
+	return &Resolved{Dir: dir, Version: version, Kind: kind}, nil
 }
 
 // discover performs Terraform service discovery against host. The returned

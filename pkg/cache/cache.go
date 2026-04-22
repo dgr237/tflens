@@ -14,6 +14,8 @@
 package cache
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -73,22 +75,25 @@ func (c *Cache) Root() string { return c.root }
 
 // Path returns the directory where k's contents live (or would live).
 // The path is returned regardless of whether the entry exists.
+//
+// For KindGit, the path ends at {version} (the ref) so multiple //subdir
+// consumers of the same repo+ref share a single cached clone. Callers
+// apply their own subdir onto the returned path.
 func (c *Cache) Path(k Key) string {
-	subdir := k.Subdir
-	if subdir == "" {
-		subdir = "_root"
-	}
 	host := sanitize(k.Host)
 	pathSeg := sanitize(k.Path)
 	ver := sanitize(k.Version)
-	sub := sanitize(subdir)
 	switch k.Kind {
 	case KindRegistry:
 		return filepath.Join(c.root, "registry", host, pathSeg, ver)
 	case KindGit:
-		return filepath.Join(c.root, "git", host, pathSeg, ver, sub)
+		return filepath.Join(c.root, "git", host, pathSeg, ver)
 	default:
-		return filepath.Join(c.root, "unknown", host, pathSeg, ver, sub)
+		subdir := k.Subdir
+		if subdir == "" {
+			subdir = "_root"
+		}
+		return filepath.Join(c.root, "unknown", host, pathSeg, ver, sanitize(subdir))
 	}
 }
 
@@ -96,6 +101,14 @@ func (c *Cache) Path(k Key) string {
 // components (and are therefore unsafe in any cross-platform cache). It
 // preserves '/' so multi-segment keys like "namespace/name/provider" or
 // "foo/bar.git" stay laid out as nested directories.
+//
+// If the encoded result exceeds maxSanitizedLen, the whole string is
+// replaced by a stable 16-char SHA-256 prefix. This prevents file://
+// cache keys (which can embed very long absolute paths) from busting
+// Windows' default 260-character MAX_PATH once git's internal object
+// hierarchy is laid out underneath.
+const maxSanitizedLen = 64
+
 func sanitize(s string) string {
 	const illegal = `<>:"\|?*%`
 	needs := false
@@ -105,19 +118,24 @@ func sanitize(s string) string {
 			break
 		}
 	}
-	if !needs {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 4)
-	for _, r := range s {
-		if r < 0x20 || strings.ContainsRune(illegal, r) {
-			fmt.Fprintf(&b, "%%%02X", r)
-			continue
+	out := s
+	if needs {
+		var b strings.Builder
+		b.Grow(len(s) + 4)
+		for _, r := range s {
+			if r < 0x20 || strings.ContainsRune(illegal, r) {
+				fmt.Fprintf(&b, "%%%02X", r)
+				continue
+			}
+			b.WriteRune(r)
 		}
-		b.WriteRune(r)
+		out = b.String()
 	}
-	return b.String()
+	if len(out) > maxSanitizedLen {
+		sum := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(sum[:8])
+	}
+	return out
 }
 
 // Has reports whether the entry for k is populated on disk.
