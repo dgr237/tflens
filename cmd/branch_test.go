@@ -221,6 +221,78 @@ func TestDiffBranchReportsBreakingLocalChange(t *testing.T) {
 	}
 }
 
+func TestWhatifBranchReportsDirectImpactForAllChangedCalls(t *testing.T) {
+	ws := makeBranchRepo(t)
+	bin := buildTflens(t)
+
+	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	// Non-zero exit expected — base parent calls x, new child no longer accepts x.
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 for direct impact, got err=%v\nstderr=%s", err, stderr.String())
+	}
+
+	var out struct {
+		BaseRef string `json:"base_ref"`
+		Calls   []struct {
+			Name         string `json:"name"`
+			Status       string `json:"status"`
+			DirectImpact []struct {
+				Msg string `json:"msg"`
+			} `json:"direct_impact"`
+		} `json:"calls"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
+	}
+	if out.BaseRef != "main" {
+		t.Errorf("base_ref = %q, want main", out.BaseRef)
+	}
+	if len(out.Calls) != 1 || out.Calls[0].Name != "child" {
+		t.Fatalf("calls = %+v, want one entry for 'child'", out.Calls)
+	}
+	if len(out.Calls[0].DirectImpact) == 0 {
+		t.Errorf("expected direct impact issues, got none")
+	}
+}
+
+func TestWhatifBranchByCallName(t *testing.T) {
+	ws := makeBranchRepo(t)
+	bin := buildTflens(t)
+
+	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", "--format=json", ws, "child")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		exitErr, _ := err.(*exec.ExitError)
+		if exitErr == nil || exitErr.ExitCode() != 1 {
+			t.Fatalf("unexpected error: %v\nstderr=%s", err, stderr.String())
+		}
+	}
+	// JSON is pretty-printed, so match loosely.
+	if !strings.Contains(stdout.String(), `"name": "child"`) {
+		t.Errorf("expected JSON with name=child, got: %s", stdout.String())
+	}
+}
+
+func TestWhatifBranchUnknownCallName(t *testing.T) {
+	ws := makeBranchRepo(t)
+	bin := buildTflens(t)
+
+	cmd := exec.Command(bin, "--offline", "whatif", "--branch", "main", ws, "nonexistent")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error for unknown call name, got clean exit; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "nonexistent") {
+		t.Errorf("error should mention the call name, got:\n%s", out)
+	}
+}
+
 func TestDiffBranchNoChanges(t *testing.T) {
 	// Same as makeBranchRepo but without the feature commit — just main.
 	if _, err := exec.LookPath("git"); err != nil {
