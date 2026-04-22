@@ -101,19 +101,20 @@ func runStatediff(cmd *cobra.Command, workspace, baseRef, statePath string) erro
 // statediffResult is both the text-mode report aggregator and the JSON
 // payload, so field tags matter.
 type statediffResult struct {
-	BaseRef           string                `json:"base_ref"`
-	Workspace         string                `json:"workspace"`
-	AddedResources    []resourceRef         `json:"added_resources"`
-	RemovedResources  []resourceRef         `json:"removed_resources"`
-	SensitiveLocals   []sensitiveLocal      `json:"sensitive_locals"`
-	StateOrphans      []string              `json:"state_orphans,omitempty"`
+	BaseRef           string            `json:"base_ref"`
+	Workspace         string            `json:"workspace"`
+	AddedResources    []resourceRef     `json:"added_resources"`
+	RemovedResources  []resourceRef     `json:"removed_resources"`
+	RenamedResources  []renamePair      `json:"renamed_resources,omitempty"`
+	SensitiveChanges  []sensitiveChange `json:"sensitive_changes"`
+	StateOrphans      []string          `json:"state_orphans,omitempty"`
 }
 
 func (r statediffResult) flaggedCount() int {
-	n := len(r.AddedResources) + len(r.RemovedResources) + len(r.SensitiveLocals)
-	// State orphans are noted but not counted as "flagged" — they
-	// indicate pre-existing drift, not changes introduced by this PR.
-	return n
+	// Renames and state orphans are noted but not counted as "flagged" —
+	// renames are Terraform-handled, orphans are pre-existing drift
+	// rather than changes introduced by this PR.
+	return len(r.AddedResources) + len(r.RemovedResources) + len(r.SensitiveChanges)
 }
 
 type resourceRef struct {
@@ -130,12 +131,42 @@ func (r resourceRef) Address() string {
 	return r.Module + "." + r.Type + "." + r.Name
 }
 
-type sensitiveLocal struct {
-	Module             string            `json:"module"`
-	Name               string            `json:"name"`
-	OldValue           string            `json:"old_value"`
-	NewValue           string            `json:"new_value"`
-	AffectedResources  []affectedResource `json:"affected_resources"`
+// renamePair records a moved-block-declared rename. The same module
+// prefix applies to both from and to (moved blocks are scoped to one
+// module), so it's carried once.
+type renamePair struct {
+	Module string `json:"module"`
+	From   string `json:"from"` // entity ID, e.g. "resource.aws_vpc.old"
+	To     string `json:"to"`   // entity ID, e.g. "resource.aws_vpc.new"
+}
+
+func (r renamePair) FromAddress() string { return formatEntityAddress(r.Module, r.From) }
+func (r renamePair) ToAddress() string   { return formatEntityAddress(r.Module, r.To) }
+
+// formatEntityAddress turns "resource.aws_vpc.main" + module prefix into
+// a Terraform-style address "module.vpc.aws_vpc.main". Returns the raw
+// ID if the shape is unfamiliar.
+func formatEntityAddress(modPath, entityID string) string {
+	addr := entityID
+	if strings.HasPrefix(entityID, "resource.") {
+		addr = strings.TrimPrefix(entityID, "resource.")
+	}
+	if modPath == "" {
+		return addr
+	}
+	return modPath + "." + addr
+}
+
+// sensitiveChange captures either a local's value change or a variable's
+// default change that reaches a count/for_each expansion. Kind
+// discriminates the two.
+type sensitiveChange struct {
+	Module            string             `json:"module"`
+	Kind              string             `json:"kind"` // "local" or "variable"
+	Name              string             `json:"name"`
+	OldValue          string             `json:"old_value"`
+	NewValue          string             `json:"new_value"`
+	AffectedResources []affectedResource `json:"affected_resources"`
 }
 
 type affectedResource struct {
@@ -159,8 +190,8 @@ func analyzeStatediff(oldProj, newProj *loader.Project, state *tfstate.State) st
 	newMods := walkAllModules(newProj)
 
 	result := statediffResult{}
-	result.AddedResources, result.RemovedResources = diffResources(oldMods, newMods)
-	result.SensitiveLocals = detectSensitiveLocals(oldMods, newMods, state)
+	result.AddedResources, result.RemovedResources, result.RenamedResources = diffResources(oldMods, newMods)
+	result.SensitiveChanges = detectSensitiveChanges(oldMods, newMods, state)
 	if state != nil {
 		result.StateOrphans = detectStateOrphans(state, newMods)
 	}
@@ -194,22 +225,72 @@ func walkAllModules(p *loader.Project) map[string]*loader.ModuleNode {
 
 // ---- resource identity diff ----
 
-func diffResources(oldMods, newMods map[string]*loader.ModuleNode) (added, removed []resourceRef) {
+func diffResources(oldMods, newMods map[string]*loader.ModuleNode) (added, removed []resourceRef, renamed []renamePair) {
 	oldSet := collectResources(oldMods)
 	newSet := collectResources(newMods)
+
+	// A rename declared by a `moved { from = X, to = Y }` block in the
+	// new tree is only genuine when:
+	//   - old tree has `from`, new tree doesn't (we really lost the old name)
+	//   - new tree has `to`, old tree doesn't (the new name really is new)
+	// Dangling moved blocks (to still absent, or from still present)
+	// are ignored so we don't hide real adds/removes behind them.
+	handled := map[string]bool{}
+	for modPath, node := range newMods {
+		if node == nil || node.Module == nil {
+			continue
+		}
+		for from, to := range node.Module.Moved() {
+			// Skip module renames — statediff reports on resources.
+			if !strings.HasPrefix(from, "resource.") || !strings.HasPrefix(to, "resource.") {
+				continue
+			}
+			fromKey := entityKey(modPath, from)
+			toKey := entityKey(modPath, to)
+			_, oldHasFrom := oldSet[fromKey]
+			_, oldHasTo := oldSet[toKey]
+			_, newHasFrom := newSet[fromKey]
+			_, newHasTo := newSet[toKey]
+			if oldHasFrom && newHasTo && !oldHasTo && !newHasFrom {
+				handled[fromKey] = true
+				handled[toKey] = true
+				renamed = append(renamed, renamePair{Module: modPath, From: from, To: to})
+			}
+		}
+	}
+
 	for k, r := range newSet {
+		if handled[k] {
+			continue
+		}
 		if _, ok := oldSet[k]; !ok {
 			added = append(added, r)
 		}
 	}
 	for k, r := range oldSet {
+		if handled[k] {
+			continue
+		}
 		if _, ok := newSet[k]; !ok {
 			removed = append(removed, r)
 		}
 	}
 	sortResourceRefs(added)
 	sortResourceRefs(removed)
-	return added, removed
+	sort.Slice(renamed, func(i, j int) bool {
+		if renamed[i].Module != renamed[j].Module {
+			return renamed[i].Module < renamed[j].Module
+		}
+		return renamed[i].From < renamed[j].From
+	})
+	return added, removed, renamed
+}
+
+// entityKey composes a unique map key combining module path with the
+// canonical entity ID. Used so both collectResources and Moved() reads
+// agree on how to address a resource.
+func entityKey(modPath, entityID string) string {
+	return modPath + "|" + entityID
 }
 
 func collectResources(mods map[string]*loader.ModuleNode) map[string]resourceRef {
@@ -227,7 +308,7 @@ func collectResources(mods map[string]*loader.ModuleNode) map[string]resourceRef
 				mode = "data"
 			}
 			r := resourceRef{Module: modPath, Type: e.Type, Name: e.Name, Mode: mode}
-			out[modPath+"|"+mode+"|"+e.Type+"|"+e.Name] = r
+			out[entityKey(modPath, e.ID())] = r
 		}
 	}
 	return out
@@ -237,52 +318,100 @@ func sortResourceRefs(rs []resourceRef) {
 	sort.Slice(rs, func(i, j int) bool { return rs[i].Address() < rs[j].Address() })
 }
 
-// ---- sensitive-locals detection ----
+// ---- sensitive-change detection (locals and variable defaults) ----
 
-func detectSensitiveLocals(oldMods, newMods map[string]*loader.ModuleNode, state *tfstate.State) []sensitiveLocal {
-	var out []sensitiveLocal
+func detectSensitiveChanges(oldMods, newMods map[string]*loader.ModuleNode, state *tfstate.State) []sensitiveChange {
+	var out []sensitiveChange
 	// A "module" here is the whole sub-module at a given path. Locals
-	// live inside their own module, so we compare per-module.
+	// and variable defaults are scoped to their declaring module, so
+	// we compare per-module.
 	for modPath, newNode := range newMods {
 		oldNode, ok := oldMods[modPath]
 		if !ok || oldNode == nil || newNode == nil {
 			continue // module added/removed is already reflected by resource diff
 		}
-		changed := changedLocalsIn(oldNode.Module, newNode.Module)
-		if len(changed) == 0 {
+		changes := collectSensitiveCandidates(oldNode.Module, newNode.Module)
+		if len(changes) == 0 {
 			continue
 		}
-		changedSet := map[string]bool{}
-		for name := range changed {
-			changedSet["local."+name] = true
+		targetIDs := map[string]bool{}
+		for _, c := range changes {
+			targetIDs[c.entityID()] = true
 		}
 		for _, e := range newNode.Module.Filter(analysis.KindResource) {
-			flagResource(modPath, e, newNode.Module, changed, changedSet, state, &out)
+			flagResource(modPath, e, newNode.Module, changes, targetIDs, state, &out)
 		}
 		for _, e := range newNode.Module.Filter(analysis.KindData) {
-			flagResource(modPath, e, newNode.Module, changed, changedSet, state, &out)
+			flagResource(modPath, e, newNode.Module, changes, targetIDs, state, &out)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Module != out[j].Module {
 			return out[i].Module < out[j].Module
 		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
 		return out[i].Name < out[j].Name
 	})
 	return out
 }
 
+// valueChange records a changed local or variable default.
+type valueChange struct {
+	kind             string // "local" or "variable"
+	name             string
+	oldText, newText string
+}
+
+func (c valueChange) entityID() string {
+	if c.kind == "variable" {
+		return "variable." + c.name
+	}
+	return "local." + c.name
+}
+
+// collectSensitiveCandidates enumerates every local and variable in
+// either tree whose stored value-expression text differs, including
+// presence-only changes (added or removed on one side).
+func collectSensitiveCandidates(oldMod, newMod *analysis.Module) []valueChange {
+	var out []valueChange
+	out = append(out, diffValues("local", localsMap(oldMod), localsMap(newMod))...)
+	out = append(out, diffValues("variable", variableDefaultsMap(oldMod), variableDefaultsMap(newMod))...)
+	return out
+}
+
+func diffValues(kind string, oldV, newV map[string]string) []valueChange {
+	var out []valueChange
+	for name, oldText := range oldV {
+		newText, ok := newV[name]
+		if !ok {
+			out = append(out, valueChange{kind: kind, name: name, oldText: oldText})
+			continue
+		}
+		if oldText != newText {
+			out = append(out, valueChange{kind: kind, name: name, oldText: oldText, newText: newText})
+		}
+	}
+	for name, newText := range newV {
+		if _, ok := oldV[name]; !ok {
+			out = append(out, valueChange{kind: kind, name: name, newText: newText})
+		}
+	}
+	return out
+}
+
 // flagResource checks whether e's count/for_each expression depends on
-// any local in changedSet. If so, it appends (or merges into) out one
-// entry per affected (local, resource) pair.
+// any candidate change. If so, it appends (or merges into) out one
+// entry per (candidate, resource, meta-arg) pair.
 func flagResource(
 	modPath string,
 	e analysis.Entity,
 	mod *analysis.Module,
-	changed map[string]localChange,
-	changedSet map[string]bool,
+	candidates []valueChange,
+	targetIDs map[string]bool,
 	state *tfstate.State,
-	out *[]sensitiveLocal,
+	out *[]sensitiveChange,
 ) {
 	for _, metaArg := range []struct {
 		name string
@@ -294,12 +423,9 @@ func flagResource(
 		if metaArg.expr == nil {
 			continue
 		}
-		triggered := refsReachingTargets(mod, metaArg.expr, changedSet)
-		for localName := range triggered {
-			// The triggered set contains entity IDs; we want the bare
-			// local name.
-			name := strings.TrimPrefix(localName, "local.")
-			if !changed[name].valid() {
+		triggered := refsReachingTargets(mod, metaArg.expr, targetIDs)
+		for _, cand := range candidates {
+			if !triggered[cand.entityID()] {
 				continue
 			}
 			affected := affectedResource{
@@ -311,58 +437,28 @@ func flagResource(
 			if state != nil {
 				affected.StateInstances = matchingStateInstances(state, modPath, e)
 			}
-			mergeSensitive(out, modPath, name, changed[name], affected)
+			mergeSensitive(out, modPath, cand, affected)
 		}
 	}
 }
 
-// mergeSensitive groups affected resources under each (module, local)
-// pair. Keeps output compact.
-func mergeSensitive(out *[]sensitiveLocal, modPath, localName string, change localChange, r affectedResource) {
+// mergeSensitive groups affected resources under each (module, kind, name)
+// triple so the report is compact.
+func mergeSensitive(out *[]sensitiveChange, modPath string, cand valueChange, r affectedResource) {
 	for i := range *out {
-		if (*out)[i].Module == modPath && (*out)[i].Name == localName {
+		if (*out)[i].Module == modPath && (*out)[i].Kind == cand.kind && (*out)[i].Name == cand.name {
 			(*out)[i].AffectedResources = append((*out)[i].AffectedResources, r)
 			return
 		}
 	}
-	*out = append(*out, sensitiveLocal{
+	*out = append(*out, sensitiveChange{
 		Module:            modPath,
-		Name:              localName,
-		OldValue:          change.oldText,
-		NewValue:          change.newText,
+		Kind:              cand.kind,
+		Name:              cand.name,
+		OldValue:          cand.oldText,
+		NewValue:          cand.newText,
 		AffectedResources: []affectedResource{r},
 	})
-}
-
-type localChange struct {
-	oldText, newText string
-}
-
-func (c localChange) valid() bool { return c.oldText != "" || c.newText != "" }
-
-// changedLocalsIn returns every local whose value expression differs
-// between oldMod and newMod, keyed by local name. A local present on
-// only one side counts as changed (old or new text will be empty).
-func changedLocalsIn(oldMod, newMod *analysis.Module) map[string]localChange {
-	oldLocals := localsMap(oldMod)
-	newLocals := localsMap(newMod)
-	out := map[string]localChange{}
-	for name, oldText := range oldLocals {
-		newText, ok := newLocals[name]
-		if !ok {
-			out[name] = localChange{oldText: oldText}
-			continue
-		}
-		if oldText != newText {
-			out[name] = localChange{oldText: oldText, newText: newText}
-		}
-	}
-	for name, newText := range newLocals {
-		if _, ok := oldLocals[name]; !ok {
-			out[name] = localChange{newText: newText}
-		}
-	}
-	return out
 }
 
 // localsMap returns the printed value text for every local in mod.
@@ -379,6 +475,25 @@ func localsMap(m *analysis.Module) map[string]string {
 			continue
 		}
 		out[e.Name] = printer.PrintExpr(e.LocalExpr)
+	}
+	return out
+}
+
+// variableDefaultsMap returns the printed default text for every
+// variable in mod. A variable without a default maps to an empty
+// string; the presence-only case (default added or removed) then shows
+// up as a change.
+func variableDefaultsMap(m *analysis.Module) map[string]string {
+	out := map[string]string{}
+	if m == nil {
+		return out
+	}
+	for _, e := range m.Filter(analysis.KindVariable) {
+		if e.DefaultExpr == nil {
+			out[e.Name] = ""
+			continue
+		}
+		out[e.Name] = printer.PrintExpr(e.DefaultExpr)
 	}
 	return out
 }
@@ -535,21 +650,32 @@ func printStatediff(r *statediffResult) {
 		}
 	}
 
-	if len(r.SensitiveLocals) > 0 {
+	if len(r.RenamedResources) > 0 {
 		if any {
 			fmt.Println()
 		}
 		any = true
-		fmt.Printf("Locals whose value change may alter count/for_each expansion:\n")
-		for _, sl := range r.SensitiveLocals {
-			prefix := "local." + sl.Name
-			if sl.Module != "" {
-				prefix = sl.Module + "." + prefix
+		fmt.Println("Renames (moved block handled — no destroy/recreate):")
+		for _, rn := range r.RenamedResources {
+			fmt.Printf("  %s → %s\n", rn.FromAddress(), rn.ToAddress())
+		}
+	}
+
+	if len(r.SensitiveChanges) > 0 {
+		if any {
+			fmt.Println()
+		}
+		any = true
+		fmt.Println("Value changes that may alter count/for_each expansion:")
+		for _, sc := range r.SensitiveChanges {
+			prefix := sc.Kind + "." + sc.Name
+			if sc.Module != "" {
+				prefix = sc.Module + "." + prefix
 			}
 			fmt.Printf("  - %s\n", prefix)
-			fmt.Printf("      old: %s\n", orDash(sl.OldValue))
-			fmt.Printf("      new: %s\n", orDash(sl.NewValue))
-			for _, ar := range sl.AffectedResources {
+			fmt.Printf("      old: %s\n", orDash(sc.OldValue))
+			fmt.Printf("      new: %s\n", orDash(sc.NewValue))
+			for _, ar := range sc.AffectedResources {
 				fmt.Printf("    Affected: %s (%s)\n", ar.Address(), ar.MetaArg)
 				for _, inst := range ar.StateInstances {
 					fmt.Printf("      • state instance: %s\n", inst)

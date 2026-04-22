@@ -233,7 +233,8 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 - **Backend configuration diffs** (`terraform { backend "s3" { ... } }`) — not currently parsed. More commonly in root modules than in reusable modules.
 - **Provisioner blocks** (`provisioner "local-exec"`, `connection`) — not currently parsed; their presence or absence affects teardown and creation but is not flagged.
 - **Nested moved-block expressions with indices.** `moved { from = aws_vpc.main[0], to = aws_vpc.main["a"] }` is not recognised; only bare resource references in `from` / `to` are parsed.
-- **Cross-module diffs.** `tflens diff` compares two versions of the *same* module. It does not recursively diff parent + children together. A parent-module `source` bump is reported as Informational but not followed into the child.
+- **Cross-module diffs in explicit mode.** `tflens diff <old> <new>` compares exactly the two directories you supply — it does not recurse into child modules. Use `tflens diff --branch <base>` (or `whatif --branch`, `statediff --branch`) when you want the whole tree walked; those commands pair module calls across branches by dotted key (e.g. `vpc.sg`) and diff each child module resolved on each side.
+- **Children that cannot be resolved offline.** Branch-mode commands only diff children that both resolvers can materialise. In `--offline` mode or against registry/git sources missing from the cache and from `.terraform/modules/modules.json`, the child is skipped rather than reported.
 
 ## What-if upgrade analysis (`whatif`)
 
@@ -277,7 +278,8 @@ A static hazard detector for PRs that may unintentionally add, destroy, or re-in
 It reports:
 
 - **Resource identity adds and removes** — every `resource "TYPE" "NAME"` declaration that appears in one branch but not the other. A missing declaration is the most direct path to a destroy.
-- **Sensitive locals** — locals whose value expression changed between branches, whose dependency chain reaches a `count` or `for_each` meta-argument. This is the silent class of bug: trim a list in `locals { regions = [...] }` and a `for_each = toset(local.regions)` resource quietly loses an instance. No attribute in the resource block itself changed — tools that only diff resource blocks miss it.
+- **Renames via `moved {}` blocks** — a `moved { from = aws_vpc.old, to = aws_vpc.new }` block in the new tree that pairs a real removal with a real addition is recognised as a rename, listed separately, and does NOT contribute to the exit code (Terraform handles the rename without destroy/recreate).
+- **Sensitive value changes** — locals OR variable defaults whose expression changed between branches, whose dependency chain reaches a `count` or `for_each` meta-argument. This is the silent class of bug: trim a list in `locals { regions = [...] }` (or drop `variable "n" { default = 3 }` to `1`) and a resource that expands from that value quietly loses instances. No attribute in the resource block itself changed — tools that only diff resource blocks miss it.
 - **State cross-reference** — when `--state state.json` is given, every flagged resource is annotated with the instances currently in state. A reviewer sees concrete addresses (`aws_instance.web["us-west-2"]`) rather than abstract warnings.
 - **State orphans** — addresses in state that have no corresponding declaration in the working tree. These indicate pre-existing drift and are reported separately; they do NOT contribute to the exit code since they are not caused by this PR.
 

@@ -139,10 +139,10 @@ func TestStatediffDetectsLocalInducedDeletion(t *testing.T) {
 	}
 
 	// Locals sensitivity on aws_instance.web's for_each.
-	if len(out.SensitiveLocals) != 1 {
-		t.Fatalf("expected 1 sensitive local, got %d: %+v", len(out.SensitiveLocals), out.SensitiveLocals)
+	if len(out.SensitiveChanges) != 1 {
+		t.Fatalf("expected 1 sensitive local, got %d: %+v", len(out.SensitiveChanges), out.SensitiveChanges)
 	}
-	sl := out.SensitiveLocals[0]
+	sl := out.SensitiveChanges[0]
 	if sl.Name != "regions" {
 		t.Errorf("sensitive local name = %q, want regions", sl.Name)
 	}
@@ -186,11 +186,156 @@ func TestStatediffWithoutStateStillFlagsLocal(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(out.SensitiveLocals) != 1 {
-		t.Errorf("expected sensitive local without state, got: %+v", out.SensitiveLocals)
+	if len(out.SensitiveChanges) != 1 {
+		t.Errorf("expected sensitive local without state, got: %+v", out.SensitiveChanges)
 	}
-	if ar := out.SensitiveLocals[0].AffectedResources[0]; len(ar.StateInstances) != 0 {
+	if ar := out.SensitiveChanges[0].AffectedResources[0]; len(ar.StateInstances) != 0 {
 		t.Errorf("StateInstances should be empty without --state, got: %v", ar.StateInstances)
+	}
+}
+
+func TestStatediffRecognisesMovedBlockRename(t *testing.T) {
+	// A resource rename via `moved { from = ..., to = ... }` must NOT
+	// appear as a remove + add. It should be listed as a rename (which
+	// does not contribute to the exit code).
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+	ws := filepath.Join(repo, "ws")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(ws, "main.tf"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`resource "aws_vpc" "old" {}`)
+	run("add", ".")
+	run("commit", "--quiet", "-m", "main")
+	run("checkout", "-q", "-b", "feature")
+	write(`resource "aws_vpc" "new" {}
+moved {
+  from = aws_vpc.old
+  to   = aws_vpc.new
+}`)
+	run("add", ".")
+	run("commit", "--quiet", "-m", "feature: rename via moved")
+
+	bin := buildTflens(t)
+	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("statediff should exit 0 on a moved-handled rename, got %v\nstderr=%s\nstdout=%s",
+			err, stderr.String(), stdout.String())
+	}
+	var out statediffResult
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.AddedResources) != 0 || len(out.RemovedResources) != 0 {
+		t.Errorf("expected no add/remove, got added=%+v removed=%+v", out.AddedResources, out.RemovedResources)
+	}
+	if len(out.RenamedResources) != 1 {
+		t.Fatalf("expected 1 rename, got %+v", out.RenamedResources)
+	}
+	r := out.RenamedResources[0]
+	if r.From != "resource.aws_vpc.old" || r.To != "resource.aws_vpc.new" {
+		t.Errorf("rename = %+v", r)
+	}
+}
+
+func TestStatediffDetectsVariableDefaultChange(t *testing.T) {
+	// Same mechanism as sensitive locals, but the trigger is a variable
+	// default whose value reaches a count expression.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+	ws := filepath.Join(repo, "ws")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(ws, "main.tf"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`variable "n" {
+  type    = number
+  default = 3
+}
+resource "aws_instance" "web" {
+  count = var.n
+}`)
+	run("add", ".")
+	run("commit", "--quiet", "-m", "main")
+	run("checkout", "-q", "-b", "feature")
+	write(`variable "n" {
+  type    = number
+  default = 1
+}
+resource "aws_instance" "web" {
+  count = var.n
+}`)
+	run("add", ".")
+	run("commit", "--quiet", "-m", "feature: shrink n")
+
+	bin := buildTflens(t)
+	cmd := exec.Command(bin, "--offline", "statediff", "--branch", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1, got err=%v\nstderr=%s", err, stderr.String())
+	}
+	var out statediffResult
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.SensitiveChanges) != 1 {
+		t.Fatalf("expected 1 sensitive change, got %+v", out.SensitiveChanges)
+	}
+	sc := out.SensitiveChanges[0]
+	if sc.Kind != "variable" {
+		t.Errorf("kind = %q, want variable", sc.Kind)
+	}
+	if sc.Name != "n" {
+		t.Errorf("name = %q, want n", sc.Name)
+	}
+	if strings.TrimSpace(sc.OldValue) != "3" || strings.TrimSpace(sc.NewValue) != "1" {
+		t.Errorf("values: old=%q new=%q", sc.OldValue, sc.NewValue)
+	}
+	if len(sc.AffectedResources) != 1 || sc.AffectedResources[0].MetaArg != "count" {
+		t.Errorf("affected = %+v", sc.AffectedResources)
 	}
 }
 

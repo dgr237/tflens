@@ -32,6 +32,7 @@ type Entity struct {
 	Pos            token.Position      // source location of the declaration
 	DeclaredType   *TFType             // parsed type constraint; non-nil only for variables
 	HasDefault     bool                // variables: a default value was declared
+	DefaultExpr    ast.Expr            // variables: the default value expression (for indirect diffing)
 	HasCount       bool                // resource/data/module: count meta-argument used
 	HasForEach     bool                // resource/data/module: for_each meta-argument used
 	NonNullable    bool                // variables: `nullable = false` explicitly set
@@ -395,6 +396,7 @@ func collectEntities(m *Module, body *ast.Body) {
 						case "default":
 							defaultExpr = child.Value
 							e.HasDefault = true
+							e.DefaultExpr = child.Value
 						case "nullable":
 							if lit, ok := child.Value.(*ast.LiteralExpr); ok {
 								if b, ok := lit.Value.(bool); ok && !b {
