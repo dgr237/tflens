@@ -59,10 +59,10 @@ tflens --offline diff --ref main ./my-workspace
 | `graph <path>` | Emit the dependency graph in Graphviz DOT format |
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
-| `diff <old> <new>` | Compare two module versions and classify changes as Breaking, NonBreaking, or Informational |
-| `diff --ref <base> [ws]` | Compare every module call in a workspace against its counterpart at a git ref; reports per-call diffs and added / removed calls |
-| `whatif <workspace> <module> <new-dir>` | Simulate upgrading a specific module call in a workspace to a candidate new version; report what would break |
-| `whatif --ref <base> [ws] [name]` | Simulate every upgrade on the working tree against callers at `<base>`; with no `<name>`, every changed call is simulated |
+| `diff <old> <new>` | **Author view** — what changed in the module's API? Compare two module versions and classify changes as Breaking, NonBreaking, or Informational. Use this when reviewing a module release in isolation. |
+| `diff --ref <base> [ws]` | Author view, ref mode — same classification, applied to every module call in the workspace against its counterpart at a git ref |
+| `whatif <workspace> <module> <new-dir>` | **Consumer view** — does *my parent* break under this upgrade? Cross-validates the parent's argument set against the candidate child's variables; only flags changes that actually affect this caller. Use this when reviewing a PR that bumps a dependency. |
+| `whatif --ref <base> [ws] [name]` | Consumer view, ref mode — simulate every working-tree upgrade against callers at `<base>`; with no `<name>`, every changed call is simulated |
 | `statediff --ref <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
@@ -134,7 +134,9 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 
 ## Diff (`diff`)
 
-Classifies every detected change as one of three kinds, then exits non-zero when any Breaking changes exist (suitable for CI gating):
+`diff` is the **author view**: it answers *what changed in this module's API?* — independent of any particular caller. Use it when you're publishing or reviewing a module release; pair it with `whatif` (below) when you're consuming a module and want to know whether *your specific caller* breaks.
+
+Every detected change is classified as one of three kinds, and the command exits non-zero when any Breaking changes exist (suitable for CI gating):
 
 - **Breaking** — existing callers or state will be affected
 - **NonBreaking** — safe to upgrade through
@@ -255,7 +257,11 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 
 ## What-if upgrade analysis (`whatif`)
 
-`whatif` answers: *if I bumped this module to a new version, would my current usage still work?* It has two modes.
+`whatif` is the **consumer view**: it answers *if I bumped this module to a new version, would my current usage still work?*
+
+This is a strictly more focused question than `diff`. A child module can ship many "Breaking" API changes that don't affect a particular caller — e.g. removing a variable the parent never passed, or tightening a type the parent's value already satisfies. `whatif` cross-validates the parent's argument set against the candidate child's variables and only flags changes that *actually break this caller*. Use `diff` when reviewing the module release; use `whatif` when reviewing a PR that bumps a dependency.
+
+It has two modes.
 
 ### Explicit mode
 
@@ -282,7 +288,19 @@ With no `call-name`, every module call that differs between `<base>` and the wor
 
 Both modes exit non-zero when the direct-impact list is non-empty — suitable for CI gating.
 
-`tflens diff --ref <base> [workspace]` is the complementary command: same workspace-vs-base comparison, but reports the full API diff per module call rather than cross-validation. Use `diff --ref` to review a module-bump PR; use `whatif --ref` to gate it.
+### `whatif --ref` vs `diff --ref`
+
+Both compare a workspace against a git base. The difference is what they report:
+
+| | `diff --ref` | `whatif --ref` |
+|---|---|---|
+| Question | What changed in the child module's API? | Does my parent break under the upgrade? |
+| Audience | Module author | Module consumer |
+| Reports | Every Breaking/NonBreaking change in the child | Only the changes that affect the caller's usage |
+| False-positive risk | "Variable X removed" even when the parent never passed X | None — cross-validation suppresses no-op changes |
+| Use for | Reviewing a release in isolation | Gating a PR that bumps a dependency |
+
+For a single-repo monorepo where the same author wrote both the child and the parent, the two commands often agree. For shared/vendored modules with multiple callers, `whatif` will be quieter and more actionable.
 
 ## State-level hazard detection (`statediff`)
 
