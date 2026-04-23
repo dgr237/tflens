@@ -1160,7 +1160,9 @@ func TestSensitiveAddedOnOutputIsInformational(t *testing.T) {
 	}
 }
 
-func TestSensitiveRemovedOnOutputIsInformational(t *testing.T) {
+func TestSensitiveRemovedOnOutputIsBreaking(t *testing.T) {
+	// Removing `sensitive = true` from an output exposes a value that was
+	// previously masked. Treated as a Breaking sensitive leak.
 	oldSrc := "output \"x\" {\n  value     = \"v\"\n  sensitive = true\n}\n"
 	newSrc := `output "x" { value = "v" }`
 	changes := diffFixture(t, oldSrc, newSrc)
@@ -1168,11 +1170,192 @@ func TestSensitiveRemovedOnOutputIsInformational(t *testing.T) {
 	if c == nil {
 		t.Fatal("expected change")
 	}
-	if c.Kind != diff.Informational {
-		t.Errorf("kind = %v, want Informational", c.Kind)
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking", c.Kind)
 	}
-	if !strings.Contains(c.Detail, "visible") && !strings.Contains(c.Detail, "no longer sensitive") {
+	if !strings.Contains(c.Detail, "leak") && !strings.Contains(c.Detail, "exposed") {
 		t.Errorf("detail should note the exposure: %q", c.Detail)
+	}
+}
+
+func TestEphemeralVariableAddedIsBreaking(t *testing.T) {
+	oldSrc := "variable \"tok\" { type = string }\n"
+	newSrc := "variable \"tok\" {\n  type      = string\n  ephemeral = true\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "variable.tok")
+	if c == nil {
+		t.Fatal("expected change")
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking", c.Kind)
+	}
+	if !strings.Contains(c.Detail, "ephemeral") {
+		t.Errorf("detail should mention ephemeral: %q", c.Detail)
+	}
+}
+
+func TestEphemeralVariableRemovedIsNonBreaking(t *testing.T) {
+	oldSrc := "variable \"tok\" {\n  type      = string\n  ephemeral = true\n}\n"
+	newSrc := "variable \"tok\" { type = string }\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "variable.tok")
+	if c == nil {
+		t.Fatal("expected change")
+	}
+	if c.Kind != diff.NonBreaking {
+		t.Errorf("kind = %v, want NonBreaking", c.Kind)
+	}
+}
+
+func TestBackendAddedIsBreaking(t *testing.T) {
+	oldSrc := "terraform { required_version = \">= 1.0\" }\n"
+	newSrc := "terraform {\n  required_version = \">= 1.0\"\n  backend \"s3\" {\n    bucket = \"my-state\"\n    key    = \"prod/terraform.tfstate\"\n  }\n}\n"
+	changes := diff.Diff(
+		mustAnalyseIgnoreVal(t, "old.tf", oldSrc),
+		mustAnalyseIgnoreVal(t, "new.tf", newSrc),
+	)
+	c := findChange(changes, "terraform.backend")
+	if c == nil {
+		t.Fatalf("expected backend change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking", c.Kind)
+	}
+	if !strings.Contains(c.Detail, "s3") {
+		t.Errorf("detail should mention the backend type: %q", c.Detail)
+	}
+}
+
+func TestBackendTypeChangedIsBreaking(t *testing.T) {
+	oldSrc := "terraform {\n  backend \"s3\" { bucket = \"b\" }\n}\n"
+	newSrc := "terraform {\n  backend \"azurerm\" { storage_account_name = \"sa\" }\n}\n"
+	changes := diff.Diff(
+		mustAnalyseIgnoreVal(t, "old.tf", oldSrc),
+		mustAnalyseIgnoreVal(t, "new.tf", newSrc),
+	)
+	c := findChange(changes, "terraform.backend")
+	if c == nil {
+		t.Fatalf("expected backend change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking || !strings.Contains(c.Detail, "backend type changed") {
+		t.Errorf("expected Breaking 'backend type changed', got %v: %q", c.Kind, c.Detail)
+	}
+}
+
+func TestBackendConfigKeyChangedIsBreaking(t *testing.T) {
+	oldSrc := "terraform {\n  backend \"s3\" {\n    bucket = \"b\"\n    key    = \"prod/terraform.tfstate\"\n  }\n}\n"
+	newSrc := "terraform {\n  backend \"s3\" {\n    bucket = \"b\"\n    key    = \"staging/terraform.tfstate\"\n  }\n}\n"
+	changes := diff.Diff(
+		mustAnalyseIgnoreVal(t, "old.tf", oldSrc),
+		mustAnalyseIgnoreVal(t, "new.tf", newSrc),
+	)
+	c := findChange(changes, "terraform.backend")
+	if c == nil {
+		t.Fatalf("expected backend change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking", c.Kind)
+	}
+}
+
+func TestCountTypeNarrowedToListIsBreaking(t *testing.T) {
+	// var.n was a number; new declaration retypes it as list(string).
+	// Resource's `count = var.n` was fine; now it would fail at plan time.
+	oldSrc := "variable \"n\" { type = number }\n" +
+		"resource \"aws_instance\" \"w\" { count = var.n }\n"
+	newSrc := "variable \"n\" { type = list(string) }\n" +
+		"resource \"aws_instance\" \"w\" { count = var.n }\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "resource.aws_instance.w")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking || !strings.Contains(c.Detail, "count expression type") {
+		t.Errorf("expected Breaking 'count expression type', got %v: %q", c.Kind, c.Detail)
+	}
+}
+
+func TestIgnoreChangesAllNarrowedIsBreaking(t *testing.T) {
+	oldSrc := "resource \"aws_vpc\" \"main\" {\n  lifecycle { ignore_changes = all }\n}\n"
+	newSrc := "resource \"aws_vpc\" \"main\" {\n  lifecycle { ignore_changes = [tags] }\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "resource.aws_vpc.main")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking || !strings.Contains(c.Detail, "narrowed") {
+		t.Errorf("expected Breaking 'narrowed', got %v: %q", c.Kind, c.Detail)
+	}
+}
+
+func TestIgnoreChangesWidenedToAllIsNonBreaking(t *testing.T) {
+	oldSrc := "resource \"aws_vpc\" \"main\" {\n  lifecycle { ignore_changes = [tags] }\n}\n"
+	newSrc := "resource \"aws_vpc\" \"main\" {\n  lifecycle { ignore_changes = all }\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "resource.aws_vpc.main")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.NonBreaking || !strings.Contains(c.Detail, "widened") {
+		t.Errorf("expected NonBreaking 'widened', got %v: %q", c.Kind, c.Detail)
+	}
+}
+
+func TestValidationConditionReplacedDetectsBoth(t *testing.T) {
+	// Same count of validation blocks, but the condition text differs.
+	// The old count-based diff would have missed this; the canonical-text
+	// comparison emits both an "added" and a "removed" Informational change.
+	oldSrc := "variable \"x\" {\n  type = string\n  validation {\n    condition     = length(var.x) > 0\n    error_message = \"a\"\n  }\n}\n"
+	newSrc := "variable \"x\" {\n  type = string\n  validation {\n    condition     = length(var.x) > 5\n    error_message = \"b\"\n  }\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	var sawAdded, sawRemoved bool
+	for _, c := range changes {
+		if c.Subject != "variable.x" {
+			continue
+		}
+		if strings.Contains(c.Detail, "new validation block") {
+			sawAdded = true
+		}
+		if strings.Contains(c.Detail, "validation block(s) removed") {
+			sawRemoved = true
+		}
+	}
+	if !sawAdded || !sawRemoved {
+		t.Errorf("expected both added and removed validation messages; sawAdded=%v sawRemoved=%v changes=%v",
+			sawAdded, sawRemoved, changes)
+	}
+}
+
+func TestValidationConditionReorderedIsNoChange(t *testing.T) {
+	// Two validation blocks in different orders should net out to no change.
+	oldSrc := `variable "x" {
+  type = string
+  validation {
+    condition     = length(var.x) > 0
+    error_message = "a"
+  }
+  validation {
+    condition     = length(var.x) < 100
+    error_message = "b"
+  }
+}
+`
+	newSrc := `variable "x" {
+  type = string
+  validation {
+    condition     = length(var.x) < 100
+    error_message = "b"
+  }
+  validation {
+    condition     = length(var.x) > 0
+    error_message = "a"
+  }
+}
+`
+	for _, c := range diffFixture(t, oldSrc, newSrc) {
+		if strings.Contains(c.Detail, "validation block") {
+			t.Errorf("reordered validations should not produce a change, got: %v", c)
+		}
 	}
 }
 
