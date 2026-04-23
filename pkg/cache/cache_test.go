@@ -154,3 +154,103 @@ func TestDefaultRootUnderUserCacheDir(t *testing.T) {
 		t.Errorf("Default root = %q, expected to contain 'tflens'", c.Root())
 	}
 }
+
+// Path() routes unknown Kind values into an "unknown/…" subtree so a key
+// with Kind 0 (the zero value) doesn't collide with registry/git paths.
+func TestPathUnknownKindUsesUnknownSubtree(t *testing.T) {
+	c := cache.New("/root")
+	got := c.Path(cache.Key{Host: "h", Path: "p", Version: "v"})
+	want := filepath.Clean("/root/unknown/h/p/v/_root")
+	if got != want {
+		t.Errorf("Path(unknown kind) = %q, want %q", got, want)
+	}
+	// Subdir on an unknown-kind key participates in the path so different
+	// subdirs don't collide.
+	got2 := c.Path(cache.Key{Host: "h", Path: "p", Version: "v", Subdir: "modules/x"})
+	if got == got2 {
+		t.Errorf("Subdir should differentiate unknown-kind paths: %q == %q", got, got2)
+	}
+}
+
+// sanitize must escape characters that are illegal in Windows path
+// components — most importantly ':' and '*'. The escape preserves '/' so
+// multi-segment keys stay nested directories.
+func TestPathSanitisesIllegalCharacters(t *testing.T) {
+	c := cache.New("/root")
+	k := cache.Key{
+		Kind:    cache.KindRegistry,
+		Host:    "host:8080", // ':' is illegal on Windows
+		Path:    "ns/name/aws",
+		Version: "v*1.0", // '*' is illegal on Windows
+	}
+	p := c.Path(k)
+	if strings.Contains(p, ":8080") {
+		t.Errorf("Path should escape ':' in host: %q", p)
+	}
+	if strings.Contains(p, "v*1.0") {
+		t.Errorf("Path should escape '*' in version: %q", p)
+	}
+	// Path-segment '/' must be preserved as a directory separator.
+	if !strings.Contains(p, "ns/name/aws") && !strings.Contains(p, `ns\name\aws`) {
+		t.Errorf("Path should keep '/' as a separator: %q", p)
+	}
+}
+
+// Sanitize falls back to a SHA-256 prefix when the encoded segment would
+// blow past the 64-character cap — this keeps file:// cache keys with
+// long absolute paths from busting Windows MAX_PATH.
+func TestPathLongSegmentTruncatedToHash(t *testing.T) {
+	long := strings.Repeat("longpathfragment-", 10) // ~170 chars
+	c := cache.New("/root")
+	p := c.Path(cache.Key{
+		Kind:    cache.KindRegistry,
+		Host:    "host",
+		Path:    long,
+		Version: "1.0.0",
+	})
+	if strings.Contains(p, long) {
+		t.Errorf("Path should hash the long segment, not include it verbatim: %q", p)
+	}
+	// Same input must produce the same hashed segment (stable).
+	if c.Path(cache.Key{Kind: cache.KindRegistry, Host: "host", Path: long, Version: "1.0.0"}) != p {
+		t.Error("hashed segment is not stable across calls")
+	}
+}
+
+// When a concurrent writer populates the final cache path between our
+// Has() check and our Rename, Put returns the winner's path without an
+// error and cleans up our temp dir.
+func TestPutRaceLossReturnsWinnerPath(t *testing.T) {
+	c := cache.New(t.TempDir())
+	k := registryKey()
+
+	dir, err := c.Put(k, func(tmp string) error {
+		// Simulate a concurrent winner: create the final destination
+		// (and put their content in it) while we are still in our temp
+		// directory. The subsequent Rename will fail, and Put should
+		// detect the race and return the winner's directory.
+		final := c.Path(k)
+		if err := os.MkdirAll(final, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(final, "winner.tf"), []byte("winner"), 0o644)
+	})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if dir != c.Path(k) {
+		t.Errorf("Put returned %q, want winner path %q", dir, c.Path(k))
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "winner.tf"))
+	if err != nil || string(body) != "winner" {
+		t.Errorf("winner content not preserved, err=%v body=%q", err, body)
+	}
+	// Our temp dir must have been cleaned up.
+	parent := filepath.Dir(c.Path(k))
+	entries, _ := os.ReadDir(parent)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tflens-populate-") {
+			t.Errorf("leftover temp dir after race loss: %s", e.Name())
+		}
+	}
+}
