@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/dgr237/tflens/pkg/ast"
-	"github.com/dgr237/tflens/pkg/parser"
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // CredentialsSource supplies bearer tokens for registry hosts. A nil or
@@ -53,13 +54,16 @@ func LoadTerraformrcFrom(path string) (CredentialsSource, error) {
 		}
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	file, parseErrs := parser.ParseFile(data, path)
-	if len(parseErrs) > 0 {
-		// Return the first error — the CLI config should be syntactically
-		// valid; any parse error is a user-visible misconfiguration.
-		return nil, fmt.Errorf("parsing %s: %s", path, parseErrs[0].Error())
+	p := hclparse.NewParser()
+	file, diags := p.ParseHCL(data, path)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("parsing %s: %s", path, diags.Error())
 	}
-	return extractCredentials(file), nil
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return StaticCredentials{}, nil
+	}
+	return extractCredentials(body), nil
 }
 
 func terraformrcPath() (string, error) {
@@ -82,48 +86,32 @@ func terraformrcPath() (string, error) {
 // collects every `credentials "host" { token = "..." }` entry. Blocks of
 // other kinds (provider_installation, plugin_cache_dir, etc.) are
 // silently ignored.
-func extractCredentials(file *ast.File) StaticCredentials {
+func extractCredentials(body *hclsyntax.Body) StaticCredentials {
 	creds := StaticCredentials{}
-	if file == nil || file.Body == nil {
+	if body == nil {
 		return creds
 	}
-	for _, node := range file.Body.Nodes {
-		block, ok := node.(*ast.Block)
-		if !ok || block.Type != "credentials" || len(block.Labels) != 1 {
+	for _, block := range body.Blocks {
+		if block.Type != "credentials" || len(block.Labels) != 1 {
 			continue
 		}
 		host := block.Labels[0]
 		if block.Body == nil {
 			continue
 		}
-		for _, inner := range block.Body.Nodes {
-			attr, ok := inner.(*ast.Attribute)
-			if !ok || attr.Name != "token" {
-				continue
-			}
-			tok, ok := literalString(attr.Value)
-			if !ok || tok == "" {
-				continue
-			}
-			creds[host] = tok
+		attr, ok := block.Body.Attributes["token"]
+		if !ok {
+			continue
 		}
+		v, vDiags := attr.Expr.Value(nil)
+		if vDiags.HasErrors() || v.IsNull() || !v.Type().Equals(cty.String) {
+			continue
+		}
+		tok := v.AsString()
+		if tok == "" {
+			continue
+		}
+		creds[host] = tok
 	}
 	return creds
-}
-
-// literalString extracts a bare string value from an expression, handling
-// both LiteralExpr and single-literal TemplateExpr (the form produced for
-// any quoted string). Returns ("", false) for anything more complex.
-func literalString(e ast.Expr) (string, bool) {
-	switch v := e.(type) {
-	case *ast.LiteralExpr:
-		s, ok := v.Value.(string)
-		return s, ok
-	case *ast.TemplateExpr:
-		if len(v.Parts) != 1 || !v.Parts[0].IsLiteral {
-			return "", false
-		}
-		return v.Parts[0].Literal, true
-	}
-	return "", false
 }

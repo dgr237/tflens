@@ -9,7 +9,6 @@ import (
 
 	"github.com/dgr237/tflens/pkg/cache"
 	"github.com/dgr237/tflens/pkg/loader"
-	"github.com/dgr237/tflens/pkg/parser"
 	"github.com/dgr237/tflens/pkg/resolver"
 )
 
@@ -42,7 +41,7 @@ func buildResolver(cmd *cobra.Command, absRoot string) (resolver.Resolver, []loa
 	if warn != nil {
 		seed = []loader.FileError{{
 			Path:   warn.Path,
-			Errors: []parser.ParseError{{Msg: warn.Msg}},
+			Errors: []loader.ParseError{{Msg: warn.Msg}},
 		}}
 	}
 	local := resolver.NewLocalResolver()

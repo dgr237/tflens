@@ -6,12 +6,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
 	"github.com/dgr237/tflens/pkg/loader"
-	"github.com/dgr237/tflens/pkg/printer"
 	"github.com/dgr237/tflens/pkg/tfstate"
 )
 
@@ -422,7 +421,7 @@ func flagResource(
 ) {
 	for _, metaArg := range []struct {
 		name string
-		expr ast.Expr
+		expr *analysis.Expr
 	}{
 		{"count", e.CountExpr},
 		{"for_each", e.ForEachExpr},
@@ -481,7 +480,7 @@ func localsMap(m *analysis.Module) map[string]string {
 			out[e.Name] = ""
 			continue
 		}
-		out[e.Name] = printer.PrintExpr(e.LocalExpr)
+		out[e.Name] = e.LocalExpr.Text()
 	}
 	return out
 }
@@ -500,7 +499,7 @@ func variableDefaultsMap(m *analysis.Module) map[string]string {
 			out[e.Name] = ""
 			continue
 		}
-		out[e.Name] = printer.PrintExpr(e.DefaultExpr)
+		out[e.Name] = e.DefaultExpr.Text()
 	}
 	return out
 }
@@ -508,32 +507,51 @@ func variableDefaultsMap(m *analysis.Module) map[string]string {
 // refsReachingTargets walks expr collecting every entity reference,
 // then checks whether each ref (or any transitive dep of it via mod's
 // dep graph) is in targets. Returns the matching target IDs.
-func refsReachingTargets(mod *analysis.Module, expr ast.Expr, targets map[string]bool) map[string]bool {
+func refsReachingTargets(mod *analysis.Module, expr *analysis.Expr, targets map[string]bool) map[string]bool {
 	hits := map[string]bool{}
-	if expr == nil {
+	if expr == nil || expr.E == nil {
 		return hits
 	}
-	ast.Inspect(expr, func(n ast.Node) bool {
-		ref, ok := n.(*ast.RefExpr)
-		if !ok {
-			return true
-		}
-		id := refToEntityID(ref.Parts)
+	for _, trav := range expr.E.Variables() {
+		parts := traversalToParts(trav)
+		id := refToEntityID(parts)
 		if id == "" {
-			return true
+			continue
 		}
 		if targets[id] {
 			hits[id] = true
-			return true
+			continue
 		}
 		for t := range targets {
 			if transitivelyDependsOn(mod, id, t) {
 				hits[t] = true
 			}
 		}
-		return true
-	})
+	}
 	return hits
+}
+
+// traversalToParts mirrors analysis.traversalParts but stays here so we
+// don't take a dependency on unexported helpers across packages.
+func traversalToParts(trav hcl.Traversal) []string {
+	if len(trav) == 0 {
+		return nil
+	}
+	var parts []string
+	for i, step := range trav {
+		switch s := step.(type) {
+		case hcl.TraverseRoot:
+			if i != 0 {
+				return parts
+			}
+			parts = append(parts, s.Name)
+		case hcl.TraverseAttr:
+			parts = append(parts, s.Name)
+		default:
+			return parts
+		}
+	}
+	return parts
 }
 
 func refToEntityID(parts []string) string {

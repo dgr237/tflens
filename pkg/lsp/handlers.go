@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/hashicorp/hcl/v2/hclwrite"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
-	"github.com/dgr237/tflens/pkg/printer"
 	"github.com/dgr237/tflens/pkg/token"
 )
 
@@ -141,8 +143,8 @@ func (s *server) handleHover(id *json.RawMessage, p HoverParams) {
 		return
 	}
 	// Otherwise: is the cursor on a reference expression?
-	if ref := refAt(doc.File, pos); ref != nil {
-		targetID := refToEntityID(ref.Parts)
+	if parts := refAt(doc.Body, pos); parts != nil {
+		targetID := refToEntityID(parts)
 		for _, e := range doc.Module.Entities() {
 			if e.ID() == targetID {
 				_ = s.out.sendResponse(id, Hover{
@@ -190,17 +192,17 @@ func describeEntity(e analysis.Entity) string {
 
 func (s *server) handleDefinition(id *json.RawMessage, p DefinitionParams) {
 	doc, ok := s.store.get(p.TextDocument.URI)
-	if !ok || doc.Module == nil || doc.File == nil {
+	if !ok || doc.Module == nil || doc.Body == nil {
 		_ = s.out.sendResponse(id, nil, nil)
 		return
 	}
 	pos := fromLSPPos(p.Position)
-	ref := refAt(doc.File, pos)
-	if ref == nil {
+	parts := refAt(doc.Body, pos)
+	if parts == nil {
 		_ = s.out.sendResponse(id, nil, nil)
 		return
 	}
-	targetID := refToEntityID(ref.Parts)
+	targetID := refToEntityID(parts)
 	for _, e := range doc.Module.Entities() {
 		if e.ID() != targetID {
 			continue
@@ -434,12 +436,12 @@ func resourceInstanceItems(mod *analysis.Module, typeName string) []CompletionIt
 
 func (s *server) handleFormatting(id *json.RawMessage, p DocumentFormattingParams) {
 	doc, ok := s.store.get(p.TextDocument.URI)
-	if !ok || doc.File == nil || len(doc.ParseErrs) > 0 {
+	if !ok || doc.Body == nil || len(doc.ParseErrs) > 0 {
 		// Don't format a broken file — return no edits.
 		_ = s.out.sendResponse(id, []TextEdit{}, nil)
 		return
 	}
-	formatted := printer.Print(doc.File)
+	formatted := string(hclwrite.Format(doc.Source))
 	if formatted == doc.Text {
 		_ = s.out.sendResponse(id, []TextEdit{}, nil)
 		return
@@ -486,30 +488,80 @@ func entityAt(mod *analysis.Module, pos token.Position) *analysis.Entity {
 	return nil
 }
 
-// refAt finds the RefExpr whose position is on the same line as pos and
-// whose column range reasonably overlaps. Approximate — without end
-// positions in the AST we estimate from the joined parts' length.
-func refAt(file *ast.File, pos token.Position) *ast.RefExpr {
-	var found *ast.RefExpr
-	ast.Inspect(file, func(n ast.Node) bool {
-		if found != nil {
-			return false
-		}
-		ref, ok := n.(*ast.RefExpr)
-		if !ok {
-			return true
-		}
-		if ref.Pos.Line != pos.Line {
-			return true
-		}
-		width := len(strings.Join(ref.Parts, ".")) + 1
-		if pos.Column >= ref.Pos.Column && pos.Column <= ref.Pos.Column+width {
-			found = ref
+// refAt finds the variable traversal whose source range contains pos and
+// returns its flat parts (e.g. ["var","env"], ["aws_vpc","main","id"]).
+// Returns nil when no traversal covers pos.
+func refAt(body *hclsyntax.Body, pos token.Position) []string {
+	if body == nil {
+		return nil
+	}
+	var found []string
+	visitExprs(body, func(expr hclsyntax.Expression) bool {
+		for _, trav := range expr.Variables() {
+			r := trav.SourceRange()
+			if !rangeContainsPos(r, pos) {
+				continue
+			}
+			found = traversalToParts(trav)
 			return false
 		}
 		return true
 	})
 	return found
+}
+
+// visitExprs walks every attribute Expression in body and its nested blocks,
+// invoking visit. visit returns false to stop the walk.
+func visitExprs(body *hclsyntax.Body, visit func(hclsyntax.Expression) bool) {
+	if body == nil {
+		return
+	}
+	for _, attr := range body.Attributes {
+		if !visit(attr.Expr) {
+			return
+		}
+	}
+	for _, b := range body.Blocks {
+		visitExprs(b.Body, visit)
+	}
+}
+
+// rangeContainsPos reports whether the LSP-derived 1-based pos lies within
+// the source range r. Range Start is inclusive, End is exclusive.
+func rangeContainsPos(r hcl.Range, pos token.Position) bool {
+	if r.Start.Line > pos.Line || r.End.Line < pos.Line {
+		return false
+	}
+	if r.Start.Line == pos.Line && r.Start.Column > pos.Column {
+		return false
+	}
+	if r.End.Line == pos.Line && r.End.Column <= pos.Column {
+		return false
+	}
+	return true
+}
+
+// traversalToParts flattens a traversal into its leading root + attribute
+// chain. Mirrors analysis.traversalParts; kept here to avoid an export.
+func traversalToParts(trav hcl.Traversal) []string {
+	if len(trav) == 0 {
+		return nil
+	}
+	var parts []string
+	for i, step := range trav {
+		switch s := step.(type) {
+		case hcl.TraverseRoot:
+			if i != 0 {
+				return parts
+			}
+			parts = append(parts, s.Name)
+		case hcl.TraverseAttr:
+			parts = append(parts, s.Name)
+		default:
+			return parts
+		}
+	}
+	return parts
 }
 
 // refToEntityID maps a reference's Parts to the canonical entity ID.

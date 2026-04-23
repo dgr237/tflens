@@ -2,23 +2,15 @@ package analysis_test
 
 import (
 	"testing"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
-	"github.com/dgr237/tflens/pkg/parser"
 )
 
 // validateFixture parses src under the given filename and returns the
 // validation errors produced by analysis.
 func validateFixture(t *testing.T, filename, src string) []analysis.ValidationError {
 	t.Helper()
-	file, errs := parser.ParseFile([]byte(src), filename)
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	if t.Failed() {
-		t.FailNow()
-	}
-	return analysis.Analyse(file).Validate()
+	return analyseFixtureNamed(t, filename, src).Validate()
 }
 
 func TestValidateCleanModule(t *testing.T) {
@@ -253,9 +245,9 @@ func TestValidateMultipleFilesAggregated(t *testing.T) {
 	src1 := "locals { a = var.missing }\n"
 	src2 := "output \"x\" { value = local.ghost }\n"
 
-	f1, _ := parser.ParseFile([]byte(src1), "a.tf")
-	f2, _ := parser.ParseFile([]byte(src2), "b.tf")
-	errs := analysis.AnalyseFiles([]*ast.File{f1, f2}).Validate()
+	f1 := parseToFile(t, "a.tf", src1)
+	f2 := parseToFile(t, "b.tf", src2)
+	errs := analysis.AnalyseFiles([]*analysis.File{f1, f2}).Validate()
 
 	refs := make(map[string]bool)
 	for _, e := range errs {

@@ -3,22 +3,14 @@ package analysis_test
 import (
 	"strings"
 	"testing"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/parser"
 )
 
-// analyseForTypes parses src and returns the module so tests can inspect both
-// entities and type errors.
+// analyseForTypes parses src and returns the module so tests can inspect
+// both entities and type errors.
 func analyseForTypes(t *testing.T, src string) *analysis.Module {
-	t.Helper()
-	file, errs := parser.ParseFile([]byte(src), "test.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	if t.Failed() {
-		t.FailNow()
-	}
-	return analysis.Analyse(file)
+	return analyseFixture(t, src)
 }
 
 // ---- ParseType ----

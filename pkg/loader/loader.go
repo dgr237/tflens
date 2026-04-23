@@ -10,16 +10,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
-	"github.com/dgr237/tflens/pkg/parser"
 	"github.com/dgr237/tflens/pkg/resolver"
+	"github.com/dgr237/tflens/pkg/token"
 )
+
+// ParseError is a single syntax error from parsing one .tf file.
+type ParseError struct {
+	Pos token.Position
+	Msg string
+}
+
+func (e ParseError) Error() string {
+	if e.Pos.File == "" && e.Pos.Line == 0 && e.Pos.Column == 0 {
+		return e.Msg
+	}
+	return fmt.Sprintf("%s: %s", e.Pos, e.Msg)
+}
 
 // FileError holds the parse errors for a single source file.
 type FileError struct {
 	Path   string
-	Errors []parser.ParseError
+	Errors []ParseError
 }
 
 func (fe FileError) Error() string {
@@ -30,9 +46,9 @@ func (fe FileError) Error() string {
 	return fmt.Sprintf("%s: %s", fe.Path, strings.Join(msgs, "; "))
 }
 
-// LoadDir parses every .tf file in dir (non-recursively) and returns a merged
-// analysis module.  Parse errors are returned alongside a partial result so
-// callers can decide whether to continue or abort.
+// LoadDir parses every .tf file in dir (non-recursively) and returns a
+// merged analysis module. Parse errors are returned alongside a partial
+// result so callers can decide whether to continue or abort.
 func LoadDir(dir string) (*analysis.Module, []FileError, error) {
 	files, errs, err := parseDir(dir)
 	if err != nil {
@@ -48,10 +64,9 @@ type Project struct {
 
 // ModuleNode is a loaded Terraform module together with its direct child modules.
 type ModuleNode struct {
-	Dir    string
-	Module *analysis.Module
-	// Children is keyed by the module call name (e.g. "vpc" for module "vpc" {}).
-	Children map[string]*ModuleNode
+	Dir      string
+	Module   *analysis.Module
+	Children map[string]*ModuleNode // keyed by module call name
 }
 
 // Walk calls fn for every module node in the tree (pre-order: root first).
@@ -64,12 +79,10 @@ func walkNode(n *ModuleNode, fn func(*ModuleNode) bool) {
 	if n == nil || !fn(n) {
 		return
 	}
-	// Iterate in sorted order for determinism.
 	names := make([]string, 0, len(n.Children))
 	for name := range n.Children {
 		names = append(names, name)
 	}
-	// simple insertion sort — module counts are tiny
 	for i := 1; i < len(names); i++ {
 		for j := i; j > 0 && names[j] < names[j-1]; j-- {
 			names[j], names[j-1] = names[j-1], names[j]
@@ -81,10 +94,7 @@ func walkNode(n *ModuleNode, fn func(*ModuleNode) bool) {
 }
 
 // LoadProject loads the root module at rootDir and recursively loads any
-// child modules whose directories can be resolved by the default resolver
-// chain (manifest first, then local paths).
-//
-// Parse errors are collected and returned alongside the (partial) project.
+// child modules whose directories can be resolved.
 func LoadProject(rootDir string) (*Project, []FileError, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -96,17 +106,14 @@ func LoadProject(rootDir string) (*Project, []FileError, error) {
 	if warn != nil {
 		allErrors = append(allErrors, FileError{
 			Path:   warn.Path,
-			Errors: []parser.ParseError{{Msg: warn.Msg}},
+			Errors: []ParseError{{Msg: warn.Msg}},
 		})
 	}
 	chain := resolver.NewChain(manifestResolver, resolver.NewLocalResolver())
 	return LoadProjectWith(absRoot, chain, allErrors)
 }
 
-// LoadProjectWith is LoadProject with an injected resolver, for tests and
-// for callers (e.g. registry-backed resolvers in later PRs) that need a
-// custom chain. seedErrors is prepended to the returned FileError slice so
-// warnings raised while constructing the resolver can be preserved.
+// LoadProjectWith is LoadProject with an injected resolver.
 func LoadProjectWith(rootDir string, r resolver.Resolver, seedErrors []FileError) (*Project, []FileError, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -124,15 +131,12 @@ func LoadProjectWith(rootDir string, r resolver.Resolver, seedErrors []FileError
 const maxModuleDepth = 10
 
 // loadModuleNode parses one module directory and recursively its children.
-// parentKey is the dotted key path of this module in the workspace (empty
-// for the root); it is extended with each child's name when forming the
-// child's Ref.
 func loadModuleNode(ctx context.Context, dir, parentKey string, depth int, r resolver.Resolver, visited map[string]*ModuleNode, allErrors *[]FileError) (*ModuleNode, error) {
 	if depth > maxModuleDepth {
 		return nil, fmt.Errorf("maximum module nesting depth (%d) exceeded at %s", maxModuleDepth, dir)
 	}
 	if node, ok := visited[dir]; ok {
-		return node, nil // already loaded (e.g. two parents share a child)
+		return node, nil
 	}
 
 	files, errs, err := parseDir(dir)
@@ -147,7 +151,6 @@ func loadModuleNode(ctx context.Context, dir, parentKey string, depth int, r res
 		Module:   mod,
 		Children: make(map[string]*ModuleNode),
 	}
-	// Register before recursing so cycles don't loop forever.
 	visited[dir] = node
 
 	for _, e := range mod.Filter(analysis.KindModule) {
@@ -164,20 +167,19 @@ func loadModuleNode(ctx context.Context, dir, parentKey string, depth int, r res
 		resolved, err := r.Resolve(ctx, ref)
 		if err != nil {
 			if errors.Is(err, resolver.ErrNotApplicable) {
-				continue // unresolvable (remote source, no manifest entry)
+				continue
 			}
 			*allErrors = append(*allErrors, FileError{
 				Path:   ref.Source,
-				Errors: []parser.ParseError{{Msg: err.Error()}},
+				Errors: []ParseError{{Msg: err.Error()}},
 			})
 			continue
 		}
 		child, err := loadModuleNode(ctx, resolved.Dir, childKey, depth+1, r, visited, allErrors)
 		if err != nil {
-			// Non-fatal: report and continue loading other modules.
 			*allErrors = append(*allErrors, FileError{
 				Path:   resolved.Dir,
-				Errors: []parser.ParseError{{Msg: err.Error()}},
+				Errors: []ParseError{{Msg: err.Error()}},
 			})
 			continue
 		}
@@ -186,14 +188,16 @@ func loadModuleNode(ctx context.Context, dir, parentKey string, depth int, r res
 	return node, nil
 }
 
-// parseDir reads and parses all .tf files in dir (non-recursively).
-func parseDir(dir string) ([]*ast.File, []FileError, error) {
+// parseDir reads and parses all .tf files in dir (non-recursively) via
+// hclparse, returning analysis-ready *File values plus any diagnostics.
+func parseDir(dir string) ([]*analysis.File, []FileError, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading directory %q: %w", dir, err)
 	}
 
-	var files []*ast.File
+	p := hclparse.NewParser()
+	var files []*analysis.File
 	var errs []FileError
 
 	for _, entry := range entries {
@@ -205,11 +209,34 @@ func parseDir(dir string) ([]*ast.File, []FileError, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading %q: %w", path, err)
 		}
-		f, parseErrs := parser.ParseFile(src, path)
-		if len(parseErrs) > 0 {
-			errs = append(errs, FileError{Path: path, Errors: parseErrs})
+		hclFile, diags := p.ParseHCL(src, path)
+		if diags.HasErrors() {
+			peList := make([]ParseError, 0, len(diags))
+			for _, d := range diags {
+				pos := token.Position{}
+				if d.Subject != nil {
+					pos = token.Position{
+						File:   d.Subject.Filename,
+						Line:   d.Subject.Start.Line,
+						Column: d.Subject.Start.Column,
+					}
+				}
+				peList = append(peList, ParseError{Pos: pos, Msg: d.Summary})
+			}
+			errs = append(errs, FileError{Path: path, Errors: peList})
 		}
-		files = append(files, f)
+		if hclFile == nil {
+			continue
+		}
+		body, ok := hclFile.Body.(*hclsyntax.Body)
+		if !ok {
+			continue
+		}
+		files = append(files, &analysis.File{
+			Filename: path,
+			Source:   src,
+			Body:     body,
+		})
 	}
 	return files, errs, nil
 }

@@ -2,20 +2,37 @@ package analysis_test
 
 import (
 	"testing"
+
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/parser"
 )
 
 func analyseFixture(t *testing.T, src string) *analysis.Module {
+	return analyseFixtureNamed(t, "test.tf", src)
+}
+
+func analyseFixtureNamed(t *testing.T, filename, src string) *analysis.Module {
 	t.Helper()
-	file, errs := parser.ParseFile([]byte(src), "test.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
+	return analysis.Analyse(parseToFile(t, filename, src))
+}
+
+func parseToFile(t *testing.T, filename, src string) *analysis.File {
+	t.Helper()
+	p := hclparse.NewParser()
+	hclFile, diags := p.ParseHCL([]byte(src), filename)
+	for _, d := range diags {
+		t.Errorf("parse error: %s", d.Error())
 	}
 	if t.Failed() {
 		t.FailNow()
 	}
-	return analysis.Analyse(file)
+	body, ok := hclFile.Body.(*hclsyntax.Body)
+	if !ok {
+		t.Fatalf("unexpected body type %T", hclFile.Body)
+	}
+	return &analysis.File{Filename: filename, Source: []byte(src), Body: body}
 }
 
 // ---- entity inventory ----
@@ -248,11 +265,7 @@ func TestEntityPositionFile(t *testing.T) {
 variable "env" {}
 resource "aws_vpc" "main" {}
 `
-	file, errs := parser.ParseFile([]byte(src), "infra.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	m := analysis.Analyse(file)
+	m := analyseFixtureNamed(t, "infra.tf", src)
 	for _, e := range m.Entities() {
 		if e.Pos.File != "infra.tf" {
 			t.Errorf("entity %s: Pos.File = %q, want %q", e.ID(), e.Pos.File, "infra.tf")
@@ -267,11 +280,7 @@ func TestEntityPositionLine(t *testing.T) {
 	// Each entity's line number should match its position in the source.
 	// Leading blank line means declarations start at line 2.
 	src := "\nvariable \"a\" {}\nvariable \"b\" {}\nlocals {\n  x = 1\n  y = 2\n}\nresource \"aws_vpc\" \"main\" {}\noutput \"id\" { value = aws_vpc.main.id }\n"
-	file, errs := parser.ParseFile([]byte(src), "test.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	m := analysis.Analyse(file)
+	m := analyseFixture(t, src)
 
 	byID := make(map[string]int)
 	for _, e := range m.Entities() {
@@ -302,11 +311,7 @@ func TestLocalPositionIsAttributeNotBlock(t *testing.T) {
 	// Locals live inside a `locals {}` block; each local's position should
 	// point to the individual attribute line, not the block's opening line.
 	src := "locals {\n  a = 1\n  b = 2\n}\n"
-	file, errs := parser.ParseFile([]byte(src), "test.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	m := analysis.Analyse(file)
+	m := analyseFixture(t, src)
 
 	lineA, lineB := 0, 0
 	for _, e := range m.Entities() {
@@ -327,11 +332,7 @@ func TestLocalPositionIsAttributeNotBlock(t *testing.T) {
 
 func TestLocationMethod(t *testing.T) {
 	src := "variable \"env\" {}\n"
-	file, errs := parser.ParseFile([]byte(src), "/some/path/variables.tf")
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
-	}
-	m := analysis.Analyse(file)
+	m := analyseFixtureNamed(t, "/some/path/variables.tf", src)
 	entities := m.Filter(analysis.KindVariable)
 	if len(entities) != 1 {
 		t.Fatalf("expected 1 variable, got %d", len(entities))

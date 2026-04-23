@@ -2,12 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/hclbridge"
 )
 
 var inventoryCmd = &cobra.Command{
@@ -24,27 +22,16 @@ func init() {
 }
 
 func runInventory(cmd *cobra.Command, path string) {
-	var entities []analysis.Entity
-	if os.Getenv("TFLENS_HCL2") == "1" {
-		es, err := hclbridge.Load(path)
-		if err != nil {
-			fatalf("%v", err)
-		}
-		entities = es
-	} else {
-		mod := mustLoadModule(path)
-		entities = mod.Entities()
-	}
-
+	mod := mustLoadModule(path)
 	if outputJSON(cmd) {
-		out := make([]jsonEntity, 0, len(entities))
-		for _, e := range entities {
-			out = append(out, toJSONEntity(e))
+		entities := make([]jsonEntity, 0, len(mod.Entities()))
+		for _, e := range mod.Entities() {
+			entities = append(entities, toJSONEntity(e))
 		}
 		emitJSON(struct {
 			Total    int          `json:"total"`
 			Entities []jsonEntity `json:"entities"`
-		}{Total: len(out), Entities: out})
+		}{Total: len(entities), Entities: entities})
 		return
 	}
 	sections := []struct {
@@ -58,19 +45,15 @@ func runInventory(cmd *cobra.Command, path string) {
 		{analysis.KindModule, "Modules"},
 		{analysis.KindOutput, "Outputs"},
 	}
-	fmt.Printf("Entities: %d\n", len(entities))
+	total := len(mod.Entities())
+	fmt.Printf("Entities: %d\n", total)
 	for _, s := range sections {
-		var filtered []analysis.Entity
-		for _, e := range entities {
-			if e.Kind == s.kind {
-				filtered = append(filtered, e)
-			}
-		}
-		if len(filtered) == 0 {
+		entities := mod.Filter(s.kind)
+		if len(entities) == 0 {
 			continue
 		}
-		fmt.Printf("\n%s (%d):\n", s.title, len(filtered))
-		for _, e := range filtered {
+		fmt.Printf("\n%s (%d):\n", s.title, len(entities))
+		for _, e := range entities {
 			if loc := e.Location(); loc != "" {
 				fmt.Printf("  %-40s  (%s)\n", e.ID(), loc)
 			} else {

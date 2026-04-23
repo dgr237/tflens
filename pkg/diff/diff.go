@@ -6,9 +6,10 @@ package diff
 import (
 	"fmt"
 	"sort"
+
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
-	"github.com/dgr237/tflens/pkg/printer"
 	"github.com/dgr237/tflens/pkg/token"
 )
 
@@ -273,8 +274,8 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 		diffDependsOn(oe.ID(), oe, ne, changes)
 		// Value-expression shape changes
 		if oe.ValueExpr != nil && ne.ValueExpr != nil {
-			oldText := printer.PrintExpr(oe.ValueExpr)
-			newText := printer.PrintExpr(ne.ValueExpr)
+			oldText := oe.ValueExpr.Text()
+			newText := ne.ValueExpr.Text()
 			if oldText != newText {
 				*changes = append(*changes, Change{
 					Kind:    Informational,
@@ -389,8 +390,8 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 			// Mode unchanged — but the expression content might differ, which
 			// changes which keys/indices exist at plan time.
 			if oe.HasForEach && ne.HasForEach {
-				oldText := printer.PrintExpr(oe.ForEachExpr)
-				newText := printer.PrintExpr(ne.ForEachExpr)
+				oldText := oe.ForEachExpr.Text()
+				newText := ne.ForEachExpr.Text()
 				if oldText != newText {
 					*changes = append(*changes, Change{
 						Kind:    Informational,
@@ -403,8 +404,8 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 				}
 			}
 			if oe.HasCount && ne.HasCount {
-				oldText := printer.PrintExpr(oe.CountExpr)
-				newText := printer.PrintExpr(ne.CountExpr)
+				oldText := oe.CountExpr.Text()
+				newText := ne.CountExpr.Text()
 				if oldText != newText {
 					*changes = append(*changes, Change{
 						Kind:    Informational,
@@ -419,8 +420,8 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 		}
 		// Provider alias changes (resource/data only — module uses `providers = {}`).
 		if oe.Kind == analysis.KindResource || oe.Kind == analysis.KindData {
-			oldProv := printer.PrintExpr(oe.ProviderExpr)
-			newProv := printer.PrintExpr(ne.ProviderExpr)
+			oldProv := oe.ProviderExpr.Text()
+			newProv := ne.ProviderExpr.Text()
 			if oldProv != newProv {
 				*changes = append(*changes, Change{
 					Kind:    Breaking,
@@ -621,22 +622,22 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 			NewPos:  ne.Pos,
 		})
 	}
-	if s := printer.PrintExpr(oe.IgnoreChangesExpr); s != printer.PrintExpr(ne.IgnoreChangesExpr) {
+	if s := oe.IgnoreChangesExpr.Text(); s != ne.IgnoreChangesExpr.Text() {
 		*changes = append(*changes, Change{
 			Kind:    Informational,
 			Subject: id,
 			Detail: fmt.Sprintf("`ignore_changes` changed: %s → %s (drift detection behaviour differs)",
-				displayIgnoreList(s), displayIgnoreList(printer.PrintExpr(ne.IgnoreChangesExpr))),
+				displayIgnoreList(s), displayIgnoreList(ne.IgnoreChangesExpr.Text())),
 			OldPos: oe.Pos,
 			NewPos: ne.Pos,
 		})
 	}
-	if s := printer.PrintExpr(oe.ReplaceTriggeredByExpr); s != printer.PrintExpr(ne.ReplaceTriggeredByExpr) {
+	if s := oe.ReplaceTriggeredByExpr.Text(); s != ne.ReplaceTriggeredByExpr.Text() {
 		*changes = append(*changes, Change{
 			Kind:    Informational,
 			Subject: id,
 			Detail: fmt.Sprintf("`replace_triggered_by` changed: %s → %s (replacement triggers differ)",
-				displayIgnoreList(s), displayIgnoreList(printer.PrintExpr(ne.ReplaceTriggeredByExpr))),
+				displayIgnoreList(s), displayIgnoreList(ne.ReplaceTriggeredByExpr.Text())),
 			OldPos: oe.Pos,
 			NewPos: ne.Pos,
 		})
@@ -670,16 +671,14 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 func diffIndirectLocals(oe, ne analysis.Entity, oldMod, newMod *analysis.Module, changes *[]Change) {
 	// Gather local names referenced by the output's value expression.
 	referenced := map[string]bool{}
-	ast.Inspect(ne.ValueExpr, func(n ast.Node) bool {
-		ref, ok := n.(*ast.RefExpr)
-		if !ok {
-			return true
+	if ne.ValueExpr != nil && ne.ValueExpr.E != nil {
+		for _, trav := range ne.ValueExpr.E.Variables() {
+			parts := traversalLocalName(trav)
+			if parts != "" {
+				referenced[parts] = true
+			}
 		}
-		if len(ref.Parts) >= 2 && ref.Parts[0] == "local" {
-			referenced[ref.Parts[1]] = true
-		}
-		return true
-	})
+	}
 	// For each referenced local, compare its expression between versions.
 	for name := range referenced {
 		id := (analysis.Entity{Kind: analysis.KindLocal, Name: name}).ID()
@@ -688,8 +687,8 @@ func diffIndirectLocals(oe, ne analysis.Entity, oldMod, newMod *analysis.Module,
 		if !oldOK || !newOK {
 			continue // added or removed — dep-graph changes would show it
 		}
-		oldText := printer.PrintExpr(oldLocal.LocalExpr)
-		newText := printer.PrintExpr(newLocal.LocalExpr)
+		oldText := oldLocal.LocalExpr.Text()
+		newText := newLocal.LocalExpr.Text()
 		if oldText == newText {
 			continue
 		}
@@ -733,8 +732,8 @@ func diffModuleArgs(id string, oe, ne analysis.Entity, changes *[]Change) {
 			continue
 		}
 		// Value-shape change
-		oldText := printer.PrintExpr(oldExpr)
-		newText := printer.PrintExpr(newExpr)
+		oldText := oldExpr.Text()
+		newText := newExpr.Text()
 		if oldText != newText {
 			*changes = append(*changes, Change{
 				Kind:    Informational,
@@ -763,8 +762,8 @@ func diffModuleArgs(id string, oe, ne analysis.Entity, changes *[]Change) {
 // diffDependsOn compares depends_on expressions and emits an Informational
 // change when they differ. Used by both outputs and stateful entities.
 func diffDependsOn(subject string, oe, ne analysis.Entity, changes *[]Change) {
-	oldText := printer.PrintExpr(oe.DependsOnExpr)
-	newText := printer.PrintExpr(ne.DependsOnExpr)
+	oldText := oe.DependsOnExpr.Text()
+	newText := ne.DependsOnExpr.Text()
 	if oldText == newText {
 		return
 	}
@@ -783,6 +782,23 @@ func displayIgnoreList(s string) string {
 		return "<none>"
 	}
 	return s
+}
+
+// traversalLocalName returns the local-name part of a `local.X[...]`
+// traversal, or "" if the traversal does not begin with `local.<name>`.
+func traversalLocalName(trav hcl.Traversal) string {
+	if len(trav) < 2 {
+		return ""
+	}
+	root, ok := trav[0].(hcl.TraverseRoot)
+	if !ok || root.Name != "local" {
+		return ""
+	}
+	attr, ok := trav[1].(hcl.TraverseAttr)
+	if !ok {
+		return ""
+	}
+	return attr.Name
 }
 
 // ---- helpers ----
