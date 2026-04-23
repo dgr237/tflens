@@ -151,13 +151,17 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | New optional variable (has default) | NonBreaking |
 | `default` removed (optional → required) | Breaking |
 | `default` added (required → optional) | NonBreaking |
-| Type widened to `any` | NonBreaking |
-| Type changed (otherwise) | Breaking |
+| Type widened — every old value is still acceptable (`string` → `any`, `list(string)` → `list(any)`, `map(T)` → `map(any)`, …; backed by `cty.Convert`) | NonBreaking |
+| Type narrowed — some old values are now rejected (`any` → `string`, `list(any)` → `list(string)`, …) | Breaking |
+| Type changed and incompatible (unrelated shapes) | Breaking |
+| Existing default still converts cleanly to the new type (emitted alongside the type change so callers using the default see they're unaffected) | Informational |
 | Object field added (required) | Breaking |
 | Object field added (optional) | NonBreaking |
 | Object field removed | Breaking |
 | Object field optional → required | Breaking |
 | Object field required → optional | NonBreaking |
+| Object field inner type widened (e.g. `object({a=string})` → `object({a=any})`) | NonBreaking |
+| Object field inner type narrowed/incompatible | Breaking |
 | `nullable = false` added | Breaking |
 | `nullable = false` removed | NonBreaking |
 | `sensitive = true` added | Breaking |
@@ -170,8 +174,9 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | Output removed | Breaking |
 | Output added | NonBreaking |
 | `sensitive` toggled | Informational |
-| `value` expression changed (normalised) | Informational |
-| Referenced `local` expression changed (indirect) | Informational |
+| Output value type narrowed or incompatible (inferred via `var.X` → declared type, function-return tables, or constant evaluation; e.g. `string` → `list(string)` from `[for ...]`) | Breaking |
+| `value` expression changed but inferred type compatible (or types unknown) | Informational |
+| Referenced `local` expression changed (indirect, surfaced when the output expression text is unchanged) | Informational |
 | New `precondition` / `postcondition` | Informational |
 | `depends_on` changed | Informational |
 
@@ -185,7 +190,9 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | `removed { from = X }` block covering a deletion | Informational ("removal handled") |
 | `count` ↔ `for_each` transition (either direction) | Breaking |
 | `count` / `for_each` added to or removed from a singleton | Breaking |
-| `count` / `for_each` *expression* changed (mode unchanged) | Informational |
+| `for_each` *key type* narrowed or incompatible (e.g. `set(string)` → `set(number)` — every instance is re-addressed under a different key; also fires when the for_each text is unchanged but a referenced variable's type narrowed underneath) | Breaking |
+| `for_each` *expression* changed but key type compatible (or unknown) | Informational |
+| `count` *expression* changed (mode unchanged) | Informational |
 | `provider = aws.east` → `aws.west` | Breaking |
 | Lifecycle: `prevent_destroy` added/removed | Informational |
 | Lifecycle: `create_before_destroy` toggled | Informational |
