@@ -567,6 +567,47 @@ func TestForEachIdenticalExpressionProducesNoChange(t *testing.T) {
 	}
 }
 
+func TestForEachKeyTypeNarrowedIsBreaking(t *testing.T) {
+	// for_each driven by a typed variable. Old keys are strings (set element
+	// type = string); new keys are numbers — every instance would be
+	// re-addressed.
+	oldSrc := "variable \"k\" { type = set(string) }\n" +
+		"resource \"aws_iam_user\" \"u\" { for_each = var.k }\n"
+	newSrc := "variable \"k\" { type = set(number) }\n" +
+		"resource \"aws_iam_user\" \"u\" { for_each = var.k }\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "resource.aws_iam_user.u")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking; detail=%q", c.Kind, c.Detail)
+	}
+	if !strings.Contains(c.Detail, "for_each key type") {
+		t.Errorf("detail should mention key type: %q", c.Detail)
+	}
+}
+
+func TestForEachSetToMapKeepsStringKeysIsInformational(t *testing.T) {
+	// set(string) → map(string): both key by string. Should remain
+	// Informational (no key-type change), not upgraded to Breaking.
+	oldSrc := "variable \"k\" { type = set(string) }\n" +
+		"resource \"aws_iam_user\" \"u\" { for_each = var.k }\n"
+	newSrc := "variable \"k\" { type = map(string) }\n" +
+		"resource \"aws_iam_user\" \"u\" { for_each = var.k }\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	for _, c := range changes {
+		if c.Subject == "resource.aws_iam_user.u" && c.Kind == diff.Breaking {
+			// We accept the type-change Breaking on the variable itself but
+			// the resource's for_each should NOT be flagged as a key-type
+			// breaking change.
+			if strings.Contains(c.Detail, "for_each key type") {
+				t.Errorf("set(string) → map(string) should not be a for_each key-type breaking change: %q", c.Detail)
+			}
+		}
+	}
+}
+
 // ---- count / for_each ----
 
 func TestCountToForEachIsBreaking(t *testing.T) {
@@ -755,6 +796,49 @@ func TestOutputExpressionChangedIsInformational(t *testing.T) {
 	}
 	if !strings.Contains(c.Detail, "id") || !strings.Contains(c.Detail, "arn") {
 		t.Errorf("detail should show both sides: %q", c.Detail)
+	}
+}
+
+func TestOutputTypeNarrowedIsBreaking(t *testing.T) {
+	// Old output's value is a string (templated); new output's value is a
+	// list (a for-expression). Downstream consumers expecting a string
+	// will fail.
+	oldSrc := "variable \"env\" {}\n" +
+		"output \"name\" { value = \"${var.env}-app\" }\n"
+	newSrc := "variable \"env\" {}\n" +
+		"output \"name\" { value = [for s in [\"a\",\"b\"] : s] }\n"
+	changes := diff.Diff(
+		mustAnalyseIgnoreVal(t, "old.tf", oldSrc),
+		mustAnalyseIgnoreVal(t, "new.tf", newSrc),
+	)
+	c := findChange(changes, "output.name")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking; detail=%q", c.Kind, c.Detail)
+	}
+	if !strings.Contains(c.Detail, "output type changed") {
+		t.Errorf("detail should mention output type: %q", c.Detail)
+	}
+	if !strings.Contains(c.Detail, "string") {
+		t.Errorf("detail should mention old type 'string': %q", c.Detail)
+	}
+}
+
+func TestOutputTypeUnknownStaysInformational(t *testing.T) {
+	// Both expressions reference resource attributes whose types we don't
+	// track — no type analysis possible — so the Informational text-change
+	// message should still be emitted (no false-positive Breaking).
+	oldSrc := `output "id" { value = aws_vpc.main.id }`
+	newSrc := `output "id" { value = aws_vpc.main.arn }`
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "output.id")
+	if c == nil {
+		t.Fatalf("expected change, got: %v", changes)
+	}
+	if c.Kind != diff.Informational {
+		t.Errorf("kind = %v, want Informational (types are unknown); detail=%q", c.Kind, c.Detail)
 	}
 }
 

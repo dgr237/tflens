@@ -287,19 +287,10 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 		diffDependsOn(oe.ID(), oe, ne, changes)
 		// Value-expression shape changes
 		if oe.ValueExpr != nil && ne.ValueExpr != nil {
-			oldText := oe.ValueExpr.Text()
-			newText := ne.ValueExpr.Text()
-			if oldText != newText {
-				*changes = append(*changes, Change{
-					Kind:    Informational,
-					Subject: oe.ID(),
-					Detail:  fmt.Sprintf("value expression changed: %s → %s", oldText, newText),
-					OldPos:  oe.Pos,
-					NewPos:  ne.Pos,
-				})
-			} else {
-				// Expression text is identical, but a local it references may
-				// have changed — surface that indirection.
+			typeBreaking := emitOutputValueChange(oldMod, newMod, oe, ne, changes)
+			if !typeBreaking && oe.ValueExpr.Text() == ne.ValueExpr.Text() {
+				// Expression text is identical AND type compatible, but a
+				// referenced local may have changed.
 				diffIndirectLocals(oe, ne, oldMod, newMod, changes)
 			}
 		}
@@ -401,20 +392,11 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 			})
 		} else {
 			// Mode unchanged — but the expression content might differ, which
-			// changes which keys/indices exist at plan time.
+			// changes which keys/indices exist at plan time. Type analysis
+			// also runs even when the text is identical, since a referenced
+			// variable's type may have changed underneath.
 			if oe.HasForEach && ne.HasForEach {
-				oldText := oe.ForEachExpr.Text()
-				newText := ne.ForEachExpr.Text()
-				if oldText != newText {
-					*changes = append(*changes, Change{
-						Kind:    Informational,
-						Subject: id,
-						Detail: fmt.Sprintf("for_each expression changed: %s → %s (state keys may differ)",
-							oldText, newText),
-						OldPos: oe.Pos,
-						NewPos: ne.Pos,
-					})
-				}
+				emitForEachChange(oldMod, newMod, id, oe, ne, changes)
 			}
 			if oe.HasCount && ne.HasCount {
 				oldText := oe.CountExpr.Text()
@@ -953,6 +935,105 @@ func compareTypes(oldT, newT *analysis.TFType) typeRel {
 	default:
 		return typeRelIncompatible
 	}
+}
+
+// emitOutputValueChange evaluates an output's value expression on both
+// sides. When both yield a known inferred type and the new type narrows or
+// is incompatible with the old, emits a Breaking change and returns true
+// (downstream consumers expecting the old type will fail) — this fires
+// whether or not the expression text changed, so it catches the case where
+// the same `var.X` reference is reused but X's declared type narrowed.
+// Otherwise emits the existing Informational text change when the text
+// differs, and returns false so the caller can run further checks
+// (indirect-locals).
+func emitOutputValueChange(oldMod, newMod *analysis.Module, oe, ne analysis.Entity, changes *[]Change) bool {
+	oldType := oldMod.InferExprType(oe.ValueExpr.E)
+	newType := newMod.InferExprType(ne.ValueExpr.E)
+
+	if oldType != nil && newType != nil &&
+		oldType.Kind != analysis.TypeUnknown && newType.Kind != analysis.TypeUnknown {
+		switch compareTypes(oldType, newType) {
+		case typeRelNarrowed, typeRelIncompatible:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: oe.ID(),
+				Detail: fmt.Sprintf("output type changed: %s → %s (downstream consumers expecting %s will fail)",
+					typeStr(oldType), typeStr(newType), typeStr(oldType)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+			return true
+		}
+	}
+	oldText := oe.ValueExpr.Text()
+	newText := ne.ValueExpr.Text()
+	if oldText != newText {
+		*changes = append(*changes, Change{
+			Kind:    Informational,
+			Subject: oe.ID(),
+			Detail:  fmt.Sprintf("value expression changed: %s → %s", oldText, newText),
+			OldPos:  oe.Pos,
+			NewPos:  ne.Pos,
+		})
+	}
+	return false
+}
+
+// emitForEachChange handles a stateful entity's for_each expression. When
+// key types on both sides are known and have narrowed or become
+// incompatible, emits a Breaking change — every instance will be
+// re-addressed under a different key. This fires whether or not the
+// for_each expression text changed (so we catch a referenced variable's
+// type narrowing under a textually-unchanged `var.X`). Otherwise emits the
+// existing Informational change when the text differs.
+func emitForEachChange(oldMod, newMod *analysis.Module, id string, oe, ne analysis.Entity, changes *[]Change) {
+	oldKey := forEachKeyType(oldMod.InferExprType(oe.ForEachExpr.E))
+	newKey := forEachKeyType(newMod.InferExprType(ne.ForEachExpr.E))
+
+	if oldKey != nil && newKey != nil {
+		switch compareTypes(oldKey, newKey) {
+		case typeRelNarrowed, typeRelIncompatible:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: id,
+				Detail: fmt.Sprintf("for_each key type changed: %s → %s (every instance will be recreated under new keys)",
+					typeStr(oldKey), typeStr(newKey)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+			return
+		}
+	}
+	oldText := oe.ForEachExpr.Text()
+	newText := ne.ForEachExpr.Text()
+	if oldText != newText {
+		*changes = append(*changes, Change{
+			Kind:    Informational,
+			Subject: id,
+			Detail: fmt.Sprintf("for_each expression changed: %s → %s (state keys may differ)",
+				oldText, newText),
+			OldPos: oe.Pos,
+			NewPos: ne.Pos,
+		})
+	}
+}
+
+// forEachKeyType returns the type that becomes the instance key when t is
+// used as a for_each value. Maps and objects key by string; sets key by
+// element. Returns nil for any other shape — including a TypeSet whose
+// element type is unknown — so the caller can fall back to a textual
+// comparison rather than guessing.
+func forEachKeyType(t *analysis.TFType) *analysis.TFType {
+	if t == nil {
+		return nil
+	}
+	switch t.Kind {
+	case analysis.TypeMap, analysis.TypeObject:
+		return &analysis.TFType{Kind: analysis.TypeString}
+	case analysis.TypeSet:
+		return t.Elem
+	}
+	return nil
 }
 
 // checkDefaultStillValid emits an Informational change when a variable's
