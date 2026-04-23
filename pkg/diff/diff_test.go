@@ -3,21 +3,29 @@ package diff_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
-	"github.com/dgr237/tflens/pkg/parser"
 )
 
 func analyse(t *testing.T, filename, src string) *analysis.Module {
 	t.Helper()
-	file, errs := parser.ParseFile([]byte(src), filename)
-	for _, e := range errs {
-		t.Errorf("parse error: %s", e)
+	p := hclparse.NewParser()
+	hclFile, diags := p.ParseHCL([]byte(src), filename)
+	for _, d := range diags {
+		t.Errorf("parse error: %s", d.Error())
 	}
 	if t.Failed() {
 		t.FailNow()
 	}
-	return analysis.Analyse(file)
+	body, ok := hclFile.Body.(*hclsyntax.Body)
+	if !ok {
+		t.Fatalf("unexpected body type %T", hclFile.Body)
+	}
+	return analysis.Analyse(&analysis.File{Filename: filename, Source: []byte(src), Body: body})
 }
 
 func diffFixture(t *testing.T, oldSrc, newSrc string) []diff.Change {
@@ -674,11 +682,19 @@ func TestOutputExpressionTemplateChange(t *testing.T) {
 // validation errors — useful when we only care about shape changes.
 func mustAnalyseIgnoreVal(t *testing.T, filename, src string) *analysis.Module {
 	t.Helper()
-	file, errs := parser.ParseFile([]byte(src), filename)
-	for _, e := range errs {
-		t.Logf("parse warning: %s", e)
+	p := hclparse.NewParser()
+	hclFile, diags := p.ParseHCL([]byte(src), filename)
+	for _, d := range diags {
+		t.Logf("parse warning: %s", d.Error())
 	}
-	return analysis.Analyse(file)
+	if hclFile == nil {
+		return analysis.AnalyseFiles(nil)
+	}
+	body, ok := hclFile.Body.(*hclsyntax.Body)
+	if !ok {
+		return analysis.AnalyseFiles(nil)
+	}
+	return analysis.Analyse(&analysis.File{Filename: filename, Source: []byte(src), Body: body})
 }
 
 // ---- resource provider alias ----

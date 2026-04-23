@@ -1,8 +1,8 @@
 # tflens
 
-A standalone Terraform/HCL parser and analysis tool, written in Go. The only runtime dependency is [spf13/cobra](https://github.com/spf13/cobra) for the CLI layer; all parsing, analysis, diff, constraint, and module-resolution logic is dependency-free.
+A standalone Terraform analysis tool, written in Go. Parsing is delegated to [hashicorp/hcl/v2](https://github.com/hashicorp/hcl) (the same library Terraform itself uses); the CLI layer uses [spf13/cobra](https://github.com/spf13/cobra). The analysis, diff, constraint, and module-resolution logic is implemented directly with no further runtime dependencies.
 
-Parses `.tf` files into an AST, builds a dependency graph, validates references and types, and diffs two module versions to surface breaking changes. Does not execute Terraform and does not need provider schemas.
+Parses `.tf` files, builds a dependency graph, validates references and types, and diffs two module versions to surface breaking changes. Does not execute Terraform and does not need provider schemas.
 
 Optionally fetches module sources (Terraform Registry or git) on demand so downstream analysis can traverse into them — see [Module resolution](#module-resolution). Pass `--offline` to disable network fetches; local paths and `.terraform/modules/modules.json` entries are always resolved regardless.
 
@@ -72,19 +72,18 @@ tflens --offline diff --ref main ./my-workspace
 
 ## Parsing coverage
 
-The lexer and parser handle the HCL subset used by Terraform:
+Parsing is delegated to `hashicorp/hcl/v2` (`hclparse` + `hclsyntax`), so the full Terraform HCL2 surface is supported, including:
 
 - Blocks with labels (`resource "aws_vpc" "main" { ... }`)
 - Attributes and nested blocks, including `dynamic` blocks
 - All primitive literals (string, number, bool, null), heredocs
-- Template strings with `${...}` interpolation
+- Template strings with `${...}` interpolation and `$$` literal-dollar escapes
 - Expressions: unary/binary operators with correct precedence, ternary `?:`, splat (`.*`, `[*]`), indexing, dot traversal
 - Collections: tuples, objects with `=` or `:` separators
 - `for` expressions for both lists and maps, with optional `if` clause
 - Function calls (with `...` argument spread)
-- Error recovery: a bad attribute or block does not prevent the rest of the file from parsing
 
-Parse errors are reported with position information (`file:line:column`). Line (`#`, `//`) and block (`/* */`) comments are preserved through the parse → print round-trip: comments before a statement become leading comments, comments on the same line after a statement become trailing comments. Mid-expression comments (e.g. inside a function call argument list split across lines) are dropped.
+Parse errors are reported with position information (`file:line:column`). The `fmt` command runs `hclwrite.Format`, which preserves comments and blank lines.
 
 ## Validation (`validate`)
 
@@ -399,18 +398,15 @@ Code is organised under `pkg/`:
 
 | Package | Responsibility |
 | --- | --- |
-| `token` | Token types and position records |
-| `lexer` | Mode-stack lexer producing tokens from raw bytes |
-| `ast` | AST node types, visitor, inspect |
-| `parser` | Recursive-descent / Pratt parser with error recovery |
-| `printer` | Idempotent AST-to-HCL printer (including `PrintExpr` for single expressions) |
-| `analysis` | Entity collection, dependency graph, type system, validation, graph algorithms (cycles, topo-sort, impact, unreferenced) |
-| `loader` | Multi-file / directory / recursive submodule loading, cross-module input validation |
-| `diff` | Two-module comparison with semver-aware constraint classification |
+| `token` | Source-position type (thin wrapper over `hcl.Pos`) used across the API |
+| `analysis` | Entity collection, dependency graph, type system, validation, graph algorithms (cycles, topo-sort, impact, unreferenced); consumes `hclsyntax.Body` from `pkg/loader` |
+| `loader` | Multi-file / directory / recursive submodule loading via `hclparse`, cross-module input validation |
+| `diff` | Two-module comparison with semver-aware constraint classification; expression equality goes through `hclwrite.Format` so whitespace-only edits don't show as changes |
 | `constraint` | SemVer parsing and Terraform-style version constraint evaluation (`~>`, `>=`, ...) |
 | `cache` | Content-addressable disk cache for downloaded module sources |
 | `resolver` | Pluggable `Resolver` chain (local path, `.terraform/modules/modules.json`, Terraform Registry, git) with credential support |
 | `tfstate` | Terraform state v4 JSON parser; exposes resource identity + instance keys for cross-reference |
+| `lsp` | Language Server Protocol implementation (stdio) backed by the analysis package |
 
 The CLI layer lives in top-level `cmd/` (cobra), with one file per subcommand. `main.go` just calls `cmd.Execute()`.
 

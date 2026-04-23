@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
-	"github.com/dgr237/tflens/pkg/parser"
 )
 
-// mustLoadModule loads a single-file or single-directory module. Exits on I/O
-// or parse errors (partial parse results are printed but treated as fatal).
+// mustLoadModule loads a single-file or single-directory module. Exits on
+// I/O or parse errors (partial parse results are printed but treated as
+// fatal).
 func mustLoadModule(path string) *analysis.Module {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -34,14 +37,23 @@ func mustLoadModule(path string) *analysis.Module {
 	if err != nil {
 		fatalf("reading file: %v", err)
 	}
-	file, errs := parser.ParseFile(src, path)
-	for _, e := range errs {
-		fmt.Fprintf(os.Stderr, "parse error: %s\n", e)
-	}
-	if len(errs) > 0 {
+	p := hclparse.NewParser()
+	hclFile, diags := p.ParseHCL(src, path)
+	if diags.HasErrors() {
+		for _, d := range diags {
+			fmt.Fprintf(os.Stderr, "parse error: %s\n", d.Error())
+		}
 		os.Exit(1)
 	}
-	return analysis.Analyse(file)
+	body, ok := hclFile.Body.(*hclsyntax.Body)
+	if !ok {
+		fatalf("unexpected HCL body type %T", hclFile.Body)
+	}
+	return analysis.Analyse(&analysis.File{
+		Filename: path,
+		Source:   src,
+		Body:     body,
+	})
 }
 
 // mustEntityExists exits with a helpful message when id isn't declared in mod.

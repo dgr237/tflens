@@ -3,7 +3,12 @@ package analysis
 import (
 	"fmt"
 	"sort"
-	"github.com/dgr237/tflens/pkg/ast"
+
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
+
 	"github.com/dgr237/tflens/pkg/token"
 )
 
@@ -31,7 +36,7 @@ type TFType struct {
 	Elem     *TFType            // for list / set / map
 	Fields   map[string]*TFType // for object
 	Elems    []*TFType          // for tuple
-	Optional bool               // meaningful only when this type is an object field (set via optional(...))
+	Optional bool               // meaningful only when this type is an object field
 }
 
 func (t *TFType) String() string {
@@ -102,122 +107,73 @@ func (m *Module) TypeErrors() []TypeCheckError {
 	return out
 }
 
-// ParseType interprets a type-constraint expression — the value of a variable
-// block's "type" attribute — and returns the corresponding TFType.
-// Unrecognised expressions yield a TFType with Kind = TypeUnknown.
-func ParseType(expr ast.Expr) *TFType {
-	switch e := expr.(type) {
-	case *ast.RefExpr:
-		if len(e.Parts) == 1 {
-			switch e.Parts[0] {
-			case "string":
-				return &TFType{Kind: TypeString}
-			case "number":
-				return &TFType{Kind: TypeNumber}
-			case "bool":
-				return &TFType{Kind: TypeBool}
-			case "any":
-				return &TFType{Kind: TypeAny}
+// ParseTypeExpr interprets the value of a variable block's "type" attribute
+// and returns the corresponding TFType. Unrecognised expressions yield a
+// TFType with Kind = TypeUnknown.
+func ParseTypeExpr(expr hclsyntax.Expression) *TFType {
+	t, diags := typeexpr.TypeConstraint(expr)
+	if diags.HasErrors() {
+		return &TFType{Kind: TypeUnknown}
+	}
+	return ctyToTFType(t)
+}
+
+// ctyToTFType maps a cty.Type into the internal TFType representation.
+func ctyToTFType(t cty.Type) *TFType {
+	switch {
+	case t == cty.String:
+		return &TFType{Kind: TypeString}
+	case t == cty.Number:
+		return &TFType{Kind: TypeNumber}
+	case t == cty.Bool:
+		return &TFType{Kind: TypeBool}
+	case t == cty.DynamicPseudoType:
+		return &TFType{Kind: TypeAny}
+	case t.IsListType():
+		return &TFType{Kind: TypeList, Elem: ctyToTFType(t.ElementType())}
+	case t.IsSetType():
+		return &TFType{Kind: TypeSet, Elem: ctyToTFType(t.ElementType())}
+	case t.IsMapType():
+		return &TFType{Kind: TypeMap, Elem: ctyToTFType(t.ElementType())}
+	case t.IsObjectType():
+		fields := make(map[string]*TFType, len(t.AttributeTypes()))
+		for name, at := range t.AttributeTypes() {
+			ft := ctyToTFType(at)
+			if ft != nil && t.AttributeOptional(name) {
+				ft.Optional = true
 			}
+			fields[name] = ft
 		}
-	case *ast.CallExpr:
-		switch e.Name {
-		case "list":
-			t := &TFType{Kind: TypeList}
-			if len(e.Args) == 1 {
-				t.Elem = ParseType(e.Args[0])
-			}
-			return t
-		case "set":
-			t := &TFType{Kind: TypeSet}
-			if len(e.Args) == 1 {
-				t.Elem = ParseType(e.Args[0])
-			}
-			return t
-		case "map":
-			t := &TFType{Kind: TypeMap}
-			if len(e.Args) == 1 {
-				t.Elem = ParseType(e.Args[0])
-			}
-			return t
-		case "object":
-			t := &TFType{Kind: TypeObject, Fields: make(map[string]*TFType)}
-			if len(e.Args) == 1 {
-				if obj, ok := e.Args[0].(*ast.ObjectExpr); ok {
-					for _, item := range obj.Items {
-						key := objectKeyName(item.Key)
-						if key != "" {
-							t.Fields[key] = parseObjectFieldType(item.Value)
-						}
-					}
-				}
-			}
-			return t
-		case "optional":
-			// optional(T) outside an object body — treat as the inner type,
-			// marked optional. (Strictly Terraform requires optional() only
-			// inside object(); we're lenient.)
-			if len(e.Args) >= 1 {
-				inner := ParseType(e.Args[0])
-				if inner != nil {
-					inner.Optional = true
-				}
-				return inner
-			}
-		case "tuple":
-			t := &TFType{Kind: TypeTuple}
-			if len(e.Args) == 1 {
-				if tup, ok := e.Args[0].(*ast.TupleExpr); ok {
-					for _, item := range tup.Items {
-						t.Elems = append(t.Elems, ParseType(item))
-					}
-				}
-			}
-			return t
+		return &TFType{Kind: TypeObject, Fields: fields}
+	case t.IsTupleType():
+		elems := make([]*TFType, 0, len(t.TupleElementTypes()))
+		for _, et := range t.TupleElementTypes() {
+			elems = append(elems, ctyToTFType(et))
 		}
+		return &TFType{Kind: TypeTuple, Elems: elems}
 	}
 	return &TFType{Kind: TypeUnknown}
 }
 
-// parseObjectFieldType parses an object-field type expression, recognising
-// the `optional(T)` and `optional(T, default)` wrappers that mark the field
-// as optional. Returns a TFType whose Optional flag is set when the wrapper
-// was present.
-func parseObjectFieldType(expr ast.Expr) *TFType {
-	if call, ok := expr.(*ast.CallExpr); ok && call.Name == "optional" && len(call.Args) >= 1 {
-		t := ParseType(call.Args[0])
-		if t != nil {
-			t.Optional = true
-		}
-		return t
+// ctyValueKind approximates the TFType of a concrete cty.Value, for use in
+// error messages (mirrors the old InferLiteralType output).
+func ctyValueKind(v cty.Value) *TFType {
+	if v.IsNull() {
+		return &TFType{Kind: TypeNull}
 	}
-	return ParseType(expr)
+	t := v.Type()
+	if t.IsObjectType() || t.IsMapType() {
+		return &TFType{Kind: TypeObject}
+	}
+	if t.IsTupleType() || t.IsListType() || t.IsSetType() {
+		return &TFType{Kind: TypeList}
+	}
+	return ctyToTFType(t)
 }
 
-// objectKeyName extracts a string field name from an object literal key
-// expression. Keys may be bare identifiers (RefExpr) or string literals.
-func objectKeyName(expr ast.Expr) string {
-	switch k := expr.(type) {
-	case *ast.RefExpr:
-		if len(k.Parts) == 1 {
-			return k.Parts[0]
-		}
-	case *ast.LiteralExpr:
-		if s, ok := k.Value.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-// builtinFuncReturns maps built-in Terraform function names to their return
-// type kind. Element types are not tracked — a function returning
-// "list(string)" is recorded as TypeList, which is sufficient for the checks
-// we perform (e.g. rejecting list-returning calls in for_each context).
-//
-// Argument types are deliberately not tracked: many Terraform functions are
-// polymorphic or variadic, and checking argument types duplicates Terraform's
-// own runtime validation with much lower fidelity.
+// builtinFuncReturns maps Terraform built-in function names to the return
+// kind we attribute to them when literal evaluation fails. Element types
+// are not tracked.
 var builtinFuncReturns = map[string]TypeKind{
 	// Type conversions
 	"toset":    TypeSet,
@@ -288,7 +244,7 @@ var builtinFuncReturns = map[string]TypeKind{
 	"textencodebase64": TypeString,
 	"textdecodebase64": TypeString,
 
-	// Decoding returns unknown structure
+	// Decoding
 	"jsondecode": TypeAny,
 	"yamldecode": TypeAny,
 	"csvdecode":  TypeList,
@@ -340,7 +296,7 @@ var builtinFuncReturns = map[string]TypeKind{
 	"endswith":    TypeBool,
 	"issensitive": TypeBool,
 
-	// Pass-through (return type depends on args; treat as any)
+	// Pass-through
 	"lookup":       TypeAny,
 	"element":      TypeAny,
 	"try":          TypeAny,
@@ -354,46 +310,50 @@ var builtinFuncReturns = map[string]TypeKind{
 
 // InferLiteralType returns the statically-determinable type of expr.
 // Returns a TFType with Kind = TypeUnknown for expressions whose type cannot
-// be determined without runtime information (refs to resources, unknown
-// function calls, conditionals, etc.).
-func InferLiteralType(expr ast.Expr) *TFType {
+// be determined without runtime information.
+func InferLiteralType(expr hclsyntax.Expression) *TFType {
+	if expr == nil {
+		return &TFType{Kind: TypeUnknown}
+	}
+	// Structural shortcuts (avoid cty evaluation for shapes we can classify
+	// directly from the AST).
 	switch e := expr.(type) {
-	case *ast.LiteralExpr:
-		switch e.Value.(type) {
-		case string:
-			return &TFType{Kind: TypeString}
-		case float64:
-			return &TFType{Kind: TypeNumber}
-		case bool:
-			return &TFType{Kind: TypeBool}
-		case nil:
-			return &TFType{Kind: TypeNull}
-		}
-	case *ast.TemplateExpr:
+	case *hclsyntax.TemplateExpr, *hclsyntax.TemplateWrapExpr:
+		_ = e
 		return &TFType{Kind: TypeString}
-	case *ast.TupleExpr:
+	case *hclsyntax.TupleConsExpr:
 		return &TFType{Kind: TypeList}
-	case *ast.ObjectExpr:
+	case *hclsyntax.ObjectConsExpr:
 		return &TFType{Kind: TypeObject}
-	case *ast.CallExpr:
+	case *hclsyntax.ForExpr:
+		if e.KeyExpr != nil {
+			return &TFType{Kind: TypeObject}
+		}
+		return &TFType{Kind: TypeList}
+	case *hclsyntax.FunctionCallExpr:
 		if kind, ok := builtinFuncReturns[e.Name]; ok {
 			return &TFType{Kind: kind}
 		}
+	case *hclsyntax.LiteralValueExpr:
+		if e.Val.IsNull() {
+			return &TFType{Kind: TypeNull}
+		}
+		return ctyToTFType(e.Val.Type())
+	}
+	// Final fallback: try constant evaluation for anything else that might
+	// actually be a static literal.
+	if v, diags := expr.Value(nil); !diags.HasErrors() {
+		return ctyValueKind(v)
 	}
 	return &TFType{Kind: TypeUnknown}
 }
 
-// IsTypeCompatible reports whether a value of inferred type actual can satisfy
-// the declared type constraint. TypeUnknown and TypeNull are always allowed;
-// TypeAny accepts everything. Parameterised types are checked recursively on
-// their element type.
+// IsTypeCompatible reports whether a value of inferred type actual can
+// satisfy the declared type constraint.
 func IsTypeCompatible(declared, actual *TFType) bool {
 	return isCompatible(declared, actual)
 }
 
-// isCompatible reports whether a value of inferred type actual can satisfy
-// the declared type constraint. TypeUnknown and TypeNull are always allowed;
-// TypeAny accepts everything.
 func isCompatible(declared, actual *TFType) bool {
 	if declared == nil || actual == nil {
 		return true
@@ -414,9 +374,6 @@ func isCompatible(declared, actual *TFType) bool {
 }
 
 // isForEachCompatible reports whether a type is valid as a for_each value.
-// Terraform requires a map or a set; lists are a common mistake. Object
-// literals ({k = v, ...}) are accepted because Terraform treats them as maps
-// when used as for_each.
 func isForEachCompatible(t *TFType) bool {
 	if t == nil {
 		return true
@@ -428,28 +385,62 @@ func isForEachCompatible(t *TFType) bool {
 	return false
 }
 
-// ---- type-checking pass ----
+// ---- type-checking passes ----
+
+// checkDefaultConvertible decides whether the default value is assignable to
+// the declared type. First tries cty's conversion machinery on the
+// constant-evaluated value (more accurate — correctly accepts things like
+// default={} for type=map(string)). When constant evaluation fails (e.g.
+// the default is a function call we can't evaluate), falls back to the
+// structural InferLiteralType + isCompatible path so we still catch obvious
+// mismatches like `default = length(...)` against `type = string`.
+func checkDefaultConvertible(e Entity, typeExpr hclsyntax.Expression) *TypeCheckError {
+	if e.DefaultExpr == nil || typeExpr == nil {
+		return nil
+	}
+	declared, diags := typeexpr.TypeConstraint(typeExpr)
+	if diags.HasErrors() {
+		return nil
+	}
+	v, vDiags := e.DefaultExpr.E.Value(nil)
+	if !vDiags.HasErrors() {
+		if _, err := convert.Convert(v, declared); err == nil {
+			return nil
+		}
+		return &TypeCheckError{
+			EntityID: e.ID(),
+			Attr:     "default",
+			Pos:      posFromRange(e.DefaultExpr.E.Range()),
+			Msg: fmt.Sprintf("default value for %s has type %s, want %s",
+				e.ID(), ctyValueKind(v), e.DeclaredType),
+		}
+	}
+	// Fallback: structural inference for non-constant defaults.
+	inferred := InferLiteralType(e.DefaultExpr.E)
+	if isCompatible(e.DeclaredType, inferred) {
+		return nil
+	}
+	return &TypeCheckError{
+		EntityID: e.ID(),
+		Attr:     "default",
+		Pos:      posFromRange(e.DefaultExpr.E.Range()),
+		Msg: fmt.Sprintf("default value for %s has type %s, want %s",
+			e.ID(), inferred, e.DeclaredType),
+	}
+}
 
 // typeCheckBodies looks for for_each / count misuses inside every resource,
-// data, and module block in body. Runs after entity collection so that
-// variable type constraints are available for lookup.
-func typeCheckBodies(m *Module, body *ast.Body) {
-	for _, node := range body.Nodes {
-		block, ok := node.(*ast.Block)
-		if !ok {
-			continue
-		}
+// data, and module block in file. Runs after entity collection so variable
+// type constraints are available for lookup.
+func typeCheckBodies(m *Module, file *File) {
+	for _, block := range file.Body.Blocks {
 		switch block.Type {
 		case "resource", "data", "module":
 			entityID := blockEntityID(block)
 			if entityID == "" {
 				continue
 			}
-			for _, n := range block.Body.Nodes {
-				attr, ok := n.(*ast.Attribute)
-				if !ok {
-					continue
-				}
+			for _, attr := range sortedAttrs(block.Body) {
 				switch attr.Name {
 				case "for_each":
 					m.checkForEach(entityID, attr)
@@ -461,30 +452,28 @@ func typeCheckBodies(m *Module, body *ast.Body) {
 	}
 }
 
-func (m *Module) checkForEach(entityID string, attr *ast.Attribute) {
-	t := m.inferValueType(attr.Value)
+func (m *Module) checkForEach(entityID string, attr *hclsyntax.Attribute) {
+	t := m.inferValueType(attr.Expr)
 	if isForEachCompatible(t) {
 		return
 	}
 	m.typeErrs = append(m.typeErrs, TypeCheckError{
 		EntityID: entityID,
 		Attr:     "for_each",
-		Pos:      ast.NodePos(attr.Value),
+		Pos:      posFromRange(attr.Expr.Range()),
 		Msg: fmt.Sprintf("for_each must be a map or set, got %s (in %s)",
 			t, entityID),
 	})
 }
 
-func (m *Module) checkCount(entityID string, attr *ast.Attribute) {
-	t := m.inferValueType(attr.Value)
-	// Flag only clearly-wrong kinds. Strings are coercible to numbers by
-	// Terraform so we allow them; TypeUnknown/TypeAny are also allowed.
+func (m *Module) checkCount(entityID string, attr *hclsyntax.Attribute) {
+	t := m.inferValueType(attr.Expr)
 	switch t.Kind {
 	case TypeList, TypeSet, TypeMap, TypeObject, TypeTuple, TypeBool:
 		m.typeErrs = append(m.typeErrs, TypeCheckError{
 			EntityID: entityID,
 			Attr:     "count",
-			Pos:      ast.NodePos(attr.Value),
+			Pos:      posFromRange(attr.Expr.Range()),
 			Msg: fmt.Sprintf("count must be a number, got %s (in %s)",
 				t, entityID),
 		})
@@ -492,23 +481,23 @@ func (m *Module) checkCount(entityID string, attr *ast.Attribute) {
 }
 
 // InferExprType returns the best-effort type of expr in the context of this
-// module. It tries literal inference first (including built-in function return
-// types), then resolves var.X references to the variable's declared type if
-// available. Returns TypeUnknown when the type cannot be determined.
-func (m *Module) InferExprType(expr ast.Expr) *TFType {
+// module. First tries literal inference, then resolves var.X references to
+// the variable's declared type.
+func (m *Module) InferExprType(expr hclsyntax.Expression) *TFType {
 	return m.inferValueType(expr)
 }
 
-// inferValueType returns the best-effort type of expr. It first tries literal
-// inference, then resolves var.X to the variable's declared type if known.
-func (m *Module) inferValueType(expr ast.Expr) *TFType {
+func (m *Module) inferValueType(expr hclsyntax.Expression) *TFType {
 	if t := InferLiteralType(expr); t.Kind != TypeUnknown {
 		return t
 	}
-	if ref, ok := expr.(*ast.RefExpr); ok && len(ref.Parts) >= 2 && ref.Parts[0] == "var" {
-		varID := Entity{Kind: KindVariable, Name: ref.Parts[1]}.ID()
-		if e, ok := m.byID[varID]; ok && e.DeclaredType != nil {
-			return e.DeclaredType
+	if stv, ok := expr.(*hclsyntax.ScopeTraversalExpr); ok {
+		parts := traversalParts(stv.Traversal)
+		if len(parts) >= 2 && parts[0] == "var" {
+			varID := (Entity{Kind: KindVariable, Name: parts[1]}).ID()
+			if e, ok := m.byID[varID]; ok && e.DeclaredType != nil {
+				return e.DeclaredType
+			}
 		}
 	}
 	return &TFType{Kind: TypeUnknown}
@@ -516,19 +505,19 @@ func (m *Module) inferValueType(expr ast.Expr) *TFType {
 
 // blockEntityID returns the canonical entity ID for a resource/data/module
 // block. Returns an empty string if the block has the wrong label count.
-func blockEntityID(block *ast.Block) string {
+func blockEntityID(block *hclsyntax.Block) string {
 	switch block.Type {
 	case "resource":
 		if len(block.Labels) == 2 {
-			return Entity{Kind: KindResource, Type: block.Labels[0], Name: block.Labels[1]}.ID()
+			return (Entity{Kind: KindResource, Type: block.Labels[0], Name: block.Labels[1]}).ID()
 		}
 	case "data":
 		if len(block.Labels) == 2 {
-			return Entity{Kind: KindData, Type: block.Labels[0], Name: block.Labels[1]}.ID()
+			return (Entity{Kind: KindData, Type: block.Labels[0], Name: block.Labels[1]}).ID()
 		}
 	case "module":
 		if len(block.Labels) == 1 {
-			return Entity{Kind: KindModule, Name: block.Labels[0]}.ID()
+			return (Entity{Kind: KindModule, Name: block.Labels[0]}).ID()
 		}
 	}
 	return ""

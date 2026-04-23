@@ -2,8 +2,8 @@ package loader
 
 import (
 	"fmt"
+
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/ast"
 )
 
 // CrossValidateCall checks one specific module call in parent against a
@@ -90,7 +90,7 @@ func checkModuleCall(parent *analysis.Module, mb analysis.Entity, child *analysi
 			errs = append(errs, analysis.ValidationError{
 				EntityID: mb.ID(),
 				Ref:      (analysis.Entity{Kind: analysis.KindVariable, Name: name}).ID(),
-				Pos:      ast.NodePos(expr),
+				Pos:      expr.Pos(),
 				Msg: fmt.Sprintf("%s passes unknown argument %q (child module declares no such variable)",
 					mb.ID(), name),
 			})
@@ -99,7 +99,7 @@ func checkModuleCall(parent *analysis.Module, mb analysis.Entity, child *analysi
 		if v.DeclaredType == nil {
 			continue // child has no type constraint; nothing to check
 		}
-		inferred := parent.InferExprType(expr)
+		inferred := parent.InferExprType(expr.E)
 		if inferred == nil || inferred.Kind == analysis.TypeUnknown {
 			continue
 		}
@@ -107,7 +107,7 @@ func checkModuleCall(parent *analysis.Module, mb analysis.Entity, child *analysi
 			errs = append(errs, analysis.ValidationError{
 				EntityID: mb.ID(),
 				Ref:      v.ID(),
-				Pos:      ast.NodePos(expr),
+				Pos:      expr.Pos(),
 				Msg: fmt.Sprintf("%s passes %q as %s but child variable expects %s",
 					mb.ID(), name, inferred, v.DeclaredType),
 			})
