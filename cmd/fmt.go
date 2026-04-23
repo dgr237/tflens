@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/spf13/cobra"
-
-	"github.com/dgr237/tflens/pkg/parser"
-	"github.com/dgr237/tflens/pkg/printer"
 )
 
 var fmtCmd = &cobra.Command{
@@ -21,9 +20,7 @@ is compared to its normalised form — the command is silent and exits 0 when
 already formatted, or prints the path and exits 1 when not formatted
 (suitable for CI gating).
 
-NOTE: the current lexer discards comments, so formatting is a lossy
-round-trip. Do not use -w on code with comments you want to keep until
-comment preservation lands.`,
+Comments and blank lines are preserved.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		runFmt(cmd, args[0])
@@ -54,14 +51,18 @@ func runFmt(cmd *cobra.Command, path string) {
 	if err != nil {
 		fatalf("reading file: %v", err)
 	}
-	file, errs := parser.ParseFile(src, path)
-	for _, e := range errs {
-		fmt.Fprintf(os.Stderr, "parse error: %s\n", e)
-	}
-	if len(errs) > 0 {
+
+	// Parse first to surface syntax errors with positions; the formatter
+	// will silently produce garbage on broken input.
+	p := hclparse.NewParser()
+	if _, diags := p.ParseHCL(src, path); diags.HasErrors() {
+		for _, d := range diags {
+			fmt.Fprintf(os.Stderr, "parse error: %s\n", d.Error())
+		}
 		os.Exit(1)
 	}
-	formatted := printer.Print(file)
+
+	formatted := string(hclwrite.Format(src))
 
 	switch {
 	case check:
