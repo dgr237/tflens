@@ -37,6 +37,19 @@ type TFType struct {
 	Fields   map[string]*TFType // for object
 	Elems    []*TFType          // for tuple
 	Optional bool               // meaningful only when this type is an object field
+
+	// Cty is the underlying cty.Type when this TFType was derived from a
+	// type-constraint expression via ParseTypeExpr. Equals cty.NilType when
+	// the TFType came from value inference (InferLiteralType) where the
+	// precise cty type isn't available. Used by pkg/diff to run
+	// cty.Convert-based assignability checks.
+	Cty cty.Type
+}
+
+// HasCty reports whether this TFType carries a precise underlying cty.Type
+// (i.e. it was produced by ParseTypeExpr, not by inference).
+func (t *TFType) HasCty() bool {
+	return t != nil && t.Cty != cty.NilType
 }
 
 func (t *TFType) String() string {
@@ -118,8 +131,19 @@ func ParseTypeExpr(expr hclsyntax.Expression) *TFType {
 	return ctyToTFType(t)
 }
 
-// ctyToTFType maps a cty.Type into the internal TFType representation.
+// ctyToTFType maps a cty.Type into the internal TFType representation. The
+// resulting TFType also carries the original cty.Type via its Cty field so
+// callers (notably pkg/diff) can run cty.Convert-based assignability checks
+// without re-deriving the type.
 func ctyToTFType(t cty.Type) *TFType {
+	out := tfTypeShape(t)
+	if out != nil {
+		out.Cty = t
+	}
+	return out
+}
+
+func tfTypeShape(t cty.Type) *TFType {
 	switch {
 	case t == cty.String:
 		return &TFType{Kind: TypeString}

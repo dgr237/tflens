@@ -6,8 +6,11 @@ package diff
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty/convert"
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/token"
@@ -138,61 +141,74 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				NewPos:  ne.Pos,
 			})
 		}
-		// Validation blocks added
-		if ne.Validations > oe.Validations {
-			added := ne.Validations - oe.Validations
+		// Ephemeral transitions on variables (Terraform 1.10+).
+		if !oe.Ephemeral && ne.Ephemeral {
 			*changes = append(*changes, Change{
-				Kind:    Informational,
+				Kind:    Breaking,
 				Subject: oe.ID(),
-				Detail: fmt.Sprintf("%d new validation block(s) — may reject previously-valid inputs",
-					added),
-				OldPos: oe.Pos,
-				NewPos: ne.Pos,
+				Detail:  "`ephemeral = true` added (callers must now pass an ephemeral value)",
+				OldPos:  oe.Pos,
+				NewPos:  ne.Pos,
+			})
+		} else if oe.Ephemeral && !ne.Ephemeral {
+			*changes = append(*changes, Change{
+				Kind:    NonBreaking,
+				Subject: oe.ID(),
+				Detail:  "`ephemeral = true` removed (variable now persisted to state)",
+				OldPos:  oe.Pos,
+				NewPos:  ne.Pos,
 			})
 		}
-		// Precondition / postcondition counts (variables)
-		if ne.Preconditions > oe.Preconditions {
-			*changes = append(*changes, Change{
-				Kind:    Informational,
-				Subject: oe.ID(),
-				Detail: fmt.Sprintf("%d new precondition(s) — may reject previously-valid inputs",
-					ne.Preconditions-oe.Preconditions),
-				OldPos: oe.Pos,
-				NewPos: ne.Pos,
-			})
-		}
-		if ne.Postconditions > oe.Postconditions {
-			*changes = append(*changes, Change{
-				Kind:    Informational,
-				Subject: oe.ID(),
-				Detail: fmt.Sprintf("%d new postcondition(s) — may reject previously-valid state",
-					ne.Postconditions-oe.Postconditions),
-				OldPos: oe.Pos,
-				NewPos: ne.Pos,
-			})
-		}
+		// Validation / precondition / postcondition content changes
+		// (variables). Comparing canonical condition text catches the case
+		// where one block is removed and another is added with a different
+		// condition — the count is unchanged but the rule set differs.
+		diffConditionSet(oe.ID(), oe.ValidationConditions, ne.ValidationConditions, oe.Pos, ne.Pos,
+			"validation block",
+			"may reject previously-valid inputs",
+			"accepts a wider input set", changes)
+		diffConditionSet(oe.ID(), oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+			"precondition",
+			"may reject previously-valid inputs",
+			"loosens the precondition contract", changes)
+		diffConditionSet(oe.ID(), oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+			"postcondition",
+			"may reject previously-valid state",
+			"loosens the postcondition contract", changes)
 		if !typeEqual(oe.DeclaredType, ne.DeclaredType) {
 			// When both types are objects, emit per-field changes instead
 			// of a blanket "type changed".
 			if isObjectType(oe.DeclaredType) && isObjectType(ne.DeclaredType) {
 				if diffObjectFields(oe.ID(), oe.DeclaredType, ne.DeclaredType, oe.Pos, ne.Pos, changes) > 0 {
+					checkDefaultStillValid(oe, ne, changes)
 					continue
 				}
 			}
 			kind := Breaking
-			detail := fmt.Sprintf("type changed: %s → %s",
-				typeStr(oe.DeclaredType), typeStr(ne.DeclaredType))
-			if isAnyType(ne.DeclaredType) && !isAnyType(oe.DeclaredType) {
+			label := "type changed"
+			switch compareTypes(oe.DeclaredType, ne.DeclaredType) {
+			case typeRelWidened:
 				kind = NonBreaking
-				detail += " (widened to any)"
+				label = "type widened"
+			case typeRelNarrowed:
+				kind = Breaking
+				label = "type narrowed"
+			case typeRelEqual:
+				// Reachable when typeEqual is structurally false but cty
+				// considers the types equivalent (e.g. tuple shapes that
+				// happen to match list element types).
+				kind = NonBreaking
+				label = "type equivalent"
 			}
 			*changes = append(*changes, Change{
 				Kind:    kind,
 				Subject: oe.ID(),
-				Detail:  detail,
-				OldPos:  oe.Pos,
-				NewPos:  ne.Pos,
+				Detail: fmt.Sprintf("%s: %s → %s",
+					label, typeStr(oe.DeclaredType), typeStr(ne.DeclaredType)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
 			})
+			checkDefaultStillValid(oe, ne, changes)
 		}
 	}
 
@@ -243,50 +259,47 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 			})
 		} else if oe.Sensitive && !ne.Sensitive {
 			*changes = append(*changes, Change{
-				Kind:    Informational,
+				Kind:    Breaking,
 				Subject: oe.ID(),
-				Detail:  "output no longer sensitive (value will be visible in logs)",
+				Detail:  "output sensitive flag dropped (sensitive leak — value previously masked is now exposed in logs and downstream consumers)",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
 		}
-		// Precondition / postcondition counts (outputs)
-		if ne.Preconditions > oe.Preconditions {
+		// Ephemeral transitions on outputs (Terraform 1.10+).
+		if !oe.Ephemeral && ne.Ephemeral {
 			*changes = append(*changes, Change{
-				Kind:    Informational,
+				Kind:    Breaking,
 				Subject: oe.ID(),
-				Detail: fmt.Sprintf("%d new output precondition(s) — may reject previously-valid state",
-					ne.Preconditions-oe.Preconditions),
-				OldPos: oe.Pos,
-				NewPos: ne.Pos,
+				Detail:  "output became ephemeral (consumers expecting a persisted value will fail)",
+				OldPos:  oe.Pos,
+				NewPos:  ne.Pos,
+			})
+		} else if oe.Ephemeral && !ne.Ephemeral {
+			*changes = append(*changes, Change{
+				Kind:    NonBreaking,
+				Subject: oe.ID(),
+				Detail:  "output ephemeral flag removed (value now persisted to state)",
+				OldPos:  oe.Pos,
+				NewPos:  ne.Pos,
 			})
 		}
-		if ne.Postconditions > oe.Postconditions {
-			*changes = append(*changes, Change{
-				Kind:    Informational,
-				Subject: oe.ID(),
-				Detail: fmt.Sprintf("%d new output postcondition(s) — may reject previously-valid state",
-					ne.Postconditions-oe.Postconditions),
-				OldPos: oe.Pos,
-				NewPos: ne.Pos,
-			})
-		}
+		// Precondition / postcondition content changes (outputs)
+		diffConditionSet(oe.ID(), oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+			"output precondition",
+			"may reject previously-valid state",
+			"loosens the output precondition contract", changes)
+		diffConditionSet(oe.ID(), oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+			"output postcondition",
+			"may reject previously-valid state",
+			"loosens the output postcondition contract", changes)
 		diffDependsOn(oe.ID(), oe, ne, changes)
 		// Value-expression shape changes
 		if oe.ValueExpr != nil && ne.ValueExpr != nil {
-			oldText := oe.ValueExpr.Text()
-			newText := ne.ValueExpr.Text()
-			if oldText != newText {
-				*changes = append(*changes, Change{
-					Kind:    Informational,
-					Subject: oe.ID(),
-					Detail:  fmt.Sprintf("value expression changed: %s → %s", oldText, newText),
-					OldPos:  oe.Pos,
-					NewPos:  ne.Pos,
-				})
-			} else {
-				// Expression text is identical, but a local it references may
-				// have changed — surface that indirection.
+			typeBreaking := emitOutputValueChange(oldMod, newMod, oe, ne, changes)
+			if !typeBreaking && oe.ValueExpr.Text() == ne.ValueExpr.Text() {
+				// Expression text is identical AND type compatible, but a
+				// referenced local may have changed.
 				diffIndirectLocals(oe, ne, oldMod, newMod, changes)
 			}
 		}
@@ -358,6 +371,91 @@ func diffTerraformBlock(oldMod, newMod *analysis.Module, changes *[]Change) {
 				name, displayVersion(np.Source), displayVersion(np.Version)),
 		})
 	}
+
+	diffBackend(oldMod.Backend(), newMod.Backend(), changes)
+}
+
+// diffBackend reports terraform { backend "X" { ... } } changes. Adding,
+// removing, switching backend type, or changing any config attribute moves
+// the state location and forces a `terraform init -migrate-state` — all
+// classified as Breaking.
+func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
+	const subject = "terraform.backend"
+	switch {
+	case oldB == nil && newB == nil:
+		return
+	case oldB == nil && newB != nil:
+		*changes = append(*changes, Change{
+			Kind:    Breaking,
+			Subject: subject,
+			Detail: fmt.Sprintf("backend %q added (state migrates from local to remote — run `terraform init -migrate-state`)",
+				newB.Type),
+			NewPos: newB.Pos,
+		})
+		return
+	case oldB != nil && newB == nil:
+		*changes = append(*changes, Change{
+			Kind:    Breaking,
+			Subject: subject,
+			Detail: fmt.Sprintf("backend %q removed (state migrates back to local — run `terraform init -migrate-state`)",
+				oldB.Type),
+			OldPos: oldB.Pos,
+		})
+		return
+	}
+	if oldB.Type != newB.Type {
+		*changes = append(*changes, Change{
+			Kind:    Breaking,
+			Subject: subject,
+			Detail: fmt.Sprintf("backend type changed: %q → %q (state moves between providers — run `terraform init -migrate-state`)",
+				oldB.Type, newB.Type),
+			OldPos: oldB.Pos,
+			NewPos: newB.Pos,
+		})
+		return
+	}
+	// Same backend type; report per-attribute changes. Any config change is
+	// potentially state-moving.
+	keys := map[string]bool{}
+	for k := range oldB.Config {
+		keys[k] = true
+	}
+	for k := range newB.Config {
+		keys[k] = true
+	}
+	for k := range keys {
+		oldV, oldOK := oldB.Config[k]
+		newV, newOK := newB.Config[k]
+		switch {
+		case oldOK && !newOK:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: subject,
+				Detail: fmt.Sprintf("backend %q config: attribute %q removed (was %s) — may relocate state",
+					oldB.Type, k, oldV),
+				OldPos: oldB.Pos,
+				NewPos: newB.Pos,
+			})
+		case !oldOK && newOK:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: subject,
+				Detail: fmt.Sprintf("backend %q config: attribute %q added (now %s) — may relocate state",
+					newB.Type, k, newV),
+				OldPos: oldB.Pos,
+				NewPos: newB.Pos,
+			})
+		case oldV != newV:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: subject,
+				Detail: fmt.Sprintf("backend %q config: %q changed: %s → %s (run `terraform init -migrate-state` if the location moved)",
+					oldB.Type, k, oldV, newV),
+				OldPos: oldB.Pos,
+				NewPos: newB.Pos,
+			})
+		}
+	}
 }
 
 // ---- resources, data sources, module calls ----
@@ -388,34 +486,14 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 			})
 		} else {
 			// Mode unchanged — but the expression content might differ, which
-			// changes which keys/indices exist at plan time.
+			// changes which keys/indices exist at plan time. Type analysis
+			// also runs even when the text is identical, since a referenced
+			// variable's type may have changed underneath.
 			if oe.HasForEach && ne.HasForEach {
-				oldText := oe.ForEachExpr.Text()
-				newText := ne.ForEachExpr.Text()
-				if oldText != newText {
-					*changes = append(*changes, Change{
-						Kind:    Informational,
-						Subject: id,
-						Detail: fmt.Sprintf("for_each expression changed: %s → %s (state keys may differ)",
-							oldText, newText),
-						OldPos: oe.Pos,
-						NewPos: ne.Pos,
-					})
-				}
+				emitForEachChange(oldMod, newMod, id, oe, ne, changes)
 			}
 			if oe.HasCount && ne.HasCount {
-				oldText := oe.CountExpr.Text()
-				newText := ne.CountExpr.Text()
-				if oldText != newText {
-					*changes = append(*changes, Change{
-						Kind:    Informational,
-						Subject: id,
-						Detail: fmt.Sprintf("count expression changed: %s → %s (instance count may differ)",
-							oldText, newText),
-						OldPos: oe.Pos,
-						NewPos: ne.Pos,
-					})
-				}
+				emitCountChange(oldMod, newMod, id, oe, ne, changes)
 			}
 		}
 		// Provider alias changes (resource/data only — module uses `providers = {}`).
@@ -623,14 +701,37 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 		})
 	}
 	if s := oe.IgnoreChangesExpr.Text(); s != ne.IgnoreChangesExpr.Text() {
-		*changes = append(*changes, Change{
-			Kind:    Informational,
-			Subject: id,
-			Detail: fmt.Sprintf("`ignore_changes` changed: %s → %s (drift detection behaviour differs)",
-				displayIgnoreList(s), displayIgnoreList(ne.IgnoreChangesExpr.Text())),
-			OldPos: oe.Pos,
-			NewPos: ne.Pos,
-		})
+		oldAll := isIgnoreChangesAll(oe.IgnoreChangesExpr)
+		newAll := isIgnoreChangesAll(ne.IgnoreChangesExpr)
+		switch {
+		case oldAll && !newAll:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: id,
+				Detail: fmt.Sprintf("`ignore_changes` narrowed: all → %s (drift detection now fires on attributes that were previously ignored)",
+					displayIgnoreList(ne.IgnoreChangesExpr.Text())),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+		case !oldAll && newAll:
+			*changes = append(*changes, Change{
+				Kind:    NonBreaking,
+				Subject: id,
+				Detail: fmt.Sprintf("`ignore_changes` widened to all (was %s — drift detection now suppressed for every attribute)",
+					displayIgnoreList(oe.IgnoreChangesExpr.Text())),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+		default:
+			*changes = append(*changes, Change{
+				Kind:    Informational,
+				Subject: id,
+				Detail: fmt.Sprintf("`ignore_changes` changed: %s → %s (drift detection behaviour differs)",
+					displayIgnoreList(s), displayIgnoreList(ne.IgnoreChangesExpr.Text())),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+		}
 	}
 	if s := oe.ReplaceTriggeredByExpr.Text(); s != ne.ReplaceTriggeredByExpr.Text() {
 		*changes = append(*changes, Change{
@@ -642,27 +743,85 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 			NewPos: ne.Pos,
 		})
 	}
-	// Lifecycle precondition / postcondition counts
-	if ne.Preconditions > oe.Preconditions {
+	// Lifecycle precondition / postcondition content
+	diffConditionSet(id, oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+		"lifecycle precondition",
+		"may reject previously-valid plans",
+		"loosens the lifecycle precondition contract", changes)
+	diffConditionSet(id, oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+		"lifecycle postcondition",
+		"may reject previously-valid state",
+		"loosens the lifecycle postcondition contract", changes)
+}
+
+// diffConditionSet compares two multisets of canonical condition texts
+// (each from a validation/precondition/postcondition block) and emits
+// Informational changes for added and removed conditions. Identical-text
+// blocks on both sides cancel out — moving or reordering blocks is a
+// no-op. label is the singular block-kind name (e.g. "validation block").
+// addedReason and removedReason follow "—" in the emitted detail.
+func diffConditionSet(subject string, oldConds, newConds []string, oldPos, newPos token.Position, label, addedReason, removedReason string, changes *[]Change) {
+	added, removed := multisetDiff(oldConds, newConds)
+	if len(added) > 0 {
 		*changes = append(*changes, Change{
 			Kind:    Informational,
-			Subject: id,
-			Detail: fmt.Sprintf("%d new lifecycle precondition(s) — may reject previously-valid plans",
-				ne.Preconditions-oe.Preconditions),
-			OldPos: oe.Pos,
-			NewPos: ne.Pos,
+			Subject: subject,
+			Detail: fmt.Sprintf("%d new %s(s) — %s: %s",
+				len(added), label, addedReason, strings.Join(quoteAll(added), ", ")),
+			OldPos: oldPos,
+			NewPos: newPos,
 		})
 	}
-	if ne.Postconditions > oe.Postconditions {
+	if len(removed) > 0 {
 		*changes = append(*changes, Change{
 			Kind:    Informational,
-			Subject: id,
-			Detail: fmt.Sprintf("%d new lifecycle postcondition(s) — may reject previously-valid state",
-				ne.Postconditions-oe.Postconditions),
-			OldPos: oe.Pos,
-			NewPos: ne.Pos,
+			Subject: subject,
+			Detail: fmt.Sprintf("%d %s(s) removed — %s: %s",
+				len(removed), label, removedReason, strings.Join(quoteAll(removed), ", ")),
+			OldPos: oldPos,
+			NewPos: newPos,
 		})
 	}
+}
+
+// multisetDiff returns the elements that need to be added to old to obtain
+// new (added), and removed from old (removed). Both results are sorted.
+// Equal counts of the same string on both sides cancel out.
+func multisetDiff(oldS, newS []string) (added, removed []string) {
+	count := map[string]int{}
+	for _, s := range oldS {
+		count[s]--
+	}
+	for _, s := range newS {
+		count[s]++
+	}
+	for s, n := range count {
+		switch {
+		case n > 0:
+			for i := 0; i < n; i++ {
+				added = append(added, s)
+			}
+		case n < 0:
+			for i := 0; i < -n; i++ {
+				removed = append(removed, s)
+			}
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
+}
+
+func quoteAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		if s == "" {
+			out[i] = "<no condition>"
+		} else {
+			out[i] = fmt.Sprintf("`%s`", s)
+		}
+	}
+	return out
 }
 
 // diffIndirectLocals detects when an output's value expression is textually
@@ -901,6 +1060,222 @@ func typeEqual(a, b *analysis.TFType) bool {
 	return true
 }
 
+// typeRel classifies the relationship between two declared types from the
+// perspective of a caller upgrading from old to new.
+type typeRel int
+
+const (
+	typeRelEqual        typeRel = iota // identical or cty-equivalent
+	typeRelWidened                     // every old value is still acceptable to new
+	typeRelNarrowed                    // some old values are now rejected
+	typeRelIncompatible                // unrelated shapes
+)
+
+// compareTypes returns the relationship between oldT and newT. When both
+// types carry their underlying cty.Type (i.e. came from ParseTypeExpr), the
+// answer uses cty.Convert as the assignability oracle. Otherwise we fall
+// back to the structural typeEqual / kind-mismatch check.
+func compareTypes(oldT, newT *analysis.TFType) typeRel {
+	if typeEqual(oldT, newT) {
+		return typeRelEqual
+	}
+	if !oldT.HasCty() || !newT.HasCty() {
+		// Best effort: any-widening is non-breaking; everything else is
+		// incompatible at this level.
+		if isAnyType(newT) && !isAnyType(oldT) {
+			return typeRelWidened
+		}
+		return typeRelIncompatible
+	}
+	canForward := convert.GetConversion(oldT.Cty, newT.Cty) != nil
+	canBackward := convert.GetConversion(newT.Cty, oldT.Cty) != nil
+	switch {
+	case canForward && canBackward:
+		return typeRelEqual
+	case canForward:
+		return typeRelWidened
+	case canBackward:
+		return typeRelNarrowed
+	default:
+		return typeRelIncompatible
+	}
+}
+
+// emitOutputValueChange evaluates an output's value expression on both
+// sides. When both yield a known inferred type and the new type narrows or
+// is incompatible with the old, emits a Breaking change and returns true
+// (downstream consumers expecting the old type will fail) — this fires
+// whether or not the expression text changed, so it catches the case where
+// the same `var.X` reference is reused but X's declared type narrowed.
+// Otherwise emits the existing Informational text change when the text
+// differs, and returns false so the caller can run further checks
+// (indirect-locals).
+func emitOutputValueChange(oldMod, newMod *analysis.Module, oe, ne analysis.Entity, changes *[]Change) bool {
+	oldType := oldMod.InferExprType(oe.ValueExpr.E)
+	newType := newMod.InferExprType(ne.ValueExpr.E)
+
+	if oldType != nil && newType != nil &&
+		oldType.Kind != analysis.TypeUnknown && newType.Kind != analysis.TypeUnknown {
+		switch compareTypes(oldType, newType) {
+		case typeRelNarrowed, typeRelIncompatible:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: oe.ID(),
+				Detail: fmt.Sprintf("output type changed: %s → %s (downstream consumers expecting %s will fail)",
+					typeStr(oldType), typeStr(newType), typeStr(oldType)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+			return true
+		}
+	}
+	oldText := oe.ValueExpr.Text()
+	newText := ne.ValueExpr.Text()
+	if oldText != newText {
+		*changes = append(*changes, Change{
+			Kind:    Informational,
+			Subject: oe.ID(),
+			Detail:  fmt.Sprintf("value expression changed: %s → %s", oldText, newText),
+			OldPos:  oe.Pos,
+			NewPos:  ne.Pos,
+		})
+	}
+	return false
+}
+
+// emitForEachChange handles a stateful entity's for_each expression. When
+// key types on both sides are known and have narrowed or become
+// incompatible, emits a Breaking change — every instance will be
+// re-addressed under a different key. This fires whether or not the
+// for_each expression text changed (so we catch a referenced variable's
+// type narrowing under a textually-unchanged `var.X`). Otherwise emits the
+// existing Informational change when the text differs.
+func emitForEachChange(oldMod, newMod *analysis.Module, id string, oe, ne analysis.Entity, changes *[]Change) {
+	oldKey := forEachKeyType(oldMod.InferExprType(oe.ForEachExpr.E))
+	newKey := forEachKeyType(newMod.InferExprType(ne.ForEachExpr.E))
+
+	if oldKey != nil && newKey != nil {
+		switch compareTypes(oldKey, newKey) {
+		case typeRelNarrowed, typeRelIncompatible:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: id,
+				Detail: fmt.Sprintf("for_each key type changed: %s → %s (every instance will be recreated under new keys)",
+					typeStr(oldKey), typeStr(newKey)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+			return
+		}
+	}
+	oldText := oe.ForEachExpr.Text()
+	newText := ne.ForEachExpr.Text()
+	if oldText != newText {
+		*changes = append(*changes, Change{
+			Kind:    Informational,
+			Subject: id,
+			Detail: fmt.Sprintf("for_each expression changed: %s → %s (state keys may differ)",
+				oldText, newText),
+			OldPos: oe.Pos,
+			NewPos: ne.Pos,
+		})
+	}
+}
+
+// emitCountChange handles a stateful entity's count expression. count must
+// evaluate to a number; if the new expression infers to anything else
+// (list, object, bool, etc.) Terraform will reject the plan — Breaking.
+// Otherwise emits the existing Informational text-change message.
+func emitCountChange(oldMod, newMod *analysis.Module, id string, oe, ne analysis.Entity, changes *[]Change) {
+	oldType := oldMod.InferExprType(oe.CountExpr.E)
+	newType := newMod.InferExprType(ne.CountExpr.E)
+	if newType != nil {
+		switch newType.Kind {
+		case analysis.TypeList, analysis.TypeSet, analysis.TypeMap, analysis.TypeObject, analysis.TypeTuple, analysis.TypeBool:
+			*changes = append(*changes, Change{
+				Kind:    Breaking,
+				Subject: id,
+				Detail: fmt.Sprintf("count expression type changed: %s → %s (count must be a number — plan will be rejected)",
+					typeStr(oldType), typeStr(newType)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
+			})
+			return
+		}
+	}
+	oldText := oe.CountExpr.Text()
+	newText := ne.CountExpr.Text()
+	if oldText != newText {
+		*changes = append(*changes, Change{
+			Kind:    Informational,
+			Subject: id,
+			Detail: fmt.Sprintf("count expression changed: %s → %s (instance count may differ)",
+				oldText, newText),
+			OldPos: oe.Pos,
+			NewPos: ne.Pos,
+		})
+	}
+}
+
+// isIgnoreChangesAll reports whether the expression is the bare identifier
+// `all` — Terraform's special form meaning "ignore drift on every
+// attribute". Returns false for nil, list expressions, or anything else.
+func isIgnoreChangesAll(e *analysis.Expr) bool {
+	if e == nil || e.E == nil {
+		return false
+	}
+	stv, ok := e.E.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(stv.Traversal) != 1 {
+		return false
+	}
+	root, ok := stv.Traversal[0].(hcl.TraverseRoot)
+	return ok && root.Name == "all"
+}
+
+// forEachKeyType returns the type that becomes the instance key when t is
+// used as a for_each value. Maps and objects key by string; sets key by
+// element. Returns nil for any other shape — including a TypeSet whose
+// element type is unknown — so the caller can fall back to a textual
+// comparison rather than guessing.
+func forEachKeyType(t *analysis.TFType) *analysis.TFType {
+	if t == nil {
+		return nil
+	}
+	switch t.Kind {
+	case analysis.TypeMap, analysis.TypeObject:
+		return &analysis.TFType{Kind: analysis.TypeString}
+	case analysis.TypeSet:
+		return t.Elem
+	}
+	return nil
+}
+
+// checkDefaultStillValid emits an Informational change when a variable's
+// declared type changed but the existing default value is still convertible
+// to the new type — i.e. callers that relied on the default are unaffected.
+func checkDefaultStillValid(oe, ne analysis.Entity, changes *[]Change) {
+	if !oe.HasDefault || oe.DefaultExpr == nil || oe.DefaultExpr.E == nil {
+		return
+	}
+	if ne.DeclaredType == nil || !ne.DeclaredType.HasCty() {
+		return
+	}
+	val, diags := oe.DefaultExpr.E.Value(nil)
+	if diags.HasErrors() {
+		return
+	}
+	if _, err := convert.Convert(val, ne.DeclaredType.Cty); err != nil {
+		return
+	}
+	*changes = append(*changes, Change{
+		Kind:    Informational,
+		Subject: oe.ID(),
+		Detail:  "existing default value remains valid under the new type (callers using the default are unaffected)",
+		OldPos:  oe.Pos,
+		NewPos:  ne.Pos,
+	})
+}
+
 // diffObjectFields emits per-field changes when two object types differ.
 // Returns the number of field-level changes appended.
 func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPos token.Position, changes *[]Change) int {
@@ -949,13 +1324,27 @@ func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPo
 			})
 			n++
 		}
-		// Inner-type change (ignoring optionality)
+		// Inner-type change (ignoring optionality). Classify via cty so
+		// e.g. object({a=string}) → object({a=any}) is non-breaking.
 		if !sameInnerType(oldField, newField) {
+			kind := Breaking
+			label := "type changed"
+			switch compareTypes(oldField, newField) {
+			case typeRelWidened:
+				kind = NonBreaking
+				label = "type widened"
+			case typeRelEqual:
+				// Cty considers them equivalent — skip.
+				continue
+			case typeRelNarrowed:
+				kind = Breaking
+				label = "type narrowed"
+			}
 			*changes = append(*changes, Change{
-				Kind:    Breaking,
+				Kind:    kind,
 				Subject: subject,
-				Detail: fmt.Sprintf("object field %q type changed: %s → %s",
-					name, typeStr(oldField), typeStr(newField)),
+				Detail: fmt.Sprintf("object field %q %s: %s → %s",
+					name, label, typeStr(oldField), typeStr(newField)),
 				OldPos: oldPos,
 				NewPos: newPos,
 			})

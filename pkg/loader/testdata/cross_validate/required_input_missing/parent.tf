@@ -1,0 +1,1 @@
+module "net" { source = "./child" }

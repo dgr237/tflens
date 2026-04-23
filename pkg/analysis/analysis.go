@@ -82,9 +82,18 @@ type Entity struct {
 	HasForEach     bool             // resource/data/module: for_each meta-argument used
 	NonNullable    bool             // variables: `nullable = false` explicitly set
 	Sensitive      bool             // variables/outputs: `sensitive = true` set
+	Ephemeral      bool             // variables/outputs: `ephemeral = true` (Terraform 1.10+)
 	Validations    int              // variables: number of `validation {}` blocks
 	Preconditions  int              // variables/outputs/resources: number of precondition blocks
 	Postconditions int              // variables/outputs/resources: number of postcondition blocks
+
+	// Canonical text of every block's `condition` attribute, in source
+	// order. Used by pkg/diff to detect content changes that count
+	// comparisons miss (e.g. one validation removed and another added with
+	// a different condition — both leaving the count unchanged).
+	ValidationConditions    []string
+	PreconditionConditions  []string
+	PostconditionConditions []string
 	ValueExpr      *Expr            // outputs: the value expression
 	ProviderExpr   *Expr            // resource/data: value of `provider` attribute
 	ModuleArgs     map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
@@ -158,6 +167,18 @@ type Module struct {
 	removedIDs        map[string]bool
 	requiredVersion   string
 	requiredProviders map[string]ProviderRequirement
+	backend           *Backend
+}
+
+// Backend describes the terraform { backend "X" { ... } } block.
+// Type is the backend label (e.g. "s3", "azurerm", "remote"). Config is
+// the canonical text of every attribute in the block, keyed by attribute
+// name, so callers can compare configurations across versions without
+// caring about formatting.
+type Backend struct {
+	Type   string
+	Config map[string]string
+	Pos    token.Position
 }
 
 func newModule() *Module {
@@ -171,6 +192,11 @@ func newModule() *Module {
 		requiredProviders: make(map[string]ProviderRequirement),
 	}
 }
+
+// Backend returns the parsed terraform { backend ... } configuration, or
+// nil when the module declares no backend block (i.e. uses the default
+// local backend).
+func (m *Module) Backend() *Backend { return m.backend }
 
 // RequiredVersion returns the Terraform CLI version constraint declared by
 // a terraform { required_version = ... } block, or an empty string if none.
@@ -452,7 +478,7 @@ func collectEntities(m *Module, file *File) {
 				m.removedIDs[from] = true
 			}
 		case "terraform":
-			scanTerraformBlock(m, block.Body)
+			scanTerraformBlock(m, block.Body, file.Source)
 		}
 	}
 }
@@ -484,16 +510,23 @@ func variableEntity(block *hclsyntax.Block, src []byte) (Entity, *TypeCheckError
 			if b, ok := constantBool(attr.Expr); ok && b {
 				e.Sensitive = true
 			}
+		case "ephemeral":
+			if b, ok := constantBool(attr.Expr); ok && b {
+				e.Ephemeral = true
+			}
 		}
 	}
 	for _, b := range block.Body.Blocks {
 		switch b.Type {
 		case "validation":
 			e.Validations++
+			e.ValidationConditions = append(e.ValidationConditions, blockCondition(b, src))
 		case "precondition":
 			e.Preconditions++
+			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(b, src))
 		case "postcondition":
 			e.Postconditions++
+			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(b, src))
 		}
 	}
 
@@ -517,6 +550,10 @@ func outputEntity(block *hclsyntax.Block, src []byte) Entity {
 			if b, ok := constantBool(attr.Expr); ok && b {
 				e.Sensitive = true
 			}
+		case "ephemeral":
+			if b, ok := constantBool(attr.Expr); ok && b {
+				e.Ephemeral = true
+			}
 		case "value":
 			e.ValueExpr = &Expr{E: attr.Expr, Source: src}
 		case "depends_on":
@@ -527,17 +564,33 @@ func outputEntity(block *hclsyntax.Block, src []byte) Entity {
 		switch b.Type {
 		case "precondition":
 			e.Preconditions++
+			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(b, src))
 		case "postcondition":
 			e.Postconditions++
+			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(b, src))
 		}
 	}
 	return e
 }
 
+// blockCondition returns the canonical text of a validation/precondition/
+// postcondition block's `condition` attribute, or "" when the block has no
+// condition attribute.
+func blockCondition(b *hclsyntax.Block, src []byte) string {
+	if b.Body == nil {
+		return ""
+	}
+	attr, ok := b.Body.Attributes["condition"]
+	if !ok {
+		return ""
+	}
+	return (&Expr{E: attr.Expr, Source: src}).Text()
+}
+
 // scanTerraformBlock reads the attributes and sub-blocks of a top-level
-// terraform {} block into the Module's requiredVersion and requiredProviders
-// fields.
-func scanTerraformBlock(m *Module, body *hclsyntax.Body) {
+// terraform {} block into the Module's requiredVersion, requiredProviders,
+// and backend fields.
+func scanTerraformBlock(m *Module, body *hclsyntax.Body, src []byte) {
 	for name, attr := range body.Attributes {
 		if name == "required_version" {
 			if s, ok := constantString(attr.Expr); ok {
@@ -546,29 +599,43 @@ func scanTerraformBlock(m *Module, body *hclsyntax.Body) {
 		}
 	}
 	for _, child := range body.Blocks {
-		if child.Type != "required_providers" {
-			continue
-		}
-		for _, attr := range sortedAttrs(child.Body) {
-			obj, ok := attr.Expr.(*hclsyntax.ObjectConsExpr)
-			if !ok {
-				continue
-			}
-			var req ProviderRequirement
-			for _, item := range obj.Items {
-				key := objectKeyName(item.KeyExpr)
-				s, ok := constantString(item.ValueExpr)
+		switch child.Type {
+		case "required_providers":
+			for _, attr := range sortedAttrs(child.Body) {
+				obj, ok := attr.Expr.(*hclsyntax.ObjectConsExpr)
 				if !ok {
 					continue
 				}
-				switch key {
-				case "source":
-					req.Source = s
-				case "version":
-					req.Version = s
+				var req ProviderRequirement
+				for _, item := range obj.Items {
+					key := objectKeyName(item.KeyExpr)
+					s, ok := constantString(item.ValueExpr)
+					if !ok {
+						continue
+					}
+					switch key {
+					case "source":
+						req.Source = s
+					case "version":
+						req.Version = s
+					}
 				}
+				m.requiredProviders[attr.Name] = req
 			}
-			m.requiredProviders[attr.Name] = req
+		case "backend":
+			if len(child.Labels) != 1 || m.backend != nil {
+				continue
+			}
+			b := &Backend{
+				Type:   child.Labels[0],
+				Config: make(map[string]string),
+				Pos:    posFromRange(child.DefRange()),
+			}
+			for _, attr := range sortedAttrs(child.Body) {
+				e := &Expr{E: attr.Expr, Source: src}
+				b.Config[attr.Name] = e.Text()
+			}
+			m.backend = b
 		}
 	}
 }
@@ -666,8 +733,10 @@ func scanLifecycleBlock(e *Entity, body *hclsyntax.Body, src []byte) {
 		switch child.Type {
 		case "precondition":
 			e.Preconditions++
+			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(child, src))
 		case "postcondition":
 			e.Postconditions++
+			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(child, src))
 		}
 	}
 }

@@ -1,0 +1,1 @@
+variable "tok" { type = string }

@@ -151,28 +151,39 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | New optional variable (has default) | NonBreaking |
 | `default` removed (optional → required) | Breaking |
 | `default` added (required → optional) | NonBreaking |
-| Type widened to `any` | NonBreaking |
-| Type changed (otherwise) | Breaking |
+| Type widened — every old value is still acceptable (`string` → `any`, `list(string)` → `list(any)`, `map(T)` → `map(any)`, …; backed by `cty.Convert`) | NonBreaking |
+| Type narrowed — some old values are now rejected (`any` → `string`, `list(any)` → `list(string)`, …) | Breaking |
+| Type changed and incompatible (unrelated shapes) | Breaking |
+| Existing default still converts cleanly to the new type (emitted alongside the type change so callers using the default see they're unaffected) | Informational |
 | Object field added (required) | Breaking |
 | Object field added (optional) | NonBreaking |
 | Object field removed | Breaking |
 | Object field optional → required | Breaking |
 | Object field required → optional | NonBreaking |
+| Object field inner type widened (e.g. `object({a=string})` → `object({a=any})`) | NonBreaking |
+| Object field inner type narrowed/incompatible | Breaking |
 | `nullable = false` added | Breaking |
 | `nullable = false` removed | NonBreaking |
 | `sensitive = true` added | Breaking |
 | `sensitive = true` removed | Informational |
-| New `validation` / `precondition` / `postcondition` block | Informational |
+| `ephemeral = true` added (Terraform 1.10+) | Breaking |
+| `ephemeral = true` removed | NonBreaking |
+| `validation` / `precondition` / `postcondition` block added (compared by canonical condition text — reordering is a no-op) | Informational |
+| `validation` / `precondition` / `postcondition` block removed | Informational ("loosens" the contract) |
 
 **Outputs:**
 | Change | Kind |
 | --- | --- |
 | Output removed | Breaking |
 | Output added | NonBreaking |
-| `sensitive` toggled | Informational |
-| `value` expression changed (normalised) | Informational |
-| Referenced `local` expression changed (indirect) | Informational |
-| New `precondition` / `postcondition` | Informational |
+| `sensitive = true` added | Informational |
+| `sensitive = true` removed (sensitive leak — value previously masked is now exposed) | Breaking |
+| `ephemeral = true` added (Terraform 1.10+) | Breaking |
+| `ephemeral = true` removed | NonBreaking |
+| Output value type narrowed or incompatible (inferred via `var.X` → declared type, function-return tables, or constant evaluation; e.g. `string` → `list(string)` from `[for ...]`) | Breaking |
+| `value` expression changed but inferred type compatible (or types unknown) | Informational |
+| Referenced `local` expression changed (indirect, surfaced when the output expression text is unchanged) | Informational |
+| `precondition` / `postcondition` block added or removed (compared by canonical condition text — reordering is a no-op) | Informational |
 | `depends_on` changed | Informational |
 
 **Resources, data sources, module calls:**
@@ -185,12 +196,17 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | `removed { from = X }` block covering a deletion | Informational ("removal handled") |
 | `count` ↔ `for_each` transition (either direction) | Breaking |
 | `count` / `for_each` added to or removed from a singleton | Breaking |
-| `count` / `for_each` *expression* changed (mode unchanged) | Informational |
+| `for_each` *key type* narrowed or incompatible (e.g. `set(string)` → `set(number)` — every instance is re-addressed under a different key; also fires when the for_each text is unchanged but a referenced variable's type narrowed underneath) | Breaking |
+| `for_each` *expression* changed but key type compatible (or unknown) | Informational |
+| `count` *expression* infers as a non-number type (e.g. `var.n` retyped from `number` to `list(string)`) — Terraform will reject the plan | Breaking |
+| `count` *expression* changed but stays numeric (or type unknown) | Informational |
 | `provider = aws.east` → `aws.west` | Breaking |
 | Lifecycle: `prevent_destroy` added/removed | Informational |
 | Lifecycle: `create_before_destroy` toggled | Informational |
-| Lifecycle: `ignore_changes` / `replace_triggered_by` changed | Informational |
-| Lifecycle: new `precondition` / `postcondition` | Informational |
+| Lifecycle: `ignore_changes = all` narrowed to a list (drift detection now fires on attributes that were previously suppressed) | Breaking |
+| Lifecycle: `ignore_changes` widened to `all` (drift detection now suppressed for every attribute) | NonBreaking |
+| Lifecycle: `ignore_changes` / `replace_triggered_by` content changed (otherwise) | Informational |
+| Lifecycle: `precondition` / `postcondition` block added or removed (compared by canonical condition text — reordering is a no-op) | Informational |
 | `depends_on` changed | Informational |
 | Module `source` changed | Informational |
 | Module `version` constraint changed (semver-aware, below) | Breaking / NonBreaking / Informational |
@@ -204,6 +220,9 @@ Classifies every detected change as one of three kinds, then exits non-zero when
 | `required_providers` entry removed | NonBreaking |
 | Provider `source` changed | Breaking |
 | Provider `version` constraint change (semver-aware) | Breaking / NonBreaking / Informational |
+| `backend` block added or removed (state migrates; `terraform init -migrate-state` required) | Breaking |
+| `backend` type changed (`s3` → `azurerm`, etc.) | Breaking |
+| `backend` config attribute added, removed, or value changed (state may relocate) | Breaking |
 
 **Semver-aware version constraint comparison:**
 
