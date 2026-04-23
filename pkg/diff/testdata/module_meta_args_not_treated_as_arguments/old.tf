@@ -1,0 +1,3 @@
+module "net" {
+  source = "./net"
+}
