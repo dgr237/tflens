@@ -66,7 +66,6 @@ tflens --offline diff --ref main ./my-workspace
 | `statediff --ref <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
-| `lsp` | Run as a Language Server Protocol server over stdio (for editor integration) |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
 
@@ -352,58 +351,11 @@ These are not bugs but deliberate boundaries:
 - **No caller awareness.** We analyse a module in isolation. Whether an existing caller actually uses a removed output, or pinned to the now-incompatible version, cannot be determined without analysing callers too.
 - **Mid-expression comments are dropped.** Line and block comments at statement boundaries round-trip correctly; comments embedded inside a function call argument list split across lines, or inside a multi-line object/tuple literal, are lost by `fmt`.
 
-## Editor integration (`lsp`)
+## Editor integration
 
-`tflens lsp` speaks JSON-RPC 2.0 over stdio and exposes the following LSP capabilities:
+For HCL syntax/intellisense use HashiCorp's [`terraform-ls`](https://github.com/hashicorp/terraform-ls) with the official VS Code / IntelliJ / Neovim extensions — it ships with provider schemas (knows that `aws_vpc.cidr_block` is a string, etc.), which tflens deliberately does not embed.
 
-- **Diagnostics** — parse errors, undefined references, type errors, `for_each`/`count` misuse, sensitive-leak warnings, all surfaced as inline markers as you type
-- **Hover** — type, defaults, sensitive/nullable flags, and declared position for the entity under the cursor
-- **Go-to-definition** — jump from a reference (`var.x`, `local.y`, `module.z`, `data.a.b`, resource refs) to its declaration
-- **Document symbols** — file outline listing every variable, local, resource, data source, module, and output
-- **Completion** — context-scoped suggestions triggered by `.`:
-  - `var.` → only variables
-  - `local.` → only locals
-  - `module.` → only module calls
-  - `data.` → all data sources (as `type.name`); `data.TYPE.` narrows to instances of that type
-  - `<resource_type>.` → instances of that resource type
-- **Formatting** — format-on-save using the same idempotent printer as `tflens fmt`
-
-Logs go to stderr; stdout is reserved for the protocol.
-
-### Hookup
-
-**Neovim (nvim-lspconfig):**
-
-```lua
-vim.lsp.config.tflens = {
-  cmd = { 'tflens', 'lsp' },
-  filetypes = { 'terraform', 'tf' },
-  root_markers = { '.terraform', '.git' },
-}
-vim.lsp.enable('tflens')
-```
-
-**Helix (`.helix/languages.toml`):**
-
-```toml
-[language-server.tflens]
-command = "tflens"
-args = ["lsp"]
-
-[[language]]
-name = "hcl"
-language-servers = ["tflens"]
-```
-
-**Zed, Emacs (lsp-mode/eglot), Sublime (LSP), JetBrains IDEs (LSP plugin):** point the LSP client at `tflens lsp` with `terraform` as the language/filetype.
-
-**VS Code:** requires a small extension wrapper (not yet shipped). Any volunteer-written extension that launches `tflens lsp` as the server binary will work.
-
-### Out of scope for v1
-
-- Rename, code actions, inlay hints, semantic tokens — doable, just not shipped yet.
-- Cross-module diagnostics as you type — only single-file validation runs on `didChange`. Project-level cross-module checks happen on `didSave`. A future version could re-run `LoadProject` with in-memory overrides on every keystroke (or debounce it heavily).
-- Incremental parsing — the whole file is re-parsed on every change. Fast enough for any reasonable Terraform module; large generated files might hiccup.
+tflens itself is CLI- and CI-shaped: run `validate` / `diff` / `whatif` / `statediff` / `inventory` to surface the analyses that are unique to it (cross-module input checks, semver-aware version constraint diffs, sensitive-value propagation, state-impact prediction).
 
 ## License
 
@@ -425,7 +377,6 @@ Code is organised under `pkg/`:
 | `cache` | Content-addressable disk cache for downloaded module sources |
 | `resolver` | Pluggable `Resolver` chain (local path, `.terraform/modules/modules.json`, Terraform Registry, git) with credential support |
 | `tfstate` | Terraform state v4 JSON parser; exposes resource identity + instance keys for cross-reference |
-| `lsp` | Language Server Protocol implementation (stdio) backed by the analysis package |
 
 The CLI layer lives in top-level `cmd/` (cobra), with one file per subcommand. `main.go` just calls `cmd.Execute()`.
 
