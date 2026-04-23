@@ -193,6 +193,112 @@ func TestVariableListTypeElementChangeIsBreaking(t *testing.T) {
 	}
 }
 
+func TestVariableListElementWidenedToAnyIsNonBreaking(t *testing.T) {
+	// list(string) → list(any): old values still satisfy the new type.
+	oldSrc := "variable \"ports\" {\n  type = list(string)\n}\n"
+	newSrc := "variable \"ports\" {\n  type = list(any)\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "variable.ports")
+	if c == nil {
+		t.Fatal("expected change for variable.ports")
+	}
+	if c.Kind != diff.NonBreaking {
+		t.Errorf("kind = %v, want NonBreaking", c.Kind)
+	}
+	if !strings.Contains(c.Detail, "widened") {
+		t.Errorf("detail should say widened: %q", c.Detail)
+	}
+}
+
+func TestVariableMapElementWidenedToAnyIsNonBreaking(t *testing.T) {
+	oldSrc := "variable \"tags\" {\n  type = map(string)\n}\n"
+	newSrc := "variable \"tags\" {\n  type = map(any)\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "variable.tags")
+	if c == nil {
+		t.Fatal("expected change for variable.tags")
+	}
+	if c.Kind != diff.NonBreaking {
+		t.Errorf("kind = %v, want NonBreaking", c.Kind)
+	}
+}
+
+func TestVariableAnyNarrowedToConcreteIsBreaking(t *testing.T) {
+	// any → string: callers who passed a non-string value now break.
+	oldSrc := "variable \"x\" {\n  type = any\n}\n"
+	newSrc := "variable \"x\" {\n  type = string\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	c := findChange(changes, "variable.x")
+	if c == nil {
+		t.Fatal("expected change for variable.x")
+	}
+	if c.Kind != diff.Breaking {
+		t.Errorf("kind = %v, want Breaking", c.Kind)
+	}
+	if !strings.Contains(c.Detail, "narrowed") {
+		t.Errorf("detail should say narrowed: %q", c.Detail)
+	}
+}
+
+func TestObjectFieldInnerWidenedToAnyIsNonBreaking(t *testing.T) {
+	// object({a=string}) → object({a=any}): a's type widened, callers fine.
+	oldSrc := "variable \"o\" {\n  type = object({ a = string })\n}\n"
+	newSrc := "variable \"o\" {\n  type = object({ a = any })\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	if len(changes) == 0 {
+		t.Fatal("expected at least one change for variable.o")
+	}
+	// Find the per-field message.
+	var fieldChange *diff.Change
+	for i := range changes {
+		if strings.Contains(changes[i].Detail, "field \"a\"") {
+			fieldChange = &changes[i]
+			break
+		}
+	}
+	if fieldChange == nil {
+		t.Fatalf("expected per-field change for object field a; got: %v", changes)
+	}
+	if fieldChange.Kind != diff.NonBreaking {
+		t.Errorf("kind = %v, want NonBreaking; detail=%q", fieldChange.Kind, fieldChange.Detail)
+	}
+	if !strings.Contains(fieldChange.Detail, "widened") {
+		t.Errorf("detail should say widened: %q", fieldChange.Detail)
+	}
+}
+
+func TestVariableTypeChangeWithDefaultStillValidEmitsInfo(t *testing.T) {
+	// Type widens from string → any; the literal "dev" default still works.
+	oldSrc := "variable \"env\" {\n  type    = string\n  default = \"dev\"\n}\n"
+	newSrc := "variable \"env\" {\n  type    = any\n  default = \"dev\"\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+
+	var info *diff.Change
+	for i := range changes {
+		if changes[i].Kind == diff.Informational && strings.Contains(changes[i].Detail, "default value remains valid") {
+			info = &changes[i]
+			break
+		}
+	}
+	if info == nil {
+		t.Fatalf("expected an Informational change about the default still being valid; got: %v", changes)
+	}
+}
+
+func TestVariableTypeNarrowedRejectsExistingDefault(t *testing.T) {
+	// any → number AND default is the literal "dev" (a string). The default
+	// no longer converts to the new type, so the "default still valid" info
+	// must NOT be emitted; only the breaking type-narrow is.
+	oldSrc := "variable \"x\" {\n  type    = any\n  default = \"dev\"\n}\n"
+	newSrc := "variable \"x\" {\n  type    = number\n  default = \"dev\"\n}\n"
+	changes := diffFixture(t, oldSrc, newSrc)
+	for _, c := range changes {
+		if c.Kind == diff.Informational && strings.Contains(c.Detail, "default value remains valid") {
+			t.Errorf("did not expect default-still-valid info; got: %v", c)
+		}
+	}
+}
+
 // ---- outputs ----
 
 func TestOutputRemovedIsBreaking(t *testing.T) {

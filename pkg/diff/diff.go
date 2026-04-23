@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty/convert"
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/token"
@@ -176,23 +177,35 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 			// of a blanket "type changed".
 			if isObjectType(oe.DeclaredType) && isObjectType(ne.DeclaredType) {
 				if diffObjectFields(oe.ID(), oe.DeclaredType, ne.DeclaredType, oe.Pos, ne.Pos, changes) > 0 {
+					checkDefaultStillValid(oe, ne, changes)
 					continue
 				}
 			}
 			kind := Breaking
-			detail := fmt.Sprintf("type changed: %s → %s",
-				typeStr(oe.DeclaredType), typeStr(ne.DeclaredType))
-			if isAnyType(ne.DeclaredType) && !isAnyType(oe.DeclaredType) {
+			label := "type changed"
+			switch compareTypes(oe.DeclaredType, ne.DeclaredType) {
+			case typeRelWidened:
 				kind = NonBreaking
-				detail += " (widened to any)"
+				label = "type widened"
+			case typeRelNarrowed:
+				kind = Breaking
+				label = "type narrowed"
+			case typeRelEqual:
+				// Reachable when typeEqual is structurally false but cty
+				// considers the types equivalent (e.g. tuple shapes that
+				// happen to match list element types).
+				kind = NonBreaking
+				label = "type equivalent"
 			}
 			*changes = append(*changes, Change{
 				Kind:    kind,
 				Subject: oe.ID(),
-				Detail:  detail,
-				OldPos:  oe.Pos,
-				NewPos:  ne.Pos,
+				Detail: fmt.Sprintf("%s: %s → %s",
+					label, typeStr(oe.DeclaredType), typeStr(ne.DeclaredType)),
+				OldPos: oe.Pos,
+				NewPos: ne.Pos,
 			})
+			checkDefaultStillValid(oe, ne, changes)
 		}
 	}
 
@@ -901,6 +914,73 @@ func typeEqual(a, b *analysis.TFType) bool {
 	return true
 }
 
+// typeRel classifies the relationship between two declared types from the
+// perspective of a caller upgrading from old to new.
+type typeRel int
+
+const (
+	typeRelEqual        typeRel = iota // identical or cty-equivalent
+	typeRelWidened                     // every old value is still acceptable to new
+	typeRelNarrowed                    // some old values are now rejected
+	typeRelIncompatible                // unrelated shapes
+)
+
+// compareTypes returns the relationship between oldT and newT. When both
+// types carry their underlying cty.Type (i.e. came from ParseTypeExpr), the
+// answer uses cty.Convert as the assignability oracle. Otherwise we fall
+// back to the structural typeEqual / kind-mismatch check.
+func compareTypes(oldT, newT *analysis.TFType) typeRel {
+	if typeEqual(oldT, newT) {
+		return typeRelEqual
+	}
+	if !oldT.HasCty() || !newT.HasCty() {
+		// Best effort: any-widening is non-breaking; everything else is
+		// incompatible at this level.
+		if isAnyType(newT) && !isAnyType(oldT) {
+			return typeRelWidened
+		}
+		return typeRelIncompatible
+	}
+	canForward := convert.GetConversion(oldT.Cty, newT.Cty) != nil
+	canBackward := convert.GetConversion(newT.Cty, oldT.Cty) != nil
+	switch {
+	case canForward && canBackward:
+		return typeRelEqual
+	case canForward:
+		return typeRelWidened
+	case canBackward:
+		return typeRelNarrowed
+	default:
+		return typeRelIncompatible
+	}
+}
+
+// checkDefaultStillValid emits an Informational change when a variable's
+// declared type changed but the existing default value is still convertible
+// to the new type — i.e. callers that relied on the default are unaffected.
+func checkDefaultStillValid(oe, ne analysis.Entity, changes *[]Change) {
+	if !oe.HasDefault || oe.DefaultExpr == nil || oe.DefaultExpr.E == nil {
+		return
+	}
+	if ne.DeclaredType == nil || !ne.DeclaredType.HasCty() {
+		return
+	}
+	val, diags := oe.DefaultExpr.E.Value(nil)
+	if diags.HasErrors() {
+		return
+	}
+	if _, err := convert.Convert(val, ne.DeclaredType.Cty); err != nil {
+		return
+	}
+	*changes = append(*changes, Change{
+		Kind:    Informational,
+		Subject: oe.ID(),
+		Detail:  "existing default value remains valid under the new type (callers using the default are unaffected)",
+		OldPos:  oe.Pos,
+		NewPos:  ne.Pos,
+	})
+}
+
 // diffObjectFields emits per-field changes when two object types differ.
 // Returns the number of field-level changes appended.
 func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPos token.Position, changes *[]Change) int {
@@ -949,13 +1029,27 @@ func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPo
 			})
 			n++
 		}
-		// Inner-type change (ignoring optionality)
+		// Inner-type change (ignoring optionality). Classify via cty so
+		// e.g. object({a=string}) → object({a=any}) is non-breaking.
 		if !sameInnerType(oldField, newField) {
+			kind := Breaking
+			label := "type changed"
+			switch compareTypes(oldField, newField) {
+			case typeRelWidened:
+				kind = NonBreaking
+				label = "type widened"
+			case typeRelEqual:
+				// Cty considers them equivalent — skip.
+				continue
+			case typeRelNarrowed:
+				kind = Breaking
+				label = "type narrowed"
+			}
 			*changes = append(*changes, Change{
-				Kind:    Breaking,
+				Kind:    kind,
 				Subject: subject,
-				Detail: fmt.Sprintf("object field %q type changed: %s → %s",
-					name, typeStr(oldField), typeStr(newField)),
+				Detail: fmt.Sprintf("object field %q %s: %s → %s",
+					name, label, typeStr(oldField), typeStr(newField)),
 				OldPos: oldPos,
 				NewPos: newPos,
 			})
