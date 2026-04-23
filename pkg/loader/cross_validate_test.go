@@ -5,9 +5,128 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
 )
+
+// crossValidateCase describes one TestCrossValidateCases case.
+//
+// For the standard parent-child shape, fixtures are read from
+// pkg/loader/testdata/cross_validate/<Name>/parent.tf and
+// pkg/loader/testdata/cross_validate/<Name>/child/main.tf. The case can
+// then assert that:
+//   - WantNoErrors: no validation errors are emitted.
+//   - WantMsgContains: at least one error has all of these substrings in Msg.
+//   - WantEntityIDAndMsg: at least one error matches both fields (entityID
+//     wildcards as ""; msgContains substrings must all appear).
+//   - MustNotContainMsg: no error may contain ANY of these substrings.
+//
+// Cases that need richer setup (multi-module, project-level overrides,
+// nested children) provide Custom and ignore the parent/child fixtures.
+type crossValidateCase struct {
+	Name string
+
+	WantNoErrors      bool
+	WantMsgContains   []string
+	WantEntityIDAndMsg *struct {
+		EntityID    string
+		MsgContains []string
+	}
+	MustNotContainMsg []string
+
+	Custom func(t *testing.T)
+}
+
+func TestCrossValidateCases(t *testing.T) {
+	for _, tc := range crossValidateCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			if tc.Custom != nil {
+				tc.Custom(t)
+				return
+			}
+			parent := loadCrossValidateFixture(t, tc.Name, "parent.tf")
+			child := loadCrossValidateFixture(t, tc.Name, "child/main.tf")
+			errs := runCrossValidate(t, parent, child)
+
+			if tc.WantNoErrors {
+				if len(errs) != 0 {
+					t.Errorf("expected no errors, got: %v", errs)
+				}
+				return
+			}
+			if len(tc.WantMsgContains) > 0 {
+				if !anyErrMsg(errs, tc.WantMsgContains) {
+					t.Errorf("expected error containing %v, got: %v",
+						tc.WantMsgContains, errs)
+				}
+			}
+			if tc.WantEntityIDAndMsg != nil {
+				if !anyErrEntityIDAndMsg(errs, tc.WantEntityIDAndMsg.EntityID, tc.WantEntityIDAndMsg.MsgContains) {
+					t.Errorf("expected error EntityID=%q containing %v, got: %v",
+						tc.WantEntityIDAndMsg.EntityID, tc.WantEntityIDAndMsg.MsgContains, errs)
+				}
+			}
+			for _, e := range errs {
+				for _, banned := range tc.MustNotContainMsg {
+					if strings.Contains(e.Msg, banned) {
+						t.Errorf("error should not contain %q: %v", banned, e)
+					}
+				}
+			}
+		})
+	}
+}
+
+// loadCrossValidateFixture reads pkg/loader/testdata/cross_validate/<dir>/<file>.
+// Returns "" when the file doesn't exist.
+func loadCrossValidateFixture(t *testing.T, dir, file string) string {
+	t.Helper()
+	path := filepath.Join("testdata", "cross_validate", dir, file)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+func anyErrMsg(errs []analysis.ValidationError, contains []string) bool {
+	for _, e := range errs {
+		ok := true
+		for _, s := range contains {
+			if !strings.Contains(e.Msg, s) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+func anyErrEntityIDAndMsg(errs []analysis.ValidationError, entityID string, msgContains []string) bool {
+	for _, e := range errs {
+		if entityID != "" && e.EntityID != entityID {
+			continue
+		}
+		ok := true
+		for _, s := range msgContains {
+			if !strings.Contains(e.Msg, s) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
 
 // miniProject creates a tmp dir with a parent main.tf and a child module
 // under ./child/main.tf. Returns the parent directory path.
@@ -15,7 +134,7 @@ func miniProject(t *testing.T, parentSrc, childSrc string) string {
 	t.Helper()
 	root := t.TempDir()
 	childDir := filepath.Join(root, "child")
-	if err := os.MkdirAll(childDir, 0755); err != nil {
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeTF(t, root, "main.tf", parentSrc)
@@ -36,291 +155,184 @@ func runCrossValidate(t *testing.T, parentSrc, childSrc string) []analysis.Valid
 	return loader.CrossValidate(proj)
 }
 
-// ---- missing required inputs ----
+var crossValidateCases = []crossValidateCase{
+	{
+		Name: "required_input_missing",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"required input", "cidr"}},
+	},
+	{Name: "optional_input_not_required", WantNoErrors: true},
+	{Name: "all_inputs_provided", WantNoErrors: true},
+	{
+		Name: "unknown_argument",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"unknown argument", "typo"}},
+	},
+	{
+		Name: "type_mismatch",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"number", "string"}},
+	},
+	{Name: "compatible_type_no_error", WantNoErrors: true},
+	{Name: "any_accepts_anything", WantNoErrors: true},
+	{Name: "var_reference_uses_declared_type", WantNoErrors: true},
+	{
+		Name: "var_reference_type_mismatch",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"string", "number"}},
+	},
+	{
+		Name: "unknown_expr_skipped",
+		MustNotContainMsg: []string{"but child variable expects"},
+	},
+	{
+		Name: "child_with_no_type_constraint_skips_typecheck",
+		MustNotContainMsg: []string{"but child variable expects"},
+	},
 
-func TestCrossValidateRequiredInputMissing(t *testing.T) {
-	parent := `module "net" { source = "./child" }`
-	child := "variable \"cidr\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) == 0 {
-		t.Fatal("expected error for missing required input, got none")
-	}
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "module.net" && strings.Contains(e.Msg, "required input") && strings.Contains(e.Msg, "cidr") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected error referencing required cidr, got: %v", errs)
-	}
-}
+	// ---- richer setups via Custom ----
 
-func TestCrossValidateOptionalInputNotRequired(t *testing.T) {
-	// Child variable has a default → optional → parent doesn't have to pass it.
-	parent := `module "net" { source = "./child" }`
-	child := "variable \"cidr\" {\n  type    = string\n  default = \"10.0.0.0/16\"\n}\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) != 0 {
-		t.Errorf("optional child variable should not trigger error, got: %v", errs)
-	}
-}
-
-func TestCrossValidateAllInputsProvided(t *testing.T) {
-	parent := "module \"net\" {\n  source = \"./child\"\n  cidr   = \"10.0.0.0/16\"\n  env    = \"dev\"\n}\n"
-	child := "variable \"cidr\" { type = string }\nvariable \"env\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) != 0 {
-		t.Errorf("all required inputs passed — expected no errors, got: %v", errs)
-	}
-}
-
-// ---- unknown arguments ----
-
-func TestCrossValidateUnknownArgumentIsFlagged(t *testing.T) {
-	parent := "module \"net\" {\n  source = \"./child\"\n  cidr   = \"10.0.0.0/16\"\n  typo   = \"surprise\"\n}\n"
-	child := "variable \"cidr\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "module.net" && strings.Contains(e.Msg, "unknown argument") && strings.Contains(e.Msg, "typo") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected unknown-argument error for typo, got: %v", errs)
-	}
-}
-
-// ---- type compatibility ----
-
-func TestCrossValidateTypeMismatchIsFlagged(t *testing.T) {
-	// Parent passes a number literal where child expects string.
-	parent := "module \"net\" {\n  source = \"./child\"\n  cidr   = 42\n}\n"
-	child := "variable \"cidr\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "module.net" && strings.Contains(e.Msg, "number") && strings.Contains(e.Msg, "string") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected type-mismatch error, got: %v", errs)
-	}
-}
-
-func TestCrossValidateCompatibleTypeNoError(t *testing.T) {
-	parent := "module \"net\" {\n  source    = \"./child\"\n  instances = 3\n  name      = \"app\"\n}\n"
-	child := "variable \"instances\" { type = number }\nvariable \"name\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) != 0 {
-		t.Errorf("expected no errors, got: %v", errs)
-	}
-}
-
-func TestCrossValidateAnyAcceptsAnything(t *testing.T) {
-	// Child declares `any` → any parent value is acceptable.
-	parent := "module \"net\" {\n  source = \"./child\"\n  cfg    = { a = 1, b = 2 }\n}\n"
-	child := "variable \"cfg\" { type = any }\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) != 0 {
-		t.Errorf("any should accept anything, got: %v", errs)
-	}
-}
-
-func TestCrossValidateVarReferenceUsesDeclaredType(t *testing.T) {
-	// Parent's arg is var.env where var.env has a declared type.
-	parent := "variable \"env\" { type = string }\nmodule \"net\" {\n  source = \"./child\"\n  env    = var.env\n}\n"
-	child := "variable \"env\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	if len(errs) != 0 {
-		t.Errorf("var ref with matching type should be clean, got: %v", errs)
-	}
-}
-
-func TestCrossValidateVarReferenceTypeMismatch(t *testing.T) {
-	// Parent passes var.env (string) to child variable typed as number.
-	parent := "variable \"env\" { type = string }\nmodule \"net\" {\n  source    = \"./child\"\n  instances = var.env\n}\n"
-	child := "variable \"instances\" { type = number }\n"
-	errs := runCrossValidate(t, parent, child)
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "module.net" && strings.Contains(e.Msg, "string") && strings.Contains(e.Msg, "number") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected type mismatch for var.env → number, got: %v", errs)
-	}
-}
-
-// ---- unknowable / ignorable cases ----
-
-func TestCrossValidateUnknownExprSkipped(t *testing.T) {
-	// Parent passes a resource attribute reference — type unknown at this level.
-	parent := "resource \"aws_vpc\" \"main\" {}\nmodule \"net\" {\n  source = \"./child\"\n  cidr   = aws_vpc.main.cidr_block\n}\n"
-	child := "variable \"cidr\" { type = string }\n"
-	errs := runCrossValidate(t, parent, child)
-	// No type mismatch should fire — we can't infer the resource attribute's type.
-	for _, e := range errs {
-		if strings.Contains(e.Msg, "passes") && strings.Contains(e.Msg, "but child variable expects") {
-			t.Errorf("should not flag unknowable-type arg, got: %v", e)
-		}
-	}
-}
-
-func TestCrossValidateRemoteSourceSkipped(t *testing.T) {
-	// A module with a registry source produces no Children entry, so the
-	// cross-validator quietly skips it.
-	root := t.TempDir()
-	writeTF(t, root, "main.tf",
-		"module \"net\" { source = \"hashicorp/network/aws\", version = \"1.0.0\" }\n")
-	proj, _, err := loader.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
-	if errs := loader.CrossValidate(proj); len(errs) != 0 {
-		t.Errorf("remote module should be silently skipped, got: %v", errs)
-	}
-}
-
-func TestCrossValidateChildWithNoTypeConstraintSkipsTypeCheck(t *testing.T) {
-	// Child variable has no `type =`, so we don't type-check the argument.
-	parent := "module \"net\" {\n  source = \"./child\"\n  cidr   = 42\n}\n"
-	child := "variable \"cidr\" {}\n"
-	errs := runCrossValidate(t, parent, child)
-	for _, e := range errs {
-		if strings.Contains(e.Msg, "but child variable expects") {
-			t.Errorf("no type constraint → no type-mismatch error, got: %v", e)
-		}
-	}
-}
-
-// ---- scoped CrossValidateCall ----
-
-func TestCrossValidateCallFocusesOnNamedModule(t *testing.T) {
-	// Parent has two module calls; CrossValidateCall should only check the
-	// named one, ignoring the other.
-	root := t.TempDir()
-	for _, sub := range []string{"a", "b"} {
-		if err := os.MkdirAll(filepath.Join(root, sub), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeTF(t, root, "main.tf", `
+	{
+		Name: "remote_source_skipped",
+		Custom: func(t *testing.T) {
+			root := t.TempDir()
+			writeTF(t, root, "main.tf",
+				"module \"net\" { source = \"hashicorp/network/aws\", version = \"1.0.0\" }\n")
+			proj, _, err := loader.LoadProject(root)
+			if err != nil {
+				t.Fatalf("LoadProject: %v", err)
+			}
+			if errs := loader.CrossValidate(proj); len(errs) != 0 {
+				t.Errorf("remote module should be silently skipped, got: %v", errs)
+			}
+		},
+	},
+	{
+		Name: "call_focuses_on_named_module",
+		Custom: func(t *testing.T) {
+			root := t.TempDir()
+			for _, sub := range []string{"a", "b"} {
+				if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeTF(t, root, "main.tf", `
 module "a" { source = "./a" }
 module "b" { source = "./b" }
 `)
-	writeTF(t, filepath.Join(root, "a"), "main.tf",
-		"variable \"need_a\" { type = string }\n")
-	writeTF(t, filepath.Join(root, "b"), "main.tf",
-		"variable \"need_b\" { type = string }\n")
+			writeTF(t, filepath.Join(root, "a"), "main.tf",
+				"variable \"need_a\" { type = string }\n")
+			writeTF(t, filepath.Join(root, "b"), "main.tf",
+				"variable \"need_b\" { type = string }\n")
 
-	proj, _, err := loader.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
-	// Only check module "a".
-	errs := loader.CrossValidateCall(proj.Root.Module, "a", proj.Root.Children["a"].Module)
-	if len(errs) == 0 {
-		t.Fatal("expected error for missing need_a")
-	}
-	for _, e := range errs {
-		if strings.Contains(e.Msg, "need_b") {
-			t.Errorf("scoped check should not surface need_b issues: %v", e)
-		}
-	}
-}
-
-func TestCrossValidateCallUnknownModuleReturnsNil(t *testing.T) {
-	root := t.TempDir()
-	writeTF(t, root, "main.tf", `variable "x" {}`)
-	proj, _, err := loader.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
-	// The parent has no module calls. Asking about "nope" should return nil.
-	errs := loader.CrossValidateCall(proj.Root.Module, "nope", proj.Root.Module)
-	if errs != nil {
-		t.Errorf("expected nil for unknown module call, got: %v", errs)
-	}
-}
-
-func TestCrossValidateCallAgainstCandidateVersion(t *testing.T) {
-	// Simulates the whatif use case: parent has module "vpc" with one set of
-	// args; we test it against a DIFFERENT version of the child (loaded from
-	// elsewhere) and get errors specific to that candidate.
-	root := t.TempDir()
-	childV1 := filepath.Join(root, "child-v1")
-	childV2 := t.TempDir() // pretend this is "downloaded v2"
-	if err := os.MkdirAll(childV1, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeTF(t, root, "main.tf", `
+			proj, _, err := loader.LoadProject(root)
+			if err != nil {
+				t.Fatalf("LoadProject: %v", err)
+			}
+			errs := loader.CrossValidateCall(proj.Root.Module, "a", proj.Root.Children["a"].Module)
+			if len(errs) == 0 {
+				t.Fatal("expected error for missing need_a")
+			}
+			for _, e := range errs {
+				if strings.Contains(e.Msg, "need_b") {
+					t.Errorf("scoped check should not surface need_b issues: %v", e)
+				}
+			}
+		},
+	},
+	{
+		Name: "call_unknown_module_returns_nil",
+		Custom: func(t *testing.T) {
+			root := t.TempDir()
+			writeTF(t, root, "main.tf", `variable "x" {}`)
+			proj, _, err := loader.LoadProject(root)
+			if err != nil {
+				t.Fatalf("LoadProject: %v", err)
+			}
+			errs := loader.CrossValidateCall(proj.Root.Module, "nope", proj.Root.Module)
+			if errs != nil {
+				t.Errorf("expected nil for unknown module call, got: %v", errs)
+			}
+		},
+	},
+	{
+		Name: "call_against_candidate_version",
+		Custom: func(t *testing.T) {
+			root := t.TempDir()
+			childV1 := filepath.Join(root, "child-v1")
+			childV2 := t.TempDir()
+			if err := os.MkdirAll(childV1, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeTF(t, root, "main.tf", `
 module "vpc" {
   source = "./child-v1"
   cidr   = "10.0.0.0/16"
 }
 `)
-	// v1: only cidr required.
-	writeTF(t, childV1, "variables.tf",
-		"variable \"cidr\" { type = string }\n")
-	// v2: cidr is still required AND a new required `region` was added.
-	writeTF(t, childV2, "variables.tf",
-		"variable \"cidr\" { type = string }\nvariable \"region\" { type = string }\n")
+			writeTF(t, childV1, "variables.tf",
+				"variable \"cidr\" { type = string }\n")
+			writeTF(t, childV2, "variables.tf",
+				"variable \"cidr\" { type = string }\nvariable \"region\" { type = string }\n")
 
-	proj, _, err := loader.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
-	// Sanity check against v1 — parent's cidr arg is enough, no errors.
-	if errs := loader.CrossValidateCall(proj.Root.Module, "vpc", proj.Root.Children["vpc"].Module); len(errs) != 0 {
-		t.Errorf("parent should be compatible with v1, got: %v", errs)
-	}
-	// Load v2 from disk and test against it.
-	v2Mod, _, err := loader.LoadDir(childV2)
-	if err != nil {
-		t.Fatalf("LoadDir v2: %v", err)
-	}
-	errs := loader.CrossValidateCall(proj.Root.Module, "vpc", v2Mod)
-	found := false
-	for _, e := range errs {
-		if strings.Contains(e.Msg, "region") && strings.Contains(e.Msg, "required input") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected v2 to flag missing region, got: %v", errs)
-	}
-}
+			proj, _, err := loader.LoadProject(root)
+			if err != nil {
+				t.Fatalf("LoadProject: %v", err)
+			}
+			if errs := loader.CrossValidateCall(proj.Root.Module, "vpc", proj.Root.Children["vpc"].Module); len(errs) != 0 {
+				t.Errorf("parent should be compatible with v1, got: %v", errs)
+			}
+			v2Mod, _, err := loader.LoadDir(childV2)
+			if err != nil {
+				t.Fatalf("LoadDir v2: %v", err)
+			}
+			errs := loader.CrossValidateCall(proj.Root.Module, "vpc", v2Mod)
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e.Msg, "region") && strings.Contains(e.Msg, "required input") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected v2 to flag missing region, got: %v", errs)
+			}
+		},
+	},
+	{
+		Name: "transitive",
+		Custom: func(t *testing.T) {
+			root := t.TempDir()
+			mid := filepath.Join(root, "mid")
+			leaf := filepath.Join(mid, "leaf")
+			if err := os.MkdirAll(leaf, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeTF(t, root, "main.tf", "module \"mid\" { source = \"./mid\" }\n")
+			writeTF(t, mid, "main.tf", "module \"leaf\" { source = \"./leaf\" }\n")
+			writeTF(t, leaf, "main.tf", "variable \"required\" { type = string }\n")
 
-// ---- transitive (parent → child → grandchild) ----
-
-func TestCrossValidateTransitive(t *testing.T) {
-	// Root → middle → leaf. Leaf has a required input not passed by middle.
-	root := t.TempDir()
-	mid := filepath.Join(root, "mid")
-	leaf := filepath.Join(mid, "leaf")
-	if err := os.MkdirAll(leaf, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeTF(t, root, "main.tf", "module \"mid\" { source = \"./mid\" }\n")
-	writeTF(t, mid, "main.tf", "module \"leaf\" { source = \"./leaf\" }\n")
-	writeTF(t, leaf, "main.tf", "variable \"required\" { type = string }\n")
-
-	proj, _, err := loader.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
-	errs := loader.CrossValidate(proj)
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "module.leaf" && strings.Contains(e.Msg, "required input") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected transitive error reaching leaf, got: %v", errs)
-	}
+			proj, _, err := loader.LoadProject(root)
+			if err != nil {
+				t.Fatalf("LoadProject: %v", err)
+			}
+			errs := loader.CrossValidate(proj)
+			found := false
+			for _, e := range errs {
+				if e.EntityID == "module.leaf" && strings.Contains(e.Msg, "required input") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected transitive error reaching leaf, got: %v", errs)
+			}
+		},
+	},
 }

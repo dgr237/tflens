@@ -6,257 +6,172 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
-// validateFixture parses src under the given filename and returns the
-// validation errors produced by analysis.
-func validateFixture(t *testing.T, filename, src string) []analysis.ValidationError {
-	t.Helper()
-	return analyseFixtureNamed(t, filename, src).Validate()
+// validateCase describes one TestValidateCases case. The fixture is read
+// from pkg/analysis/testdata/validate/<Name>/main.tf and analysed; the
+// resulting ValidationErrors are checked.
+type validateCase struct {
+	Name string
+
+	WantNoErrors bool
+
+	// WantRefs lists Refs that must each appear in at least one error.
+	WantRefs []string
+
+	// WantPair asserts at least one error has both EntityID == EntityID and
+	// Ref == Ref. Empty fields are wildcards.
+	WantPair *struct{ EntityID, Ref string }
+
+	// MustNotMatchRef is checked against every error: no error may have
+	// this Ref. Useful for "X should NOT be flagged".
+	MustNotMatchRef string
+
+	Custom func(t *testing.T, errs []analysis.ValidationError)
 }
 
-func TestValidateCleanModule(t *testing.T) {
-	src := `
-variable "env" {}
-locals { prefix = var.env }
-resource "aws_vpc" "main" { tags = { Env = local.prefix } }
-output "id" { value = aws_vpc.main.id }
-`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) != 0 {
-		t.Errorf("expected no validation errors, got: %v", errs)
+func TestValidateCases(t *testing.T) {
+	for _, tc := range validateCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			src := loadAnalysisFixture(t, "validate", tc.Name)
+			errs := analyseFixtureNamed(t, "main.tf", src).Validate()
+
+			if tc.Custom != nil {
+				tc.Custom(t, errs)
+				return
+			}
+			if tc.WantNoErrors {
+				if len(errs) != 0 {
+					t.Errorf("expected no validation errors, got: %v", errs)
+				}
+				return
+			}
+			for _, ref := range tc.WantRefs {
+				if !hasRef(errs, ref) {
+					t.Errorf("expected error with Ref=%q; got: %v", ref, errs)
+				}
+			}
+			if tc.WantPair != nil {
+				if !hasPair(errs, tc.WantPair.EntityID, tc.WantPair.Ref) {
+					t.Errorf("expected error with EntityID=%q Ref=%q; got: %v",
+						tc.WantPair.EntityID, tc.WantPair.Ref, errs)
+				}
+			}
+			if tc.MustNotMatchRef != "" {
+				for _, e := range errs {
+					if e.Ref == tc.MustNotMatchRef {
+						t.Errorf("did not expect error with Ref=%q, got: %v", tc.MustNotMatchRef, e)
+					}
+				}
+			}
+		})
 	}
 }
 
-func TestValidateUndefinedVariable(t *testing.T) {
-	src := `locals { x = var.missing }`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error for undefined variable, got none")
-	}
-	found := false
+func hasRef(errs []analysis.ValidationError, ref string) bool {
 	for _, e := range errs {
-		if e.Ref == "variable.missing" {
-			found = true
+		if e.Ref == ref {
+			return true
 		}
 	}
-	if !found {
-		t.Errorf("expected error for variable.missing, got: %v", errs)
-	}
+	return false
 }
 
-func TestValidateUndefinedLocal(t *testing.T) {
-	src := `output "x" { value = local.ghost }`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error for undefined local, got none")
-	}
-	found := false
+func hasPair(errs []analysis.ValidationError, entityID, ref string) bool {
 	for _, e := range errs {
-		if e.Ref == "local.ghost" {
-			found = true
+		if (entityID == "" || e.EntityID == entityID) && (ref == "" || e.Ref == ref) {
+			return true
 		}
 	}
-	if !found {
-		t.Errorf("expected error for local.ghost, got: %v", errs)
-	}
+	return false
 }
 
-func TestValidateUndefinedModule(t *testing.T) {
-	src := `output "vpc" { value = module.network.vpc_id }`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error for undefined module, got none")
-	}
-	found := false
-	for _, e := range errs {
-		if e.Ref == "module.network" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected error for module.network, got: %v", errs)
-	}
-}
-
-func TestValidateUndefinedDataSource(t *testing.T) {
-	src := `resource "aws_instance" "web" { ami = data.aws_ami.ghost.id }`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error for undefined data source, got none")
-	}
-	found := false
-	for _, e := range errs {
-		if e.Ref == "data.aws_ami.ghost" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected error for data.aws_ami.ghost, got: %v", errs)
-	}
-}
-
-func TestValidateDefinedReferenceProducesNoError(t *testing.T) {
-	// var.env, local.prefix, and data.aws_ami.ubuntu all exist — no errors.
-	src := `
-variable "env" {}
-data "aws_ami" "ubuntu" { most_recent = true }
-locals { prefix = var.env }
-resource "aws_instance" "web" {
-  ami  = data.aws_ami.ubuntu.id
-  tags = { Name = local.prefix }
-}
-`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) != 0 {
-		t.Errorf("expected no errors, got: %v", errs)
-	}
-}
-
-func TestValidateBuiltinsNotFlagged(t *testing.T) {
-	// count.index, each.key, path.module, self.* are built-ins.
-	src := `
-resource "aws_subnet" "pub" {
-  count      = 3
-  cidr_block = cidrsubnet("10.0.0.0/16", 8, count.index)
-}
-`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) != 0 {
-		t.Errorf("builtins should not produce validation errors, got: %v", errs)
-	}
-}
-
-func TestValidateErrorHasPosition(t *testing.T) {
-	// The error position should point to the reference, not the entity.
-	src := "locals { bad = var.missing }\n"
-	errs := validateFixture(t, "vars.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error, got none")
-	}
-	e := errs[0]
-	if e.Pos.File != "vars.tf" {
-		t.Errorf("Pos.File = %q, want %q", e.Pos.File, "vars.tf")
-	}
-	if e.Pos.Line != 1 {
-		t.Errorf("Pos.Line = %d, want 1", e.Pos.Line)
-	}
-}
-
-func TestValidateSortedByPosition(t *testing.T) {
-	// Two errors: second line and first line. Output must be sorted by line.
-	src := "locals {\n  a = var.missing_a\n  b = var.missing_b\n}\n"
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) < 2 {
-		t.Fatalf("expected at least 2 validation errors, got %d", len(errs))
-	}
-	for i := 1; i < len(errs); i++ {
-		prev, cur := errs[i-1], errs[i]
-		if prev.Pos.Line > cur.Pos.Line {
-			t.Errorf("errors not sorted by line: error %d (line %d) after error %d (line %d)",
-				i, cur.Pos.Line, i-1, prev.Pos.Line)
-		}
-	}
-}
-
-// ---- sensitive propagation ----
-
-func TestSensitiveVarReferencedByNonSensitiveOutputIsError(t *testing.T) {
-	src := `
-variable "password" {
-  type      = string
-  sensitive = true
-}
-output "pw" { value = var.password }
-`
-	errs := validateFixture(t, "main.tf", src)
-	if len(errs) == 0 {
-		t.Fatal("expected a validation error, got none")
-	}
-	found := false
-	for _, e := range errs {
-		if e.EntityID == "output.pw" && e.Ref == "variable.password" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected sensitive-propagation error, got: %v", errs)
-	}
-}
-
-func TestSensitiveOutputReferencingSensitiveVarIsOK(t *testing.T) {
-	src := `
-variable "password" {
-  type      = string
-  sensitive = true
-}
-output "pw" {
-  value     = var.password
-  sensitive = true
-}
-`
-	errs := validateFixture(t, "main.tf", src)
-	for _, e := range errs {
-		if e.EntityID == "output.pw" {
-			t.Errorf("sensitive output referencing sensitive var should not be flagged, got: %v", e)
-		}
-	}
-}
-
-func TestNonSensitiveOutputReferencingNonSensitiveVarIsOK(t *testing.T) {
-	src := `
-variable "env" {
-  type = string
-}
-output "env" { value = var.env }
-`
-	errs := validateFixture(t, "main.tf", src)
-	for _, e := range errs {
-		if e.Ref == "variable.env" {
-			t.Errorf("non-sensitive var referenced by non-sensitive output should not be flagged: %v", e)
-		}
-	}
-}
-
-func TestSensitivePropagationDeduplicated(t *testing.T) {
-	// Referencing the same sensitive var multiple times in one output
-	// should produce only one error.
-	src := `
-variable "password" {
-  type      = string
-  sensitive = true
-}
-output "pw" {
-  value = "${var.password} and again ${var.password}"
-}
-`
-	errs := validateFixture(t, "main.tf", src)
-	count := 0
-	for _, e := range errs {
-		if e.EntityID == "output.pw" && e.Ref == "variable.password" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("expected exactly 1 sensitive-propagation error, got %d", count)
-	}
-}
-
-func TestValidateMultipleFilesAggregated(t *testing.T) {
-	// AnalyseFiles merges two files; undefined refs from both are reported.
-	src1 := "locals { a = var.missing }\n"
-	src2 := "output \"x\" { value = local.ghost }\n"
-
-	f1 := parseToFile(t, "a.tf", src1)
-	f2 := parseToFile(t, "b.tf", src2)
-	errs := analysis.AnalyseFiles([]*analysis.File{f1, f2}).Validate()
-
-	refs := make(map[string]bool)
-	for _, e := range errs {
-		refs[e.Ref] = true
-	}
-	if !refs["variable.missing"] {
-		t.Error("variable.missing should be flagged")
-	}
-	if !refs["local.ghost"] {
-		t.Error("local.ghost should be flagged")
-	}
+var validateCases = []validateCase{
+	{Name: "clean_module", WantNoErrors: true},
+	{Name: "undefined_variable", WantRefs: []string{"variable.missing"}},
+	{Name: "undefined_local", WantRefs: []string{"local.ghost"}},
+	{Name: "undefined_module", WantRefs: []string{"module.network"}},
+	{Name: "undefined_data_source", WantRefs: []string{"data.aws_ami.ghost"}},
+	{Name: "defined_reference_no_error", WantNoErrors: true},
+	{Name: "builtins_not_flagged", WantNoErrors: true},
+	{
+		Name: "error_has_position",
+		Custom: func(t *testing.T, errs []analysis.ValidationError) {
+			if len(errs) == 0 {
+				t.Fatal("expected a validation error, got none")
+			}
+			e := errs[0]
+			if e.Pos.File != "main.tf" {
+				t.Errorf("Pos.File = %q, want %q", e.Pos.File, "main.tf")
+			}
+			if e.Pos.Line != 1 {
+				t.Errorf("Pos.Line = %d, want 1", e.Pos.Line)
+			}
+		},
+	},
+	{
+		Name: "errors_sorted_by_position",
+		Custom: func(t *testing.T, errs []analysis.ValidationError) {
+			if len(errs) < 2 {
+				t.Fatalf("expected at least 2 validation errors, got %d", len(errs))
+			}
+			for i := 1; i < len(errs); i++ {
+				if errs[i-1].Pos.Line > errs[i].Pos.Line {
+					t.Errorf("errors not sorted by line: %d after %d",
+						errs[i].Pos.Line, errs[i-1].Pos.Line)
+				}
+			}
+		},
+	},
+	{
+		Name: "sensitive_var_referenced_by_nonsensitive_output",
+		WantPair: &struct{ EntityID, Ref string }{"output.pw", "variable.password"},
+	},
+	{
+		Name: "sensitive_output_references_sensitive_var_ok",
+		Custom: func(t *testing.T, errs []analysis.ValidationError) {
+			for _, e := range errs {
+				if e.EntityID == "output.pw" {
+					t.Errorf("sensitive output referencing sensitive var should not be flagged, got: %v", e)
+				}
+			}
+		},
+	},
+	{
+		Name: "nonsensitive_output_references_nonsensitive_var_ok",
+		MustNotMatchRef: "variable.env",
+	},
+	{
+		Name: "sensitive_propagation_deduplicated",
+		Custom: func(t *testing.T, errs []analysis.ValidationError) {
+			n := 0
+			for _, e := range errs {
+				if e.EntityID == "output.pw" && e.Ref == "variable.password" {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("expected exactly 1 sensitive-propagation error, got %d", n)
+			}
+		},
+	},
+	{
+		Name: "multiple_files_aggregated",
+		Custom: func(t *testing.T, _ []analysis.ValidationError) {
+			// This case parses two separate files and merges them via
+			// AnalyseFiles — outside the single-file fixture model. Run
+			// directly here.
+			f1 := parseToFile(t, "a.tf", "locals { a = var.missing }\n")
+			f2 := parseToFile(t, "b.tf", "output \"x\" { value = local.ghost }\n")
+			errs := analysis.AnalyseFiles([]*analysis.File{f1, f2}).Validate()
+			refs := make(map[string]bool)
+			for _, e := range errs {
+				refs[e.Ref] = true
+			}
+			if !refs["variable.missing"] {
+				t.Error("variable.missing should be flagged")
+			}
+			if !refs["local.ghost"] {
+				t.Error("local.ghost should be flagged")
+			}
+		},
+	},
 }

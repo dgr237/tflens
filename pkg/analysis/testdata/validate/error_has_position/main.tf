@@ -1,0 +1,1 @@
+locals { bad = var.missing }
