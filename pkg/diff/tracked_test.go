@@ -91,6 +91,90 @@ module "eks" {
 	}
 }
 
+// TestDiffTrackedCrossModuleEvalEquivalentParentDefaultFalse covers
+// the EKS conditional-upgrade pattern with the upgrade flag defaulting
+// to false. The parent introduces `variable "upgrade" { default =
+// false }` and rewrites its static local as `var.upgrade ? "1.35" :
+// "1.34"`. The marker is added in the child on
+// `resource.aws_eks_cluster.this.cluster_version = var.cluster_version`.
+//
+// On the surface the parent's local text changes ("1.34" → conditional)
+// AND a new variable is referenced — but with var.upgrade=false the
+// conditional resolves to "1.34", same as the old static value. The
+// effective value at the tracked attribute didn't move. The diff
+// should therefore emit Informational with the new variable as
+// supporting context, NOT Breaking.
+//
+// This is the "I added the upgrade flag but haven't pulled the lever
+// yet" workflow: a PR can stage the conditional safely, and only the
+// follow-up PR that flips var.upgrade to true should gate CI.
+func TestDiffTrackedCrossModuleEvalEquivalentParentDefaultFalse(t *testing.T) {
+	const childOldSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  name            = "prod"
+  cluster_version = var.cluster_version
+}
+`
+	const childNewSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  name            = "prod"
+  cluster_version = var.cluster_version # tflens:track: EKS minor — bump only after add-on compat
+}
+`
+	const parentOldSrc = `
+locals { cluster_version = "1.34" }
+module "eks" {
+  source          = "./modules/eks"
+  cluster_version = local.cluster_version
+}
+`
+	const parentNewSrc = `
+variable "upgrade" {
+  type    = bool
+  default = false
+}
+locals { cluster_version = var.upgrade ? "1.35" : "1.34" }
+module "eks" {
+  source          = "./modules/eks"
+  cluster_version = local.cluster_version
+}
+`
+	oldChild := analyseFromTestdata(t, "old/child/main.tf", childOldSrc)
+	newChild := analyseFromTestdata(t, "new/child/main.tf", childNewSrc)
+	oldParent := analyseFromTestdata(t, "old/main.tf", parentOldSrc)
+	newParent := analyseFromTestdata(t, "new/main.tf", parentNewSrc)
+
+	got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
+		OldParent: oldParent, NewParent: newParent, CallName: "eks",
+	})
+	if len(got) != 1 {
+		t.Fatalf("want 1 change, got %d: %v", len(got), got)
+	}
+	c := got[0]
+	if c.Kind != diff.Informational {
+		t.Errorf("kind = %v, want Informational (effective value unchanged); detail=%q", c.Kind, c.Detail)
+	}
+	// The new variable must still be surfaced as supporting context
+	// so the reviewer knows what's been wired in.
+	for _, want := range []string{"now references", "parent.variable.upgrade", "false"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("detail missing %q: %s", want, c.Detail)
+		}
+	}
+	// The local's text DID change but its evaluated value didn't —
+	// the "parent.local.cluster_version changed" line must NOT appear.
+	for _, mustNot := range []string{"parent.local.cluster_version changed", `"1.34" →`} {
+		if strings.Contains(c.Detail, mustNot) {
+			t.Errorf("detail should not contain %q (eval-equivalent should suppress): %s", mustNot, c.Detail)
+		}
+	}
+	if !strings.Contains(c.Hint, "add-on compat") {
+		t.Errorf("hint missing 'add-on compat': %s", c.Hint)
+	}
+}
+
 // TestDiffTrackedCrossModuleNoChangeStaysQuiet confirms cross-module
 // resolution doesn't introduce false positives: marker added in the
 // child, NOTHING changed in the parent → still Informational only.
@@ -383,6 +467,24 @@ var trackedCases = []trackedCase{
 		DetailContains: []string{
 			`-prod`, `-staging`,
 		},
+	},
+	{
+		// Single-module mirror of the cross-module
+		// var.upgrade=false scenario: marker added on the resource
+		// attribute, parent introduces a new variable + conditional
+		// local. With var.upgrade=false the conditional resolves to
+		// "1.34" (same as old), so eval suppression should kick in
+		// and demote to Informational. Confirms the resource-level
+		// marker path participates in the eval-equivalence collapse,
+		// not just the local-level one.
+		Name:     "tracked_marker_added_on_resource_eval_unchanged",
+		Subject:  "resource.aws_eks_cluster.this.cluster_version",
+		WantKind: diff.Informational,
+		DetailContains: []string{
+			"marker added",
+			"now references variable.upgrade", "false",
+		},
+		HintContains: []string{"add-on compat"},
 	},
 	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
