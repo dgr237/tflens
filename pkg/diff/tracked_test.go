@@ -174,6 +174,21 @@ var trackedCases = []trackedCase{
 		HintContains: []string{"add-on compat"},
 	},
 	{
+		// Regression: marker added in a submodule whose resource
+		// attribute references a variable with no default. The
+		// variable EXISTED in the old version (just without a
+		// default), and nothing changed underneath. Used to be
+		// reported as Breaking with "now references variable.X =
+		// <unset>" because LookupAttrText couldn't tell "entity
+		// exists with no default" from "entity doesn't exist".
+		// Should now correctly emit Informational only.
+		Name:           "tracked_marker_added_no_default_unchanged",
+		Subject:        "resource.aws_eks_cluster.this.cluster_version",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"marker added"},
+		HintContains:   []string{"register baseline"},
+	},
+	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
 		// Only local.suffix changes between revisions; the literal text of
 		// the attribute is unchanged. The tracked-attribute pass must
