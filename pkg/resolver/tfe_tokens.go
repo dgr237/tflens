@@ -4,16 +4,24 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// LoadTfeTokens reads ~/.tfe/tokens.yaml and returns the credentials it
-// declares. The file is the convention used by some Terraform Enterprise
-// deployments to ship per-organisation tokens out-of-band from the
-// standard `~/.terraformrc` flow:
+// TfeTokensFileEnv is the environment variable that points at a TFE
+// tokens YAML file. Loading is strictly opt-in: when this variable is
+// unset, LoadTfeTokens returns empty credentials and never touches the
+// filesystem. There is intentionally no default path — the format is
+// not a Terraform standard, just a per-org convention, so we don't want
+// to silently pick up an unrelated file that happens to live there.
+const TfeTokensFileEnv = "TFE_TOKENS_FILE"
+
+// LoadTfeTokens reads the TFE tokens file pointed at by $TFE_TOKENS_FILE
+// and returns the credentials it declares. The file format is the YAML
+// convention used by some Terraform Enterprise deployments to ship
+// per-organisation tokens out-of-band from the standard ~/.terraformrc
+// flow:
 //
 //	tokens:
 //	  - address: tfe.example.com
@@ -23,12 +31,12 @@ import (
 //
 // `address` may be a bare host, a `host:port` pair, or a full URL — only
 // the host (with port if non-default) is used for matching against the
-// outgoing request's URL host. A missing file yields an empty,
-// non-nil source with no error so callers can chain unconditionally.
+// outgoing request's URL host. With $TFE_TOKENS_FILE unset, returns an
+// empty, non-nil source with no error so callers can chain unconditionally.
 func LoadTfeTokens() (CredentialsSource, error) {
-	path, err := tfeTokensPath()
-	if err != nil {
-		return nil, err
+	path := os.Getenv(TfeTokensFileEnv)
+	if path == "" {
+		return StaticCredentials{}, nil
 	}
 	return LoadTfeTokensFrom(path)
 }
@@ -63,20 +71,6 @@ type tfeTokensFile struct {
 		Address string `yaml:"address"`
 		Token   string `yaml:"token"`
 	} `yaml:"tokens"`
-}
-
-// tfeTokensPath returns the default location for the TFE tokens file.
-// Honours $TFE_TOKENS_FILE first so tests and unusual layouts can
-// override; otherwise ~/.tfe/tokens.yaml.
-func tfeTokensPath() (string, error) {
-	if v := os.Getenv("TFE_TOKENS_FILE"); v != "" {
-		return v, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locating user home dir: %w", err)
-	}
-	return filepath.Join(home, ".tfe", "tokens.yaml"), nil
 }
 
 // normaliseTokenAddress reduces an address value to the host form that

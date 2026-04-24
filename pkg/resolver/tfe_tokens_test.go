@@ -88,7 +88,7 @@ tokens:
 	}
 }
 
-func TestLoadTfeTokensHonoursEnvVar(t *testing.T) {
+func TestLoadTfeTokensReadsFromEnvVar(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alt.yaml")
 	body := `
 tokens:
@@ -98,13 +98,31 @@ tokens:
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TFE_TOKENS_FILE", path)
+	t.Setenv(resolver.TfeTokensFileEnv, path)
 	c, err := resolver.LoadTfeTokens()
 	if err != nil {
 		t.Fatalf("LoadTfeTokens: %v", err)
 	}
 	if got := c.Token("env.example.com"); got != "env-token" {
-		t.Errorf("env-overridden path: got %q, want env-token", got)
+		t.Errorf("env-pointed file: got %q, want env-token", got)
+	}
+}
+
+// TestLoadTfeTokensWithEnvUnsetReturnsEmpty confirms loading is strictly
+// opt-in: with $TFE_TOKENS_FILE unset we never touch the filesystem and
+// always yield an empty, non-nil source. This avoids accidentally
+// picking up an unrelated file at any conventional path.
+func TestLoadTfeTokensWithEnvUnsetReturnsEmpty(t *testing.T) {
+	t.Setenv(resolver.TfeTokensFileEnv, "")
+	c, err := resolver.LoadTfeTokens()
+	if err != nil {
+		t.Fatalf("LoadTfeTokens: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected non-nil empty CredentialsSource")
+	}
+	if got := c.Token("anything"); got != "" {
+		t.Errorf("expected empty creds with env unset, got %q", got)
 	}
 }
 
