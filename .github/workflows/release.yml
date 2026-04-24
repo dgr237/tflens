@@ -57,8 +57,12 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Inject the body via env var so backticks + $VAR in the
+          # CHANGELOG aren't shell-interpreted at template-expansion
+          # time — see the same note in auto-release.yml.
+          BODY: ${{ steps.notes.outputs.body }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "${{ steps.notes.outputs.body }}" \
+            --notes "$BODY" \
             --verify-tag
