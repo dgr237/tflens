@@ -276,6 +276,29 @@ func (m *Module) ModuleOutputReferences(callName string) []string {
 	return out
 }
 
+// HasEntity reports whether an entity with the given canonical ID
+// (e.g. "resource.aws_vpc.main", "variable.region") is declared in
+// this module. Constant-time — uses the byID index built during
+// analysis.
+func (m *Module) HasEntity(id string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m.byID[id]
+	return ok
+}
+
+// EntityByID returns the entity with the given canonical ID and
+// reports whether it was found. Constant-time. Convenience for
+// callers that need both existence and the entity value.
+func (m *Module) EntityByID(id string) (Entity, bool) {
+	if m == nil {
+		return Entity{}, false
+	}
+	e, ok := m.byID[id]
+	return e, ok
+}
+
 func (m *Module) addEntity(e Entity) {
 	if _, exists := m.byID[e.ID()]; !exists {
 		m.entities = append(m.entities, e)

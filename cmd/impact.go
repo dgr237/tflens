@@ -21,7 +21,10 @@ func init() {
 
 func runImpact(cmd *cobra.Command, path, id string) {
 	mod := mustLoadModule(path)
-	mustEntityExists(mod, id, path)
+	if !mod.HasEntity(id) {
+		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
+			id, path, path)
+	}
 
 	affected := mod.Impact(id)
 	if outputJSON(cmd) {
