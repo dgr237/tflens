@@ -4,9 +4,28 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
 )
+
+// loadOldAndNew loads both sides of a project diff: the working tree
+// at path (the "new" side) and the same path at baseRef (the "old"
+// side, materialised in a temporary git worktree). Returns the two
+// projects plus a cleanup func the caller MUST defer to remove the
+// worktree. Used by every subcommand that compares two refs.
+func loadOldAndNew(cmd *cobra.Command, path, baseRef string) (oldProj, newProj *loader.Project, cleanup func(), err error) {
+	newProj, err = loadProject(cmd, path)
+	if err != nil {
+		return nil, nil, func() {}, fmt.Errorf("loading path: %w", err)
+	}
+	oldProj, cleanup, err = loadOldProjectForRef(cmd, path, baseRef)
+	if err != nil {
+		return nil, nil, func() {}, err
+	}
+	return oldProj, newProj, cleanup, nil
+}
 
 // mustLoadModule loads a single .tf file or a directory of .tf files
 // via loader.LoadAny. File-level parse errors are printed as warnings

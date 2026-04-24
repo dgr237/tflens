@@ -65,28 +65,17 @@ func init() {
 }
 
 func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
-	newProj, err := loadProject(cmd, path)
-	if err != nil {
-		return fmt.Errorf("loading path: %w", err)
-	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
+	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	var state *tfstate.State
-	if statePath != "" {
-		state, err = tfstate.Parse(statePath)
-		if err != nil {
-			return fmt.Errorf("loading state: %w", err)
-		}
+	state, err := loadOptionalState(statePath)
+	if err != nil {
+		return err
 	}
-
 	result := statediff.Analyze(oldProj, newProj, state)
-	result.BaseRef = baseRef
-	result.Path = path
-
+	result.BaseRef, result.Path = baseRef, path
 	if outputJSON(cmd) {
 		exitJSON(result, diff.ExitCodeFor(result.FlaggedCount()))
 		return nil
@@ -96,4 +85,17 @@ func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// loadOptionalState parses the Terraform state at path, or returns
+// (nil, nil) when path is empty (the --state flag wasn't supplied).
+func loadOptionalState(path string) (*tfstate.State, error) {
+	if path == "" {
+		return nil, nil
+	}
+	state, err := tfstate.Parse(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading state: %w", err)
+	}
+	return state, nil
 }

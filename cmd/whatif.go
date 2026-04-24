@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/diff"
-	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -66,49 +65,19 @@ func init() {
 // against callers at baseRef. If only is non-empty it restricts to that
 // one call name; otherwise every call that differs is simulated.
 func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
-	newProj, err := loadProject(cmd, path)
-	if err != nil {
-		return fmt.Errorf("loading path: %w", err)
-	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
+	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	pairs := loader.PairModuleCalls(oldProj, newProj)
-	if only != "" {
-		filtered := pairs[:0]
-		for _, p := range pairs {
-			if p.Key == only || p.LocalName == only {
-				filtered = append(filtered, p)
-			}
-		}
-		pairs = filtered
-		if len(pairs) == 0 {
-			return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
-		}
+	calls, totalImpact, filtered := diff.AnalyzeWhatif(oldProj, newProj, only)
+	if filtered {
+		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
 	}
-
-	var calls []diff.WhatifResult
-	totalImpact := 0
-	for _, p := range pairs {
-		// whatif is only meaningful for calls that existed at base — we
-		// need an "old parent" that called an "old child" to diff
-		// against the new child. Added calls have no base-side caller.
-		if p.Status == loader.StatusAdded {
-			continue
-		}
-		r := diff.BuildWhatifResult(p)
-		totalImpact += len(r.DirectImpact)
-		calls = append(calls, r)
-	}
-
 	if outputJSON(cmd) {
 		exitJSON(render.BuildJSONWhatif(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
 		return nil
 	}
-
 	render.WriteWhatifResults(os.Stdout, baseRef, path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
