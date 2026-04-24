@@ -463,17 +463,33 @@ Downloaded modules are stored under the OS user cache directory (e.g. `~/.cache/
 
 ### Private registries
 
-Credentials for private registries are read from the Terraform CLI config file (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere). The format is identical to Terraform's:
+Credentials are read from two sources, in this order:
 
-```
-credentials "app.terraform.io" {
-  token = "your-api-token"
-}
+1. **`~/.tfe/tokens.yaml`** (or `$TFE_TOKENS_FILE` if set) — the YAML format used by some Terraform Enterprise org-management tooling:
 
-credentials "registry.example.com" {
-  token = "..."
-}
-```
+   ```yaml
+   tokens:
+     - address: tfe.example.com
+       token: your-tfe-token
+     - address: https://other.tfe.example.com
+       token: another-tfe-token
+   ```
+
+   `address` may be a bare host, a `host:port` pair, or a full URL — only the host (with port if non-default) is matched against the outgoing request.
+
+2. **Terraform CLI config file** (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere) — the standard Terraform format:
+
+   ```
+   credentials "app.terraform.io" {
+     token = "your-api-token"
+   }
+
+   credentials "registry.example.com" {
+     token = "..."
+   }
+   ```
+
+When both files name the same host, the TFE-tokens entry wins (it's typically org-managed and more authoritative than a personal CLI config). Either source missing is fine; running with neither falls through to anonymous access.
 
 Bearer tokens are sent **only** to requests whose `URL.Host` exactly matches a configured entry. This means a registry that redirects its tarball download URL at a third-party CDN (typical for GitHub-backed public modules) never receives the token.
 
