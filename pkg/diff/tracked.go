@@ -60,12 +60,41 @@ func DiffTracked(oldMod, newMod *analysis.Module) []Change {
 			// real-world flow is "I'm calling out THIS specific change
 			// in THIS PR" — so if the underlying value also moved, the
 			// reviewer needs the Breaking signal too.
-			oldText, located := oldMod.LookupAttrText(n.EntityID, n.AttrName)
-			if located && oldText != n.ExprText {
+			//
+			// Two paths to detect a value change:
+			//
+			//   a) Direct attribute lookup. Works for entities where
+			//      the attribute expression is cached on the Entity
+			//      (locals, outputs, variable defaults, module args).
+			//      Resource/data attributes aren't cached, so this
+			//      step yields nothing for those — we fall through to
+			//      the indirection check.
+			//
+			//   b) Per-ref comparison of transitively-referenced vars
+			//      and locals. Catches the case where the marker is
+			//      on a resource attribute (which we can't diff
+			//      directly) but the underlying local changed or a
+			//      newly-introduced variable took effect.
+			var details []string
+			if oldText, located := oldMod.LookupAttrText(n.EntityID, n.AttrName); located && oldText != n.ExprText {
+				details = append(details, fmt.Sprintf("value %s → %s", display(oldText), display(n.ExprText)))
+			}
+			for _, id := range n.SortedRefIDs() {
+				newRefText := n.Refs[id]
+				oldRefText, oldLocated := refValueInModule(oldMod, id)
+				switch {
+				case !oldLocated:
+					details = append(details, fmt.Sprintf("now references %s = %s", id, display(newRefText)))
+				case oldRefText != newRefText:
+					details = append(details, fmt.Sprintf("%s changed: %s → %s", id, display(oldRefText), display(newRefText)))
+				}
+			}
+			if len(details) > 0 {
+				details = append([]string{"tracked-attribute marker added"}, details...)
 				changes = append(changes, Change{
 					Kind:    Breaking,
 					Subject: key,
-					Detail:  fmt.Sprintf("tracked-attribute marker added; value %s → %s", display(oldText), display(n.ExprText)),
+					Detail:  strings.Join(details, "; "),
 					Hint:    n.Description,
 					NewPos:  n.Pos,
 				})
@@ -101,6 +130,21 @@ func DiffTracked(oldMod, newMod *analysis.Module) []Change {
 		return changes[i].Subject < changes[j].Subject
 	})
 	return changes
+}
+
+// refValueInModule looks up the canonical text of the value behind a
+// var.X or local.X reference id (as produced by the indirection walker)
+// in the given module. Returns ("", false) when the entity doesn't
+// exist on that side. Used by DiffTracked to detect "marker added but
+// the underlying var/local changed underneath it".
+func refValueInModule(m *analysis.Module, id string) (string, bool) {
+	switch {
+	case strings.HasPrefix(id, "variable."):
+		return m.LookupAttrText(id, "default")
+	case strings.HasPrefix(id, "local."):
+		return m.LookupAttrText(id, "value")
+	}
+	return "", false
 }
 
 func indexTracked(m *analysis.Module) map[string]analysis.TrackedAttribute {
