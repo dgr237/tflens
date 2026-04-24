@@ -200,6 +200,7 @@ Quick tour for first-time contributors:
 | `pkg/analysis`   | Entity inventory, dependency graph, type system, tracked-attribute scanner     |
 | `pkg/loader`     | Multi-file / directory / recursive module loading via `hclparse`; cross-project module-call pairing (`PairModuleCalls`) |
 | `pkg/diff`       | Two-module API comparison + tracked-attribute diff + `DiffTrackedCtx` cross-module + version-constraint relation classification (broadened/narrowed/disjoint) + per-pair result type (`PairResult`) used by `cmd/diff` |
+| `pkg/render`     | io.Writer-based text rendering helpers shared across `cmd/diff` and `cmd/whatif` — bucket changes by Kind and emit Breaking / Non-breaking / Informational sections with consistent labels and indentation |
 | `pkg/resolver`   | Module source resolver chain (local → manifest → registry → git) + credentials |
 | `pkg/cache`      | Content-addressable disk cache for downloaded module sources                   |
 | `pkg/tfstate`    | Terraform state file reader (used by `statediff`)                              |

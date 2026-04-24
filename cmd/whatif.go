@@ -9,6 +9,7 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var whatifCmd = &cobra.Command{
@@ -179,31 +180,9 @@ func printOneWhatifCall(path string, r whatifCallResult) {
 	if len(r.apiChanges) == 0 {
 		return
 	}
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range r.apiChanges {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
 	fmt.Println()
 	fmt.Printf("  API changes for module.%s:\n", r.pair.Key)
-	section := func(title string, list []diff.Change) {
-		if len(list) == 0 {
-			return
-		}
-		fmt.Printf("    %s (%d):\n", title, len(list))
-		for _, c := range list {
-			printChangeLine("      ", c)
-		}
-	}
-	section("Breaking", breaking)
-	section("Non-breaking", nonBreaking)
-	section("Informational", info)
+	render.WriteChangesByKind(os.Stdout, "    ", "      ", r.apiChanges)
 }
 
 // ---- JSON rendering ----

@@ -8,6 +8,7 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 - **Module-call pairing logic moved from `cmd/` to `pkg/loader`** as exported `PairModuleCalls`, `ModuleCallPair`, `ModuleCallStatus`. Same behaviour; now unit-tested directly rather than only via subprocess integration tests.
 - **Diff helpers moved from `cmd/diff.go` to `pkg/diff`** as exported `PairResult`, `ConsumptionChangesForLocal`, `HintForCrossValidateMsg`, `ExitCodeFor`. Same behaviour; now unit-tested directly. `cmd/diff` is now a thin orchestration + rendering layer over `pkg/diff` + `pkg/loader`.
+- **Text-rendering helpers extracted to a new `pkg/render` package** (`WriteChange`, `BucketByKind`, `WriteChangesByKind`). `cmd/diff.go` and `cmd/whatif.go` previously each had their own bucket-by-Kind + emit-section pattern; now they share one io.Writer-based implementation with 100% coverage from unit tests using `bytes.Buffer`.
 
 No user-facing API changes — all extractions are internal package surfaces.
 

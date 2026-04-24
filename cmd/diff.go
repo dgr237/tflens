@@ -10,6 +10,7 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/resolver"
 )
 
@@ -194,35 +195,7 @@ func printRefResults(baseRef string, results []refModuleResult, rootChanges []di
 // operator running `terraform plan` against this directory.
 func printRootChanges(changes []diff.Change) {
 	fmt.Println("Root module:")
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range changes {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
-	if len(breaking) > 0 {
-		fmt.Printf("  Breaking (%d):\n", len(breaking))
-		for _, c := range breaking {
-			printChangeLine("    ", c)
-		}
-	}
-	if len(nonBreaking) > 0 {
-		fmt.Printf("  Non-breaking (%d):\n", len(nonBreaking))
-		for _, c := range nonBreaking {
-			printChangeLine("    ", c)
-		}
-	}
-	if len(info) > 0 {
-		fmt.Printf("  Informational (%d):\n", len(info))
-		for _, c := range info {
-			printChangeLine("    ", c)
-		}
-	}
+	render.WriteChangesByKind(os.Stdout, "  ", "    ", changes)
 }
 
 func printOneRefResult(r refModuleResult) {
@@ -264,44 +237,7 @@ func printOneRefResult(r refModuleResult) {
 		fmt.Println("  (no API changes)")
 		return
 	}
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range r.Changes {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
-	if len(breaking) > 0 {
-		fmt.Printf("  Breaking (%d):\n", len(breaking))
-		for _, c := range breaking {
-			printChangeLine("    ", c)
-		}
-	}
-	if len(nonBreaking) > 0 {
-		fmt.Printf("  Non-breaking (%d):\n", len(nonBreaking))
-		for _, c := range nonBreaking {
-			printChangeLine("    ", c)
-		}
-	}
-	if len(info) > 0 {
-		fmt.Printf("  Informational (%d):\n", len(info))
-		for _, c := range info {
-			printChangeLine("    ", c)
-		}
-	}
-}
-
-// printChangeLine prints "<indent><subject>: <detail>" plus, when the
-// change has a Hint, an aligned "<indent>  hint: <hint>" follow-up.
-func printChangeLine(indent string, c diff.Change) {
-	fmt.Printf("%s%s: %s\n", indent, c.Subject, c.Detail)
-	if c.Hint != "" {
-		fmt.Printf("%s  hint: %s\n", indent, c.Hint)
-	}
+	render.WriteChangesByKind(os.Stdout, "  ", "    ", r.Changes)
 }
 
 // ---- JSON rendering ----
