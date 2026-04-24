@@ -124,6 +124,7 @@ Describe the incident / failure mode, the root cause, and the fix. Include the u
    - A summary of the change
    - A test plan (what you ran manually; which tests now cover the scenario)
    - Any README updates alongside the code change — docs and code move together
+   - A `CHANGELOG.md` entry under `## [Unreleased]` for any user-visible change (added behaviour, changed semantics, removed feature, fixed bug, security note). Internal refactors and pure test additions don't need one.
 4. **Wait for CI.** All three OS jobs must pass.
 5. **One reviewer approval** is sufficient for routine changes; architectural shifts may need more discussion.
 
