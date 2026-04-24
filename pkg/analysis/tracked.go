@@ -183,6 +183,14 @@ func walkBodyForTracked(body *hclsyntax.Body, entityID, attrPrefix string, src [
 		})
 	}
 	for _, child := range body.Blocks {
+		// `locals { }` is a flat container: each attribute is itself a
+		// top-level entity (local.<name>). Bind markers attribute-by-
+		// attribute rather than recursing — there's no enclosing entity
+		// for a marker on the locals block to attach to.
+		if entityID == "" && child.Type == "locals" && child.Body != nil {
+			collectLocalsBlockMarkers(child.Body, src, markers, out)
+			continue
+		}
 		nextEntity := entityID
 		nextPrefix := attrPrefix
 		if entityID == "" {
@@ -198,6 +206,31 @@ func walkBodyForTracked(body *hclsyntax.Body, entityID, attrPrefix string, src [
 		if child.Body != nil {
 			walkBodyForTracked(child.Body, nextEntity, nextPrefix, src, markers, out)
 		}
+	}
+}
+
+// collectLocalsBlockMarkers binds markers to attributes inside a
+// `locals { }` block. Each attribute is its own entity (local.<name>),
+// so we record one TrackedAttribute per marked attribute with
+// EntityID="local.<name>" and AttrName="value" — mirroring the
+// output-block convention where the value expression is the thing
+// being tracked.
+func collectLocalsBlockMarkers(body *hclsyntax.Body, src []byte, markers map[int]trackMarker, out *[]TrackedAttribute) {
+	for _, attr := range sortedAttrs(body) {
+		line := attr.NameRange.Start.Line
+		mk, ok := markers[line]
+		if !ok {
+			continue
+		}
+		exprWrap := &Expr{E: attr.Expr, Source: src}
+		*out = append(*out, TrackedAttribute{
+			EntityID:    (Entity{Kind: KindLocal, Name: attr.Name}).ID(),
+			AttrName:    "value",
+			ExprText:    exprWrap.Text(),
+			Description: mk.description,
+			Pos:         posFromRange(attr.NameRange),
+			expr:        exprWrap,
+		})
 	}
 }
 
@@ -296,6 +329,56 @@ func textOrEmpty(e *Expr) string {
 		return ""
 	}
 	return e.Text()
+}
+
+// LookupAttrText returns the canonical text of the attribute named
+// attrName on the entity entityID, if it can be located on the entity's
+// recorded fields. Returns ("", false) when the attribute isn't one of
+// the named fields (e.g. an arbitrary attribute on a resource block —
+// those aren't cached on Entity).
+//
+// Used by the diff to compare the OLD value of a now-tracked attribute
+// when the marker was added in this same PR — so a "marker added" case
+// where the underlying value also changed gets promoted from
+// Informational to Breaking.
+func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
+	e, ok := m.byID[entityID]
+	if !ok {
+		return "", false
+	}
+	switch e.Kind {
+	case KindLocal:
+		if attrName == "value" || attrName == e.Name {
+			return textOrEmpty(e.LocalExpr), e.LocalExpr != nil
+		}
+	case KindOutput:
+		if attrName == "value" {
+			return textOrEmpty(e.ValueExpr), e.ValueExpr != nil
+		}
+	case KindVariable:
+		if attrName == "default" {
+			return textOrEmpty(e.DefaultExpr), e.DefaultExpr != nil
+		}
+	case KindModule:
+		if x, ok := e.ModuleArgs[attrName]; ok {
+			return textOrEmpty(x), true
+		}
+	}
+	switch attrName {
+	case "for_each":
+		return textOrEmpty(e.ForEachExpr), e.ForEachExpr != nil
+	case "count":
+		return textOrEmpty(e.CountExpr), e.CountExpr != nil
+	case "depends_on":
+		return textOrEmpty(e.DependsOnExpr), e.DependsOnExpr != nil
+	case "provider":
+		return textOrEmpty(e.ProviderExpr), e.ProviderExpr != nil
+	case "ignore_changes":
+		return textOrEmpty(e.IgnoreChangesExpr), e.IgnoreChangesExpr != nil
+	case "replace_triggered_by":
+		return textOrEmpty(e.ReplaceTriggeredByExpr), e.ReplaceTriggeredByExpr != nil
+	}
+	return "", false
 }
 
 // SortedRefIDs returns t.Refs's keys in deterministic order, for use by

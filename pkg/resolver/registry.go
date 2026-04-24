@@ -333,12 +333,16 @@ func (r *RegistryResolver) getJSON(ctx context.Context, u string) ([]byte, error
 // authorize adds a Bearer token to req iff the request targets a host
 // with a configured credential. This host-exact match means redirects to
 // a third-party CDN (e.g. registry → GitHub archive) never leak the
-// registry token.
+// registry token. The lookup key is normalised to drop the scheme's
+// default port (:443 for https, :80 for http) so a credentials entry
+// written as bare host still matches a request whose URL spells out the
+// default port — and vice versa.
 func (r *RegistryResolver) authorize(req *http.Request) {
 	if r.cfg.Credentials == nil {
 		return
 	}
-	if tok := r.cfg.Credentials.Token(req.URL.Host); tok != "" {
+	host := stripDefaultPort(req.URL.Scheme, req.URL.Host)
+	if tok := r.cfg.Credentials.Token(host); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 }

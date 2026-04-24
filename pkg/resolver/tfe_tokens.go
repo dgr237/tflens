@@ -76,7 +76,10 @@ type tfeTokensFile struct {
 // normaliseTokenAddress reduces an address value to the host form that
 // will match req.URL.Host. Accepts bare hosts ("tfe.example.com"),
 // host:port pairs, and full URLs ("https://tfe.example.com/path").
-// Returns "" when the input cannot be reduced to a host.
+// Strips the default port for the URL's scheme (:443 for https, :80 for
+// http) so an entry written as `https://tfe.example.com:443` still
+// matches a request to `https://tfe.example.com/...`. Returns "" when
+// the input cannot be reduced to a host.
 func normaliseTokenAddress(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
@@ -87,7 +90,7 @@ func normaliseTokenAddress(addr string) string {
 		if err != nil || u.Host == "" {
 			return ""
 		}
-		return u.Host
+		return stripDefaultPort(u.Scheme, u.Host)
 	}
 	// Bare host or host:port — strip any trailing path the user might
 	// have included by accident, then any leading slashes.
@@ -95,4 +98,29 @@ func normaliseTokenAddress(addr string) string {
 		addr = addr[:i]
 	}
 	return addr
+}
+
+// stripDefaultPort returns host with its port removed when the port is
+// the scheme's well-known default (:443 for https, :80 for http). Other
+// ports — and hosts without a port — are returned unchanged. This lets
+// us treat `tfe.example.com` and `tfe.example.com:443` as the same key
+// for an https URL, which avoids 401s when only one side spells out the
+// default port.
+func stripDefaultPort(scheme, host string) string {
+	idx := strings.LastIndex(host, ":")
+	if idx < 0 {
+		return host
+	}
+	// Bracketed IPv6 literals contain colons inside `[...]`; bail out.
+	if strings.Contains(host, "]") {
+		return host
+	}
+	port := host[idx+1:]
+	switch {
+	case scheme == "https" && port == "443":
+		return host[:idx]
+	case scheme == "http" && port == "80":
+		return host[:idx]
+	}
+	return host
 }
