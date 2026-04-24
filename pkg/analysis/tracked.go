@@ -399,6 +399,22 @@ func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
 	return "", false
 }
 
+// GatherRefsFromExpr walks expr's variable references and returns a
+// map of canonical id → value text (variable defaults, local values),
+// recursing through locals with cycle protection. Public version of
+// the unexported gatherRefs used at TrackedAttribute build time —
+// pkg/diff calls this to resolve a child variable's effective value
+// through a parent module's call argument.
+func (m *Module) GatherRefsFromExpr(expr *Expr) map[string]string {
+	refs := map[string]string{}
+	if m == nil || expr == nil || expr.E == nil {
+		return refs
+	}
+	visited := map[string]bool{}
+	m.gatherRefs(expr.E, refs, visited, 0)
+	return refs
+}
+
 // SortedRefIDs returns t.Refs's keys in deterministic order, for use by
 // callers that need a stable iteration.
 func (t TrackedAttribute) SortedRefIDs() []string {

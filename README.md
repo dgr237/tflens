@@ -456,7 +456,7 @@ Pick the highest-leverage spot for your scenario:
 - **Locals block** in the parent that decides the value — `locals { cluster_version = "1.34" # tflens:track }`. Best when the local is the source of truth and the value is consumed by one or more module calls. Each local becomes its own tracked entity (`local.<name>.value`), and the indirection walker still resolves any `var.X` it references.
 - **Module call argument** in the parent — `module "eks" { cluster_version = local.cluster_version # tflens:track }`. Best when the value flows through a parent that you own but the child is a third-party module. The walker follows the local back to its definition + any vars referenced inside.
 
-**Important caveat:** the indirection walker stays within a single module's analysis. A marker on `var.cluster_version` *inside a child module* sees only the child's variable (which has no default), not what the parent passes. To track values flowing across module boundaries, mark the parent's module-call attribute or the parent's local — not the child's variable.
+**Cross-module resolution:** when `tflens diff` runs against a project that contains module calls, a marker in a child module is also resolved through the parent's call argument. A marker on `cluster_version = var.cluster_version # tflens:track` *inside a child module* will catch a parent-side change like `local.cluster_version` being made conditional or a new variable's default flowing in — the diff climbs through the parent's `module "<name>" { cluster_version = ... }` argument and walks any locals/vars it transitively references on the parent's side. Parent-side refs appear in the diff output prefixed with `parent.` so reviewers can tell which side of the boundary moved.
 
 ### Where it works
 
