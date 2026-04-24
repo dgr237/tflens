@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
@@ -100,8 +99,8 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 		if p.Status == loader.StatusAdded {
 			continue
 		}
-		r := buildWhatifCallResult(p)
-		totalImpact += len(r.directImpact)
+		r := diff.BuildWhatifResult(p)
+		totalImpact += len(r.DirectImpact)
 		calls = append(calls, r)
 	}
 
@@ -117,35 +116,11 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 	return nil
 }
 
-type whatifCallResult struct {
-	pair         loader.ModuleCallPair
-	directImpact []analysis.ValidationError
-	apiChanges   []diff.Change // empty when we cannot compute (removed or missing child)
-}
-
-func buildWhatifCallResult(p loader.ModuleCallPair) whatifCallResult {
-	r := whatifCallResult{pair: p}
-	// Direct impact: does the old parent's usage break under the new
-	// child's API? For "removed" calls there's no new child, so we can
-	// only note the removal.
-	if p.Status == loader.StatusRemoved {
-		return r
-	}
-	if p.NewNode == nil || p.OldParent == nil {
-		// No child API available OR the old side doesn't have a
-		// parent to cross-validate against (e.g. nested call's parent
-		// was itself added in the new tree).
-		if p.OldNode != nil && p.NewNode != nil {
-			r.apiChanges = diff.Diff(p.OldNode.Module, p.NewNode.Module)
-		}
-		return r
-	}
-	r.directImpact = loader.CrossValidateCall(p.OldParent.Module, p.LocalName, p.NewNode.Module)
-	if p.OldNode != nil {
-		r.apiChanges = diff.Diff(p.OldNode.Module, p.NewNode.Module)
-	}
-	return r
-}
+// whatifCallResult is a thin alias around diff.WhatifResult so the
+// rendering / JSON code below keeps a stable local name. The fields
+// (Pair, DirectImpact, APIChanges) are exported on the underlying
+// type — the rendering code below references them directly.
+type whatifCallResult = diff.WhatifResult
 
 // ---- text rendering ----
 
@@ -163,26 +138,26 @@ func printWhatifBranchResults(baseRef, path string, calls []whatifCallResult) {
 }
 
 func printOneWhatifCall(path string, r whatifCallResult) {
-	if r.pair.Status == loader.StatusRemoved {
+	if r.Pair.Status == loader.StatusRemoved {
 		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
-			r.pair.Key, r.pair.OldSource, r.pair.OldVersion)
+			r.Pair.Key, r.Pair.OldSource, r.Pair.OldVersion)
 		return
 	}
 	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.pair.Key, path, len(r.directImpact))
-	if len(r.directImpact) == 0 {
+		r.Pair.Key, path, len(r.DirectImpact))
+	if len(r.DirectImpact) == 0 {
 		fmt.Println("  (none — callers at base are compatible with the new child)")
 	} else {
-		for _, e := range r.directImpact {
+		for _, e := range r.DirectImpact {
 			fmt.Printf("  %s\n", e)
 		}
 	}
-	if len(r.apiChanges) == 0 {
+	if len(r.APIChanges) == 0 {
 		return
 	}
 	fmt.Println()
-	fmt.Printf("  API changes for module.%s:\n", r.pair.Key)
-	render.WriteChangesByKind(os.Stdout, "    ", "      ", r.apiChanges)
+	fmt.Printf("  API changes for module.%s:\n", r.Pair.Key)
+	render.WriteChangesByKind(os.Stdout, "    ", "      ", r.APIChanges)
 }
 
 // ---- JSON rendering ----
@@ -212,14 +187,14 @@ func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) wha
 	out := whatifBranchJSON{BaseRef: baseRef, Path: path}
 	for _, r := range calls {
 		entry := whatifCallJSON{
-			Name:   r.pair.Key,
-			Status: r.pair.Status.String(),
+			Name:   r.Pair.Key,
+			Status: r.Pair.Status.String(),
 		}
-		for _, e := range r.directImpact {
+		for _, e := range r.DirectImpact {
 			entry.DirectImpact = append(entry.DirectImpact, toJSONValErr(e))
 			out.Summary.DirectImpact++
 		}
-		for _, c := range r.apiChanges {
+		for _, c := range r.APIChanges {
 			entry.APIChanges = append(entry.APIChanges, toJSONChange(c))
 			switch c.Kind {
 			case diff.Breaking:
