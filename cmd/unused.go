@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var unusedCmd = &cobra.Command{
@@ -23,12 +25,12 @@ func runUnused(cmd *cobra.Command, path string) {
 	mod := mustLoadModule(path)
 	unused := mod.Unreferenced()
 	if outputJSON(cmd) {
-		entities := make([]jsonEntity, 0, len(unused))
+		entities := make([]render.JSONEntity, 0, len(unused))
 		for _, e := range unused {
-			entities = append(entities, toJSONEntity(e))
+			entities = append(entities, render.JSONEnt(e))
 		}
 		emitJSON(struct {
-			Unreferenced []jsonEntity `json:"unreferenced"`
+			Unreferenced []render.JSONEntity `json:"unreferenced"`
 		}{Unreferenced: entities})
 		return
 	}

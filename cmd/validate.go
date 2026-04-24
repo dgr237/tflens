@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
 )
@@ -40,28 +41,28 @@ func runValidate(cmd *cobra.Command, path string) {
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
 
 	if outputJSON(cmd) {
-		refJSON := make([]jsonValidationError, 0, len(refErrs))
-		crossJSON := make([]jsonValidationError, 0, len(crossErrs))
-		typeJSON := make([]jsonTypeError, 0, len(typeErrs))
+		refJSON := make([]render.JSONValidationError, 0, len(refErrs))
+		crossJSON := make([]render.JSONValidationError, 0, len(crossErrs))
+		typeJSON := make([]render.JSONTypeError, 0, len(typeErrs))
 		// Refs and cross-errors both reuse ValidationError but have different
 		// semantics. Keep them separate for consumers.
 		for _, e := range refErrs {
-			refJSON = append(refJSON, toJSONValErr(e))
+			refJSON = append(refJSON, render.JSONValErr(e))
 		}
 		for _, e := range crossErrs {
-			crossJSON = append(crossJSON, toJSONValErr(e))
+			crossJSON = append(crossJSON, render.JSONValErr(e))
 		}
 		for _, e := range typeErrs {
-			typeJSON = append(typeJSON, toJSONTypeErr(e))
+			typeJSON = append(typeJSON, render.JSONTypeErr(e))
 		}
 		code := 0
 		if total > 0 {
 			code = 1
 		}
 		exitJSON(struct {
-			UndefinedReferences []jsonValidationError `json:"undefined_references"`
-			CrossModuleIssues   []jsonValidationError `json:"cross_module_issues"`
-			TypeErrors          []jsonTypeError       `json:"type_errors"`
+			UndefinedReferences []render.JSONValidationError `json:"undefined_references"`
+			CrossModuleIssues   []render.JSONValidationError `json:"cross_module_issues"`
+			TypeErrors          []render.JSONTypeError       `json:"type_errors"`
 		}{refJSON, crossJSON, typeJSON}, code)
 		return
 	}

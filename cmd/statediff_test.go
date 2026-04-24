@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dgr237/tflens/pkg/statediff"
 )
 
 // makeStatediffRepo creates a git repo whose workspace has:
@@ -118,7 +120,7 @@ func TestStatediffDetectsLocalInducedDeletion(t *testing.T) {
 		t.Fatalf("expected exit 1, got err=%v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
 
-	var out statediffResult
+	var out statediff.Result
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -182,7 +184,7 @@ func TestStatediffWithoutStateStillFlagsLocal(t *testing.T) {
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected exit 1, got err=%v\nstderr=%s", err, stderr.String())
 	}
-	var out statediffResult
+	var out statediff.Result
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -244,7 +246,7 @@ moved {
 		t.Fatalf("statediff should exit 0 on a moved-handled rename, got %v\nstderr=%s\nstdout=%s",
 			err, stderr.String(), stdout.String())
 	}
-	var out statediffResult
+	var out statediff.Result
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -317,7 +319,7 @@ resource "aws_instance" "web" {
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected exit 1, got err=%v\nstderr=%s", err, stderr.String())
 	}
-	var out statediffResult
+	var out statediff.Result
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

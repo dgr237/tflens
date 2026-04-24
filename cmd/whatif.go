@@ -6,9 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
-	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var whatifCmd = &cobra.Command{
@@ -66,192 +65,23 @@ func init() {
 // against callers at baseRef. If only is non-empty it restricts to that
 // one call name; otherwise every call that differs is simulated.
 func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
-	newProj, err := loadProject(cmd, path)
-	if err != nil {
-		return fmt.Errorf("loading path: %w", err)
-	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
+	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-
-	pairs := pairModuleCalls(oldProj, newProj)
-	if only != "" {
-		filtered := pairs[:0]
-		for _, p := range pairs {
-			if p.key == only || p.localName == only {
-				filtered = append(filtered, p)
-			}
-		}
-		pairs = filtered
-		if len(pairs) == 0 {
-			return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
-		}
+	calls, totalImpact, filtered := diff.AnalyzeWhatif(oldProj, newProj, only)
+	if filtered {
+		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
 	}
-
-	var calls []whatifCallResult
-	totalImpact := 0
-	for _, p := range pairs {
-		// whatif is only meaningful for calls that existed at base — we
-		// need an "old parent" that called an "old child" to diff
-		// against the new child. Added calls have no base-side caller.
-		if p.status == statusAdded {
-			continue
-		}
-		r := buildWhatifCallResult(p)
-		totalImpact += len(r.directImpact)
-		calls = append(calls, r)
-	}
-
 	if outputJSON(cmd) {
-		exitJSON(whatifBranchJSONPayload(baseRef, path, calls), exitCodeFor(totalImpact))
+		exitJSON(render.BuildJSONWhatif(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
 		return nil
 	}
-
-	printWhatifBranchResults(baseRef, path, calls)
+	render.WriteWhatifResults(os.Stdout, baseRef, path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
 	}
 	return nil
 }
 
-type whatifCallResult struct {
-	pair         modulePair
-	directImpact []analysis.ValidationError
-	apiChanges   []diff.Change // empty when we cannot compute (removed or missing child)
-}
-
-func buildWhatifCallResult(p modulePair) whatifCallResult {
-	r := whatifCallResult{pair: p}
-	// Direct impact: does the old parent's usage break under the new
-	// child's API? For "removed" calls there's no new child, so we can
-	// only note the removal.
-	if p.status == statusRemoved {
-		return r
-	}
-	if p.newNode == nil || p.oldParent == nil {
-		// No child API available OR the old side doesn't have a
-		// parent to cross-validate against (e.g. nested call's parent
-		// was itself added in the new tree).
-		if p.oldNode != nil && p.newNode != nil {
-			r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
-		}
-		return r
-	}
-	r.directImpact = loader.CrossValidateCall(p.oldParent.Module, p.localName, p.newNode.Module)
-	if p.oldNode != nil {
-		r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
-	}
-	return r
-}
-
-// ---- text rendering ----
-
-func printWhatifBranchResults(baseRef, path string, calls []whatifCallResult) {
-	if len(calls) == 0 {
-		fmt.Printf("No upgraded module calls to simulate (path vs %s).\n", baseRef)
-		return
-	}
-	for i, r := range calls {
-		if i > 0 {
-			fmt.Println()
-		}
-		printOneWhatifCall(path, r)
-	}
-}
-
-func printOneWhatifCall(path string, r whatifCallResult) {
-	if r.pair.status == statusRemoved {
-		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
-			r.pair.key, r.pair.oldSource, r.pair.oldVersion)
-		return
-	}
-	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.pair.key, path, len(r.directImpact))
-	if len(r.directImpact) == 0 {
-		fmt.Println("  (none — callers at base are compatible with the new child)")
-	} else {
-		for _, e := range r.directImpact {
-			fmt.Printf("  %s\n", e)
-		}
-	}
-	if len(r.apiChanges) == 0 {
-		return
-	}
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range r.apiChanges {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
-	fmt.Println()
-	fmt.Printf("  API changes for module.%s:\n", r.pair.key)
-	section := func(title string, list []diff.Change) {
-		if len(list) == 0 {
-			return
-		}
-		fmt.Printf("    %s (%d):\n", title, len(list))
-		for _, c := range list {
-			printChangeLine("      ", c)
-		}
-	}
-	section("Breaking", breaking)
-	section("Non-breaking", nonBreaking)
-	section("Informational", info)
-}
-
-// ---- JSON rendering ----
-
-type whatifBranchJSON struct {
-	BaseRef   string                 `json:"base_ref"`
-	Path string                 `json:"path"`
-	Calls     []whatifCallJSON       `json:"calls"`
-	Summary   whatifBranchSummaryJSON `json:"summary"`
-}
-
-type whatifCallJSON struct {
-	Name         string                `json:"name"`
-	Status       string                `json:"status"`
-	DirectImpact []jsonValidationError `json:"direct_impact"`
-	APIChanges   []jsonChange          `json:"api_changes,omitempty"`
-}
-
-type whatifBranchSummaryJSON struct {
-	DirectImpact int `json:"direct_impact"`
-	Breaking     int `json:"breaking"`
-	NonBreaking  int `json:"non_breaking"`
-	Informational int `json:"informational"`
-}
-
-func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) whatifBranchJSON {
-	out := whatifBranchJSON{BaseRef: baseRef, Path: path}
-	for _, r := range calls {
-		entry := whatifCallJSON{
-			Name:   r.pair.key,
-			Status: statusString(r.pair.status),
-		}
-		for _, e := range r.directImpact {
-			entry.DirectImpact = append(entry.DirectImpact, toJSONValErr(e))
-			out.Summary.DirectImpact++
-		}
-		for _, c := range r.apiChanges {
-			entry.APIChanges = append(entry.APIChanges, toJSONChange(c))
-			switch c.Kind {
-			case diff.Breaking:
-				out.Summary.Breaking++
-			case diff.NonBreaking:
-				out.Summary.NonBreaking++
-			case diff.Informational:
-				out.Summary.Informational++
-			}
-		}
-		out.Calls = append(out.Calls, entry)
-	}
-	return out
-}

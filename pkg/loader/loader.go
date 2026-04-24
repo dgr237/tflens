@@ -57,6 +57,58 @@ func LoadDir(dir string) (*analysis.Module, []FileError, error) {
 	return analysis.AnalyseFiles(files), errs, nil
 }
 
+// LoadFile parses a single .tf file at path and returns the analysed
+// module. Returns FileError entries (alongside a nil module) when
+// parsing fails — same shape as LoadDir for caller uniformity.
+func LoadFile(path string) (*analysis.Module, []FileError, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading file: %w", err)
+	}
+	p := hclparse.NewParser()
+	hclFile, diags := p.ParseHCL(src, path)
+	if diags.HasErrors() {
+		peList := make([]ParseError, 0, len(diags))
+		for _, d := range diags {
+			pos := token.Position{}
+			if d.Subject != nil {
+				pos = token.Position{
+					File:   d.Subject.Filename,
+					Line:   d.Subject.Start.Line,
+					Column: d.Subject.Start.Column,
+				}
+			}
+			peList = append(peList, ParseError{Pos: pos, Msg: d.Summary})
+		}
+		return nil, []FileError{{Path: path, Errors: peList}}, nil
+	}
+	body, ok := hclFile.Body.(*hclsyntax.Body)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected HCL body type %T at %s", hclFile.Body, path)
+	}
+	return analysis.Analyse(&analysis.File{
+		Filename: path,
+		Source:   src,
+		Body:     body,
+	}), nil, nil
+}
+
+// LoadAny dispatches based on whether path is a file or a directory.
+// Returns the analysed module and any non-fatal file-level parse
+// errors. A non-existent path or unreadable inode returns a non-nil
+// error (the caller has nothing to work with). Used by the cmd
+// layer's mustLoadModule.
+func LoadAny(path string) (*analysis.Module, []FileError, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.IsDir() {
+		return LoadDir(path)
+	}
+	return LoadFile(path)
+}
+
 // Project is a fully loaded Terraform project tree rooted at a single directory.
 type Project struct {
 	Root *ModuleNode
