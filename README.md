@@ -439,7 +439,24 @@ resource.aws_eks_cluster.this.cluster_version: tracked-attribute marker removed 
   hint: restore the `# tflens:track` comment, or remove the attribute entirely if the resource is gone
 ```
 
-Adding a new marker is reported as Informational — useful in PR review but not gating.
+Adding a new marker is reported as Informational on its own — but if the underlying value also moved in the same PR (the common "I'm calling out this specific change" flow), it's promoted to Breaking with the old → new value shown:
+
+```
+local.cluster_version.value: tracked-attribute marker added; value "1.34" → "1.35"
+  hint: EKS minor — bump only after add-on compatibility check
+```
+
+So you can introduce both the marker and the breaking change in one PR and still gate CI on the result.
+
+### Where to put the marker
+
+Pick the highest-leverage spot for your scenario:
+
+- **Resource attribute** in the module that owns the resource — `cluster_version = "1.28" # tflens:track`. Catches direct edits to the literal AND changes to any `var.X` / `local.X` referenced in the value. Best for self-contained modules.
+- **Locals block** in the parent that decides the value — `locals { cluster_version = "1.34" # tflens:track }`. Best when the local is the source of truth and the value is consumed by one or more module calls. Each local becomes its own tracked entity (`local.<name>.value`), and the indirection walker still resolves any `var.X` it references.
+- **Module call argument** in the parent — `module "eks" { cluster_version = local.cluster_version # tflens:track }`. Best when the value flows through a parent that you own but the child is a third-party module. The walker follows the local back to its definition + any vars referenced inside.
+
+**Important caveat:** the indirection walker stays within a single module's analysis. A marker on `var.cluster_version` *inside a child module* sees only the child's variable (which has no default), not what the parent passes. To track values flowing across module boundaries, mark the parent's module-call attribute or the parent's local — not the child's variable.
 
 ### Where it works
 

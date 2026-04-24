@@ -55,13 +55,29 @@ func DiffTracked(oldMod, newMod *analysis.Module) []Change {
 				OldPos:  o.Pos,
 			})
 		case !hasOld:
-			changes = append(changes, Change{
-				Kind:    Informational,
-				Subject: key,
-				Detail:  "tracked-attribute marker added",
-				Hint:    n.Description,
-				NewPos:  n.Pos,
-			})
+			// Adding a marker registers an attribute for future
+			// tracking — Informational on its own. But the most common
+			// real-world flow is "I'm calling out THIS specific change
+			// in THIS PR" — so if the underlying value also moved, the
+			// reviewer needs the Breaking signal too.
+			oldText, located := oldMod.LookupAttrText(n.EntityID, n.AttrName)
+			if located && oldText != n.ExprText {
+				changes = append(changes, Change{
+					Kind:    Breaking,
+					Subject: key,
+					Detail:  fmt.Sprintf("tracked-attribute marker added; value %s → %s", display(oldText), display(n.ExprText)),
+					Hint:    n.Description,
+					NewPos:  n.Pos,
+				})
+			} else {
+				changes = append(changes, Change{
+					Kind:    Informational,
+					Subject: key,
+					Detail:  "tracked-attribute marker added",
+					Hint:    n.Description,
+					NewPos:  n.Pos,
+				})
+			}
 		default:
 			diffs := compareTracked(o, n)
 			if len(diffs) == 0 {

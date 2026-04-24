@@ -117,6 +117,28 @@ var trackedCases = []trackedCase{
 		WantNoChanges: true,
 	},
 	{
+		// Marker on a locals-block attribute: each local becomes its
+		// own entity (local.<name>) with AttrName = "value". Confirms
+		// the locals-block walker binds markers correctly and the
+		// regular value-change path fires.
+		Name:           "tracked_local_value_changed",
+		Subject:        "local.cluster_version.value",
+		WantKind:       diff.Breaking,
+		DetailContains: []string{"value", "1.34", "1.35"},
+		HintContains:   []string{"add-on compat"},
+	},
+	{
+		// Common real-world flow: the marker AND the breaking change
+		// are added in the same PR. Used to be Informational (just
+		// "marker added"); now it consults the old entity's attribute
+		// text and promotes to Breaking when the value also moved.
+		Name:           "tracked_marker_added_with_value_change",
+		Subject:        "local.cluster_version.value",
+		WantKind:       diff.Breaking,
+		DetailContains: []string{"marker added", "1.34", "1.35"},
+		HintContains:   []string{"add-on compat"},
+	},
+	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
 		// Only local.suffix changes between revisions; the literal text of
 		// the attribute is unchanged. The tracked-attribute pass must

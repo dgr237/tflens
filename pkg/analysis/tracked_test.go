@@ -155,6 +155,74 @@ resource "aws_eks_cluster" "this" {
 	}
 }
 
+// TestTrackedLocalsBlockTrailingMarker confirms a marker on a local
+// declaration binds to that local as its own entity (local.<name>),
+// not to whatever entity contains the locals block (there isn't one —
+// locals lives at the top level).
+func TestTrackedLocalsBlockTrailingMarker(t *testing.T) {
+	mod := analyseFixture(t, `
+locals {
+  cluster_version = "1.34" # tflens:track: source of truth for EKS minor
+  unrelated       = "x"
+}
+`)
+	tr := mod.TrackedAttributes()
+	if len(tr) != 1 {
+		t.Fatalf("want 1 tracked attribute, got %d: %+v", len(tr), tr)
+	}
+	if tr[0].EntityID != "local.cluster_version" || tr[0].AttrName != "value" {
+		t.Errorf("unexpected key parts: entity=%q attr=%q", tr[0].EntityID, tr[0].AttrName)
+	}
+	if tr[0].ExprText != `"1.34"` {
+		t.Errorf("ExprText = %q, want %q", tr[0].ExprText, `"1.34"`)
+	}
+	if !strings.Contains(tr[0].Description, "source of truth") {
+		t.Errorf("description = %q", tr[0].Description)
+	}
+}
+
+func TestTrackedLocalsBlockOwnLineMarker(t *testing.T) {
+	mod := analyseFixture(t, `
+locals {
+  unrelated       = "x"
+  # tflens:track: own-line above the local
+  cluster_version = "1.34"
+}
+`)
+	tr := mod.TrackedAttributes()
+	if len(tr) != 1 {
+		t.Fatalf("want 1 tracked attribute, got %d: %+v", len(tr), tr)
+	}
+	if tr[0].EntityID != "local.cluster_version" {
+		t.Errorf("EntityID = %q, want local.cluster_version", tr[0].EntityID)
+	}
+}
+
+// TestTrackedLocalsBlockResolvesIndirectVarRefs confirms that markers
+// on locals still get the indirection walker's transitive var/local
+// resolution — this is the use case that justifies marking the local
+// in the first place: it's the source of truth that other things
+// derive from.
+func TestTrackedLocalsBlockResolvesIndirectVarRefs(t *testing.T) {
+	mod := analyseFixture(t, `
+variable "upgrade" {
+  type    = bool
+  default = true
+}
+
+locals {
+  cluster_version = var.upgrade ? "1.35" : "1.34" # tflens:track
+}
+`)
+	tr := mod.TrackedAttributes()
+	if len(tr) != 1 {
+		t.Fatalf("want 1 tracked attribute, got %d", len(tr))
+	}
+	if got := tr[0].Refs["variable.upgrade"]; got != "true" {
+		t.Errorf("Refs[variable.upgrade] = %q, want %q", got, "true")
+	}
+}
+
 func TestTrackedKeyStable(t *testing.T) {
 	mod := analyseFixture(t, `
 resource "aws_eks_cluster" "this" {
