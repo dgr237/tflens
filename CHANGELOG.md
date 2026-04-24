@@ -15,6 +15,7 @@ All notable changes to tflens are documented here. The format is loosely based o
 ### Added
 
 - **Automated releases on PR merge.** Adding a `release:patch`, `release:minor`, or `release:major` label to a PR before merging triggers `.github/workflows/auto-release.yml`, which computes the next version, promotes `[Unreleased]` to a versioned section, tags the commit, and creates a GitHub Release with the new section as the body. PRs without a release label are silently skipped — `[Unreleased]` entries accumulate until the next release-labelled merge.
+- **CHANGELOG-check CI workflow** (`.github/workflows/changelog-check.yml`) that fails a PR if user-visible code changed without a `CHANGELOG.md` update. Auto-skips when all changed files are tests / testdata / workflows / scripts / top-level docs. Explicit opt-out via the `no-changelog` label for refactors, dep bumps, or anything else genuinely non-user-visible.
 - **`scripts/release.sh` + `make release` / `make release-push` targets** for the manual release path (run from a maintainer's checkout when cutting a release that bundles already-merged PRs).
 - **`.github/workflows/release.yml`** that fires on manually-pushed `vX.Y.Z` tags and creates the matching GitHub Release.
 - `SECURITY.md` defining the reporting channel (GitHub private security advisories), supported-versions policy, and scope (credential leakage, path traversal, parser DoS in scope; Terraform itself and hostile git-source fetches out).

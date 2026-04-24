@@ -1,0 +1,99 @@
+name: Changelog check
+
+# Every PR to main must either update CHANGELOG.md or opt out
+# explicitly. The opt-outs are:
+#
+#   1. The `no-changelog` label — for pure refactors, dependency
+#      bumps with no user-visible effect, etc.
+#   2. All changed files fall under a skip-list: test files, testdata,
+#      workflow files, scripts, top-level Markdown. These never need
+#      a CHANGELOG entry.
+#
+# Re-runs on label changes so adding/removing `no-changelog` takes
+# effect without pushing a new commit.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check CHANGELOG.md was updated or PR opted out
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          if printf '%s' "$LABELS" | jq -e 'any(. == "no-changelog")' >/dev/null; then
+            echo "::notice::PR has 'no-changelog' label — skipping CHANGELOG check."
+            exit 0
+          fi
+
+          # The PR's effective diff range — merge-base catches the
+          # case where main has moved forward since the PR branched.
+          base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          changed=$(git diff --name-only "$base" "$HEAD_SHA")
+
+          if [ -z "$changed" ]; then
+            echo "::warning::No file changes detected in the PR."
+            exit 0
+          fi
+
+          if printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "CHANGELOG.md was updated — check passes."
+            exit 0
+          fi
+
+          # All-files-skippable check: a PR that only touches tests,
+          # testdata, workflow files, scripts, or top-level docs
+          # doesn't need a CHANGELOG entry. Anything else (pkg/,
+          # cmd/, go.mod, go.sum, …) does.
+          all_skippable=true
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              *_test.go) ;;
+              */testdata/*) ;;
+              .github/*) ;;
+              scripts/*) ;;
+              *.md) ;;
+              LICENSE) ;;
+              .gitignore) ;;
+              Makefile) ;;
+              *)
+                all_skippable=false
+                break
+                ;;
+            esac
+          done <<< "$changed"
+
+          if [ "$all_skippable" = true ]; then
+            echo "::notice::Only test / testdata / workflow / scripts / docs files changed — CHANGELOG not required."
+            exit 0
+          fi
+
+          echo "::error::User-visible code changed but CHANGELOG.md was not updated."
+          echo
+          echo "Either:"
+          echo "  1. Add an entry under '## [Unreleased]' in CHANGELOG.md"
+          echo "     (grouped by Added / Changed / Deprecated / Removed / Fixed / Security)"
+          echo "  2. Apply the 'no-changelog' label if this PR genuinely doesn't"
+          echo "     need one (refactor, internal cleanup, dep bump with no behaviour change)"
+          echo
+          echo "See CONTRIBUTING.md for format guidance."
+          echo
+          echo "Files changed in this PR:"
+          printf '%s\n' "$changed" | sed 's/^/  /'
+          exit 1
