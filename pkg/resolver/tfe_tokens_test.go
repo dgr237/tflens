@@ -18,6 +18,10 @@ tokens:
     token: tok2
   - address: bare.example.com:8443
     token: tok3
+  - address: https://defaultport.example.com:443
+    token: tok4
+  - address: http://insecure.example.com:80
+    token: tok5
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -27,10 +31,12 @@ tokens:
 		t.Fatalf("LoadTfeTokensFrom: %v", err)
 	}
 	cases := map[string]string{
-		"tfe.example.com":       "tok1",
-		"other.tfe.example.com": "tok2",
-		"bare.example.com:8443": "tok3",
-		"unknown.example.com":   "",
+		"tfe.example.com":            "tok1",
+		"other.tfe.example.com":      "tok2",
+		"bare.example.com:8443":      "tok3",
+		"defaultport.example.com":    "tok4", // :443 stripped because scheme is https
+		"insecure.example.com":       "tok5", // :80 stripped because scheme is http
+		"unknown.example.com":        "",
 	}
 	for host, want := range cases {
 		if got := c.Token(host); got != want {
