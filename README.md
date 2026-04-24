@@ -458,6 +458,8 @@ Pick the highest-leverage spot for your scenario:
 
 **Cross-module resolution:** when `tflens diff` runs against a project that contains module calls, a marker in a child module is also resolved through the parent's call argument. A marker on `cluster_version = var.cluster_version # tflens:track` *inside a child module* will catch a parent-side change like `local.cluster_version` being made conditional or a new variable's default flowing in — the diff climbs through the parent's `module "<name>" { cluster_version = ... }` argument and walks any locals/vars it transitively references on the parent's side. Parent-side refs appear in the diff output prefixed with `parent.` so reviewers can tell which side of the boundary moved.
 
+**Effective-value awareness:** when the literal text of an expression changes but it evaluates to the same constant (e.g. `"1.34"` on the old side vs `var.upgrade ? "1.35" : "1.34"` with `var.upgrade = false` on the new side, both yielding `"1.34"`), the diff suppresses the value-change detail. The marker still surfaces *what's new* (a freshly-referenced variable, for example) as Informational supporting context — useful for reviewers to know what's wired in — but won't gate CI as Breaking unless the effective value actually moved. Evaluation goes through known variable defaults and local values; expressions using Terraform-specific functions (`length`, `contains`, `keys`, …) fall back to text comparison since the cty stdlib doesn't include them.
+
 ### Where it works
 
 - **Root module** — annotated attributes in any `.tf` file at the project root are diffed against the same path at the base ref.

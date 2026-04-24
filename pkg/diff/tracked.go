@@ -5,6 +5,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
@@ -62,6 +66,18 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 	oldTracked := expandThroughParent(indexTracked(oldMod), ctx.OldParent, ctx.CallName)
 	newTracked := expandThroughParent(indexTracked(newMod), ctx.NewParent, ctx.CallName)
 
+	// Pre-build evaluation contexts so we can collapse text-different
+	// expressions whose effective values agree (e.g. `"1.34"` on the
+	// old side vs `var.upgrade ? "1.35" : "1.34"` with var.upgrade=false
+	// on the new side both evaluate to "1.34"). Built once per side per
+	// diff invocation.
+	ec := evalCtxs{
+		oldChild:  evalContextOf(oldMod),
+		newChild:  evalContextOf(newMod),
+		oldParent: evalContextOf(ctx.OldParent),
+		newParent: evalContextOf(ctx.NewParent),
+	}
+
 	keys := map[string]struct{}{}
 	for k := range oldTracked {
 		keys[k] = struct{}{}
@@ -104,9 +120,17 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 			//      on a resource attribute (which we can't diff
 			//      directly) but the underlying local changed or a
 			//      newly-introduced variable took effect.
+			// Distinguish actual value changes (which justify Breaking)
+			// from ref-existence reorganisations (a new variable has
+			// appeared, but if its value doesn't ripple into the
+			// tracked attribute's effective output, it's just context).
 			var details []string
+			hasValueChange := false
 			if oldText, located := oldMod.LookupAttrText(n.EntityID, n.AttrName); located && oldText != n.ExprText {
-				details = append(details, fmt.Sprintf("value %s → %s", display(oldText), display(n.ExprText)))
+				if !equivalentByEval(oldText, n.ExprText, ec.oldChild, ec.newChild) {
+					details = append(details, fmt.Sprintf("value %s → %s", display(oldText), display(n.ExprText)))
+					hasValueChange = true
+				}
 			}
 			for _, id := range n.SortedRefIDs() {
 				newRefText := n.Refs[id]
@@ -115,10 +139,15 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 				case !oldLocated:
 					details = append(details, fmt.Sprintf("now references %s = %s", id, display(newRefText)))
 				case oldRefText != newRefText:
+					if equivalentByEval(oldRefText, newRefText, ec.ctxFor(id, true), ec.ctxFor(id, false)) {
+						continue
+					}
 					details = append(details, fmt.Sprintf("%s changed: %s → %s", id, display(oldRefText), display(newRefText)))
+					hasValueChange = true
 				}
 			}
-			if len(details) > 0 {
+			switch {
+			case hasValueChange:
 				details = append([]string{"tracked-attribute marker added"}, details...)
 				changes = append(changes, Change{
 					Kind:    Breaking,
@@ -127,7 +156,22 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 					Hint:    n.Description,
 					NewPos:  n.Pos,
 				})
-			} else {
+			case len(details) > 0:
+				// Marker added AND new refs appeared, but nothing
+				// actually changes the effective value (e.g. a new
+				// variable whose default keeps the conditional in the
+				// same branch). Informational with the refs as
+				// supporting context — useful for the reviewer to see
+				// what's new, but not gating CI.
+				details = append([]string{"tracked-attribute marker added"}, details...)
+				changes = append(changes, Change{
+					Kind:    Informational,
+					Subject: key,
+					Detail:  strings.Join(details, "; "),
+					Hint:    n.Description,
+					NewPos:  n.Pos,
+				})
+			default:
 				changes = append(changes, Change{
 					Kind:    Informational,
 					Subject: key,
@@ -137,12 +181,16 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 				})
 			}
 		default:
-			diffs := compareTracked(o, n)
+			diffs, hasValueChange := compareTrackedWithEval(o, n, ec)
 			if len(diffs) == 0 {
 				continue
 			}
+			kind := Informational
+			if hasValueChange {
+				kind = Breaking
+			}
 			changes = append(changes, Change{
-				Kind:    Breaking,
+				Kind:    kind,
 				Subject: key,
 				Detail:  strings.Join(diffs, "; "),
 				Hint:    n.Description,
@@ -269,13 +317,20 @@ func indexTracked(m *analysis.Module) map[string]analysis.TrackedAttribute {
 	return out
 }
 
-// compareTracked returns one diff string per changed surface (the
-// attribute itself, plus each transitively-referenced var/local). Empty
-// when nothing changed. Ordered: attribute first, then refs sorted by ID.
-func compareTracked(o, n analysis.TrackedAttribute) []string {
-	var diffs []string
-	if o.ExprText != n.ExprText {
+// compareTrackedWithEval returns one diff string per changed surface
+// (the attribute itself, plus each transitively-referenced var/local).
+// hasValueChange reports whether at least one of those diffs is an
+// actual value change rather than a ref-existence reorganisation —
+// callers use this to choose between Breaking and Informational. Empty
+// diffs slice + false means nothing changed.
+//
+// When evaluation contexts are supplied, two text-different
+// expressions that evaluate to the same cty.Value are treated as
+// equal (constant folding through known var/local bindings).
+func compareTrackedWithEval(o, n analysis.TrackedAttribute, ec evalCtxs) (diffs []string, hasValueChange bool) {
+	if o.ExprText != n.ExprText && !equivalentByEval(o.ExprText, n.ExprText, ec.oldChild, ec.newChild) {
 		diffs = append(diffs, fmt.Sprintf("value %s → %s", display(o.ExprText), display(n.ExprText)))
+		hasValueChange = true
 	}
 	refIDs := unionSortedRefIDs(o.Refs, n.Refs)
 	for _, id := range refIDs {
@@ -287,10 +342,87 @@ func compareTracked(o, n analysis.TrackedAttribute) []string {
 		case !oOK && nOK:
 			diffs = append(diffs, fmt.Sprintf("now references %s = %s", id, display(nv)))
 		case ov != nv:
+			if equivalentByEval(ov, nv, ec.ctxFor(id, true), ec.ctxFor(id, false)) {
+				continue
+			}
 			diffs = append(diffs, fmt.Sprintf("%s changed: %s → %s", id, display(ov), display(nv)))
+			hasValueChange = true
 		}
 	}
-	return diffs
+	return diffs, hasValueChange
+}
+
+// evalCtxs bundles the four evaluation contexts a diff might consult:
+// child (the module containing the tracked attribute) and parent
+// (when tracked refs flow through a module call). Each side may be nil
+// when the corresponding module is unavailable; equivalentByEval
+// degrades gracefully and returns false in that case.
+type evalCtxs struct {
+	oldChild, newChild   *hcl.EvalContext
+	oldParent, newParent *hcl.EvalContext
+}
+
+// ctxFor returns the appropriate context for a ref id and side. Refs
+// prefixed with "parent." resolve in the parent's context; everything
+// else in the child's. The old bool selects old vs new side.
+func (e evalCtxs) ctxFor(id string, old bool) *hcl.EvalContext {
+	parent := strings.HasPrefix(id, "parent.")
+	switch {
+	case parent && old:
+		return e.oldParent
+	case parent && !old:
+		return e.newParent
+	case old:
+		return e.oldChild
+	default:
+		return e.newChild
+	}
+}
+
+// evalContextOf is a nil-safe wrapper around Module.EvalContext().
+func evalContextOf(m *analysis.Module) *hcl.EvalContext {
+	if m == nil {
+		return nil
+	}
+	return m.EvalContext()
+}
+
+// equivalentByEval reports whether two expression texts evaluate to
+// the same cty.Value under the given contexts. Returns false when
+// either text is empty, parsing fails, or evaluation produces a
+// diagnostic — in which case the caller should fall back to text
+// comparison. The texts must already be different; identical text is
+// the caller's responsibility (and short-circuits trivially).
+func equivalentByEval(oldText, newText string, oldCtx, newCtx *hcl.EvalContext) bool {
+	if oldText == "" || newText == "" {
+		return false
+	}
+	oldVal, ok := tryEvalText(oldText, oldCtx)
+	if !ok {
+		return false
+	}
+	newVal, ok := tryEvalText(newText, newCtx)
+	if !ok {
+		return false
+	}
+	return oldVal.RawEquals(newVal)
+}
+
+// tryEvalText parses text as an hcl expression and evaluates it in
+// ctx. Returns (cty.NilVal, false) on any parse or eval diagnostic,
+// or when the result is null. Used to detect "different text, same
+// effective value" via constant folding through known var/local
+// bindings.
+func tryEvalText(text string, ctx *hcl.EvalContext) (cty.Value, bool) {
+	expr, diags := hclsyntax.ParseExpression([]byte(text), "<ref>", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		return cty.NilVal, false
+	}
+	val, diags := expr.Value(ctx)
+	if diags.HasErrors() || val.IsNull() {
+		return cty.NilVal, false
+	}
+	return val, true
 }
 
 func unionSortedRefIDs(a, b map[string]string) []string {
