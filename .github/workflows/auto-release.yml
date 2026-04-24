@@ -163,8 +163,19 @@ jobs:
         if: steps.version.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          # The body is injected via env var rather than ${{ }}
+          # template substitution. Template values are pasted
+          # LITERALLY into the run: script at parse time — any
+          # backticks or $VAR in the changelog (and there are many)
+          # would then be shell-interpreted as command substitution
+          # / variable expansion, mangling the notes and flooding
+          # the log with "command not found" errors. Env-var
+          # expansion in bash doesn't interpret content inside the
+          # variable's value, so "$BODY" stays verbatim.
+          BODY: ${{ steps.notes.outputs.body }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --notes "${{ steps.notes.outputs.body }}" \
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes "$BODY" \
             --verify-tag
