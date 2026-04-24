@@ -119,12 +119,17 @@ var crossModuleCases = []crossModuleCase{
 		// effective tracked value didn't move; eval suppression
 		// should demote to Informational with the new variable as
 		// supporting context. Mirrors the "stage the upgrade flag
-		// without flipping it yet" workflow.
+		// without flipping it yet" workflow. The detail must
+		// include the "text changes collapsed" clause so a reviewer
+		// understands WHY this isn't Breaking even though a new
+		// variable appeared.
 		Name:     "parent_change_eval_unchanged",
 		Subject:  "resource.aws_eks_cluster.this.cluster_version",
 		WantKind: diff.Informational,
 		DetailContains: []string{
 			"marker added",
+			"text changes collapsed",
+			"same effective value",
 			"now references parent.variable.upgrade", "false",
 		},
 		DetailExcludes: []string{
@@ -412,6 +417,7 @@ var trackedCases = []trackedCase{
 		WantKind: diff.Informational,
 		DetailContains: []string{
 			"marker added",
+			"text changes collapsed",
 			"now references variable.upgrade", "false",
 		},
 		HintContains: []string{"add-on compat"},
