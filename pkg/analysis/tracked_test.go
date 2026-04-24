@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
@@ -261,4 +263,195 @@ func TestTrackedRefsSortedRefIDsDeterministic(t *testing.T) {
 			t.Errorf("SortedRefIDs[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
+}
+
+// TestTrackedHelperCases is the table-driven entry point for the
+// LookupAttrText / EvalContext / GatherRefsFromExpr helpers that
+// tracked-attribute resolution and pkg/diff's tracked diff layer
+// use. Each case loads testdata/tracked/<Name>/main.tf and runs a
+// per-case Custom assertion. Cases that don't need a fixture (nil-
+// receiver paths) leave NoFixture=true.
+func TestTrackedHelperCases(t *testing.T) {
+	for _, tc := range trackedHelperCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			var m *analysis.Module
+			if !tc.NoFixture {
+				src := loadAnalysisFixture(t, "tracked", tc.Name)
+				m = analyseFixtureNamed(t, "main.tf", src)
+			}
+			tc.Custom(t, m)
+		})
+	}
+}
+
+type trackedHelperCase struct {
+	Name      string
+	NoFixture bool // skip fixture load (nil-receiver tests)
+	Custom    func(t *testing.T, m *analysis.Module)
+}
+
+var trackedHelperCases = []trackedHelperCase{
+	{
+		Name: "lookup_attr_locals_outputs",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			expectLookup(t, m, "local.cluster_version", "value", `"1.34"`, true)
+			expectLookup(t, m, "local.cluster_version", "cluster_version", `"1.34"`, true)
+			expectLookup(t, m, "output.name", "value", `"prod"`, true)
+		},
+	},
+	{
+		Name: "lookup_attr_variable_default",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			expectLookup(t, m, "variable.with_def", "default", `"x"`, true)
+			// Declared but no default → ("", true), distinct from unknown.
+			expectLookup(t, m, "variable.without_def", "default", "", true)
+		},
+	},
+	{
+		Name: "lookup_attr_module_arg",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			expectLookup(t, m, "module.kid", "passed", `"hello"`, true)
+			// An unpassed arg legitimately doesn't exist on the entity.
+			expectLookup(t, m, "module.kid", "not_passed", "", false)
+		},
+	},
+	{
+		Name: "lookup_attr_resource_metas",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			cases := []struct{ id, attr string }{
+				{"resource.aws_instance.all_metas", "count"},
+				{"resource.aws_instance.all_metas", "depends_on"},
+				{"resource.aws_instance.all_metas", "provider"},
+				{"resource.aws_instance.all_metas", "ignore_changes"},
+				{"resource.aws_instance.all_metas", "replace_triggered_by"},
+				{"resource.aws_instance.by_each", "for_each"},
+			}
+			for _, c := range cases {
+				got, ok := m.LookupAttrText(c.id, c.attr)
+				if !ok || got == "" {
+					t.Errorf("LookupAttrText(%q, %q) = (%q, %v), want non-empty + true",
+						c.id, c.attr, got, ok)
+				}
+			}
+		},
+	},
+	{
+		Name: "lookup_attr_unknown",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			expectLookup(t, m, "variable.nonexistent", "default", "", false)
+			expectLookup(t, m, "variable.v", "no_such_attr", "", false)
+		},
+	},
+	{
+		Name: "eval_context_var_local",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			ctx := m.EvalContext()
+			if got := evalToString(t, ctx, "local.label"); got != "size-6" {
+				t.Errorf("local.label = %q, want %q", got, "size-6")
+			}
+			if got := evalToString(t, ctx, "var.size"); got != "3" {
+				t.Errorf("var.size = %q, want %q", got, "3")
+			}
+		},
+	},
+	{
+		Name: "eval_context_unevaluable",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			ctx := m.EvalContext()
+			if ctx == nil {
+				t.Fatal("EvalContext returned nil")
+			}
+			// var.ok must be present and evaluable.
+			if got := evalToString(t, ctx, "var.ok"); got != "yes" {
+				t.Errorf("var.ok = %q, want %q", got, "yes")
+			}
+		},
+	},
+	{
+		Name:      "eval_context_nil_receiver",
+		NoFixture: true,
+		Custom: func(t *testing.T, _ *analysis.Module) {
+			var nilMod *analysis.Module
+			ctx := nilMod.EvalContext()
+			if ctx == nil {
+				t.Fatal("expected non-nil EvalContext for nil receiver")
+			}
+			if len(ctx.Variables) != 0 {
+				t.Errorf("expected empty Variables, got %v", ctx.Variables)
+			}
+		},
+	},
+	{
+		Name: "gather_refs_var_local",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			var expr *analysis.Expr
+			for _, e := range m.Filter(analysis.KindOutput) {
+				if e.Name == "summary" {
+					expr = e.ValueExpr
+				}
+			}
+			if expr == nil {
+				t.Fatal("missing output.summary expr")
+			}
+			refs := m.GatherRefsFromExpr(expr)
+			if got := refs["variable.name"]; got != `"prod"` {
+				t.Errorf(`refs["variable.name"] = %q, want "\"prod\""`, got)
+			}
+			if got := refs["local.region"]; got != `"us-east-1"` {
+				t.Errorf(`refs["local.region"] = %q, want "\"us-east-1\""`, got)
+			}
+		},
+	},
+	{
+		Name:      "gather_refs_nil_inputs",
+		NoFixture: true,
+		Custom: func(t *testing.T, _ *analysis.Module) {
+			var nilMod *analysis.Module
+			if got := nilMod.GatherRefsFromExpr(nil); got == nil || len(got) != 0 {
+				t.Errorf("nil receiver + nil expr = %v", got)
+			}
+		},
+	},
+	{
+		Name: "gather_refs_real_module_nil_expr",
+		Custom: func(t *testing.T, m *analysis.Module) {
+			if got := m.GatherRefsFromExpr(nil); got == nil || len(got) != 0 {
+				t.Errorf("real receiver + nil expr = %v", got)
+			}
+			if got := m.GatherRefsFromExpr(&analysis.Expr{}); got == nil || len(got) != 0 {
+				t.Errorf("real receiver + zero Expr = %v", got)
+			}
+		},
+	},
+}
+
+// expectLookup runs LookupAttrText and asserts both return values.
+func expectLookup(t *testing.T, m *analysis.Module, id, attr, wantText string, wantOK bool) {
+	t.Helper()
+	got, ok := m.LookupAttrText(id, attr)
+	if got != wantText || ok != wantOK {
+		t.Errorf("LookupAttrText(%q, %q) = (%q, %v), want (%q, %v)",
+			id, attr, got, ok, wantText, wantOK)
+	}
+}
+
+// evalToString evaluates `expr` against ctx and returns its text form.
+// Numbers come back as their decimal string; strings as the raw string.
+// Used by the EvalContext cases to assert effective values without
+// hand-rolling a hcl evaluation harness in each case.
+func evalToString(t *testing.T, ctx *hcl.EvalContext, expr string) string {
+	t.Helper()
+	parsed := parseToFile(t, "expr.tf", `output "x" { value = `+expr+` }`)
+	if len(parsed.Body.Blocks) == 0 {
+		t.Fatalf("no blocks parsed from expr %q", expr)
+	}
+	b := parsed.Body.Blocks[0]
+	v, diags := b.Body.Attributes["value"].Expr.Value(ctx)
+	if diags.HasErrors() {
+		t.Fatalf("evaluating %s: %v", expr, diags)
+	}
+	if v.Type().FriendlyName() == "number" {
+		return v.AsBigFloat().Text('f', -1)
+	}
+	return v.AsString()
 }
