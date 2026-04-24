@@ -59,8 +59,8 @@ tflens --offline diff --ref main ./my-tf
 | `graph <path>` | Emit the dependency graph in Graphviz DOT format |
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
-| `diff [path]` | **Author view** — what changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Classifies each change as Breaking, NonBreaking, or Informational. Use this when reviewing a module release. |
-| `whatif [path] [name]` | **Consumer view** — does *my parent* break under the working tree's module changes vs `--ref` (default `auto`)? Cross-validates the parent's argument set against the candidate child's variables; only flags changes that actually affect this caller. Optional `name` scopes to one module call. |
+| `diff [path]` | What changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Behaviour depends on the child's `source`: **local children** (`./…`, `../…`) are evaluated against your parent's actual usage (only consumption errors surface as Breaking — no API noise); **registry/git children** report the full API diff (publisher's release contract). |
+| `whatif [path] [name]` | Like `diff` but **always** consumer-view, regardless of source type. Cross-validates the parent's argument set and output references against the candidate child; only flags changes that actually affect this caller. Use this to gate any external-module upgrade. Optional `name` scopes to one module call. |
 | `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
@@ -132,15 +132,20 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 
 ## Diff (`diff`)
 
-`diff` is the **author view**: it answers *what changed in module APIs between the working tree and the base ref?* — independent of any particular caller. Use it when you're publishing or reviewing a module release; pair it with `whatif` (below) when you're consuming a module and want to know whether *your specific caller* breaks.
-
 ```
 tflens diff [path] [--ref <base>]
 ```
 
 `path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command pairs every module call between the two trees by dotted key (e.g. `vpc.sg`) and diffs each child module resolved on each side.
 
-Every detected change is classified as one of three kinds; exits non-zero when any Breaking changes exist (suitable for CI gating):
+The classification depends on **how the child is sourced**:
+
+- **Local children** (`source = "./…"` or `"../…"`) — internal to this repo. Their API is implementation detail; only the parent's actual consumption is observable. `diff` runs cross-validation of the new parent against the new child and reports a Breaking change only when the parent's usage is broken (passes an unknown arg, fails to pass a now-required input, or references a removed `module.<name>.<output>`). Renaming a variable that the parent updated atomically is silent.
+- **Registry / git children** — published by someone else (or by you, in a release). The publisher owns breaking-change discipline. `diff` reports the full API diff (every variable / output / type / lifecycle change) classified as Breaking, NonBreaking, or Informational. A removed variable shows up regardless of whether your specific parent passed it.
+
+Both modes exit non-zero when any Breaking changes exist (suitable for CI gating).
+
+Classifications used for registry/git children:
 
 - **Breaking** — existing callers or state will be affected
 - **NonBreaking** — safe to upgrade through
@@ -277,17 +282,17 @@ This is strictly more focused than `diff`. A child module can ship many "Breakin
 
 ### `whatif` vs `diff`
 
-Both compare the path against a git base. The difference is what they report:
+Both compare the path against a git base. After the source-type rules above, they overlap on local-source children — both ask "does the parent's usage still work?". The difference is on **registry / git children**:
 
-| | `diff` | `whatif` |
+| Child source | `diff` | `whatif` |
 |---|---|---|
-| Question | What changed in the child module's API? | Does my parent break under the upgrade? |
-| Audience | Module author | Module consumer |
-| Reports | Every Breaking/NonBreaking change in the child | Only the changes that affect the caller's usage |
-| False-positive risk | "Variable X removed" even when the parent never passed X | None — cross-validation suppresses no-op changes |
-| Use for | Reviewing a release in isolation | Gating a PR that bumps a dependency |
+| Local (`./…`, `../…`) | Consumer view (cross-validate parent vs new child) | Consumer view (same) |
+| Registry / git | Author view (full API diff classified by API-shape rules) | Consumer view (cross-validate parent vs new child; suppresses changes that don't affect this caller) |
 
-For a single-repo monorepo where the same author wrote both the child and the parent, the two commands often agree. For shared/vendored modules with multiple callers, `whatif` will be quieter and more actionable.
+In CI:
+
+- `tflens diff` for the broad question "anything changed I should know about?" — quiet on local internals you've updated atomically, loud on registry-module API drift.
+- `tflens whatif` when you want to gate a PR strictly on "will this break MY usage?" — quiet on every module-call upgrade that your parent absorbs cleanly, regardless of how the child is sourced.
 
 ## State-level hazard detection (`statediff`)
 

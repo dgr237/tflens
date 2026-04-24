@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/resolver"
 )
 
 var diffCmd = &cobra.Command{
@@ -72,7 +74,16 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 	for _, p := range pairs {
 		r := refModuleResult{pair: p}
 		if p.status == statusChanged && p.oldNode != nil && p.newNode != nil {
-			r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
+			// Local-source children are owned by this repo: their API is
+			// implementation detail and only the parent's consumption
+			// matters. External (registry/git) children come from a
+			// publisher who's responsible for breaking-change discipline,
+			// so we surface every API change.
+			if resolver.IsLocalSource(p.newSource) {
+				r.changes = consumptionChangesForLocal(p)
+			} else {
+				r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
+			}
 			for _, c := range r.changes {
 				if c.Kind == diff.Breaking {
 					totalBreaking++
@@ -92,6 +103,35 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// consumptionChangesForLocal turns cross_validate findings against the
+// new parent + new child into diff.Change entries. Used in place of
+// diff.Diff for local-source ("internal") children, where the child's
+// API is implementation detail and only the parent's consumption is
+// observable.
+//
+// Returns an empty slice when the parent's usage is consistent — i.e.
+// every required child variable is passed, no unknown args, types
+// compatible, and every module.<name>.<output> reference still resolves.
+func consumptionChangesForLocal(p modulePair) []diff.Change {
+	if p.newParent == nil {
+		return nil
+	}
+	cvErrs := loader.CrossValidateCall(p.newParent.Module, p.localName, p.newNode.Module)
+	if len(cvErrs) == 0 {
+		return nil
+	}
+	out := make([]diff.Change, 0, len(cvErrs))
+	for _, e := range cvErrs {
+		out = append(out, diff.Change{
+			Kind:    diff.Breaking,
+			Subject: e.EntityID,
+			Detail:  e.Msg,
+			NewPos:  e.Pos,
+		})
+	}
+	return out
 }
 
 // refModuleResult is the per-module-call result of a branch diff.

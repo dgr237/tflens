@@ -53,7 +53,14 @@ func CrossValidate(project *Project) []analysis.ValidationError {
 }
 
 // checkModuleCall compares one module call (mb, a KindModule entity on the
-// parent) against its child module's variable declarations.
+// parent) against its child module's variable and output declarations.
+// The check covers both directions of the contract:
+//
+//   - Inputs: every required child variable is passed; no unknown args;
+//     argument types are compatible with the child's type constraints.
+//   - Outputs: every module.<callName>.<outputName> reference in the
+//     parent's expressions still resolves to an output the new child
+//     declares.
 func checkModuleCall(parent *analysis.Module, mb analysis.Entity, child *analysis.Module) []analysis.ValidationError {
 	var errs []analysis.ValidationError
 
@@ -112,6 +119,25 @@ func checkModuleCall(parent *analysis.Module, mb analysis.Entity, child *analysi
 					mb.ID(), name, inferred, v.DeclaredType),
 			})
 		}
+	}
+
+	// 4. Output references in the parent that target outputs the new
+	//    child no longer declares.
+	childOutputs := map[string]bool{}
+	for _, o := range child.Filter(analysis.KindOutput) {
+		childOutputs[o.Name] = true
+	}
+	for _, refOut := range parent.ModuleOutputReferences(mb.Name) {
+		if childOutputs[refOut] {
+			continue
+		}
+		errs = append(errs, analysis.ValidationError{
+			EntityID: mb.ID(),
+			Ref:      fmt.Sprintf("module.%s.%s", mb.Name, refOut),
+			Pos:      mb.Pos,
+			Msg: fmt.Sprintf("%s references module.%s.%s but the child module declares no such output",
+				mb.ID(), mb.Name, refOut),
+		})
 	}
 	return errs
 }
