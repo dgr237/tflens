@@ -24,7 +24,15 @@ func (LocalResolver) Resolve(_ context.Context, ref Ref) (*Resolved, error) {
 	return &Resolved{Dir: dir, Kind: KindLocal}, nil
 }
 
-// isLocalSource reports whether a Terraform module source is a local path.
-func isLocalSource(source string) bool {
+// IsLocalSource reports whether a Terraform module source is a local
+// path (relative to the parent module). Terraform's spec for local
+// sources is "starts with ./ or ../"; absolute paths are not allowed.
+// Exported so callers (notably cmd/diff) can classify a child module's
+// origin without depending on resolver internals.
+func IsLocalSource(source string) bool {
 	return strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")
 }
+
+// isLocalSource is kept as a package-private alias for the existing
+// internal callers in this package.
+func isLocalSource(source string) bool { return IsLocalSource(source) }

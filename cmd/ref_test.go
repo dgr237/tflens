@@ -175,7 +175,11 @@ func makeRefTestRepo(t *testing.T) string {
 	return parent
 }
 
-func TestDiffRefReportsBreakingLocalChange(t *testing.T) {
+// makeRefTestRepo updates the parent's call atomically (passes y instead
+// of x), so under the consumer-view rule for local-source children
+// `diff` should report NO breaking change — the parent's usage is
+// consistent with the new child's API.
+func TestDiffRefLocalChangeWithAtomicUpdateIsNotBreaking(t *testing.T) {
 	ws := makeRefTestRepo(t)
 	bin := buildTflens(t)
 
@@ -184,40 +188,212 @@ func TestDiffRefReportsBreakingLocalChange(t *testing.T) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	// Non-zero exit is expected (breaking change present).
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-		t.Fatalf("expected exit 1 for breaking change, got err=%v\nstderr=%s", err, stderr.String())
+	if err != nil {
+		t.Fatalf("expected exit 0 (parent's usage is consistent), got err=%v\nstderr=%s", err, stderr.String())
 	}
 
 	var out refJSON
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
-	if out.BaseRef != "main" {
-		t.Errorf("base_ref = %q, want main", out.BaseRef)
+	for _, m := range out.Modules {
+		if m.Summary.Breaking != 0 {
+			t.Errorf("module %s: expected no breaking changes for local-source child with atomic parent update, got summary=%+v changes=%+v",
+				m.Name, m.Summary, m.Changes)
+		}
+	}
+}
+
+// makeRefTestRepoBrokenLocal builds a variant of makeRefTestRepo where
+// the child renames its required var x → y but the parent forgets to
+// update. Under the consumer-view rule the cross-validation finds two
+// problems: the parent passes an unknown arg "x" AND fails to pass
+// required "y". Both surface as Breaking.
+func makeRefTestRepoBrokenLocal(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+
+	parent := filepath.Join(repo, "workspace")
+	child := filepath.Join(parent, "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(parent, "main.tf"),
+		"module \"child\" {\n  source = \"./child\"\n  x      = \"initial\"\n}\n")
+	write(filepath.Join(child, "variables.tf"),
+		"variable \"x\" {\n  type = string\n}\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "main version")
+	run("checkout", "-q", "-b", "feature")
+	// Child renamed x → y, but parent still passes x.
+	write(filepath.Join(child, "variables.tf"),
+		"variable \"y\" {\n  type = string\n}\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "feature: rename x → y, parent NOT updated")
+	return parent
+}
+
+// makeRefTestRepoOutputRef builds a repo where the child's output is
+// renamed AND the parent's reference is updated atomically — should be
+// non-breaking for diff (and vice-versa for the broken case).
+func makeRefTestRepoOutputRef(t *testing.T, parentUpdated bool) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+	parent := filepath.Join(repo, "workspace")
+	child := filepath.Join(parent, "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// main: child exposes output "id", parent uses module.child.id.
+	write(filepath.Join(parent, "main.tf"),
+		"module \"child\" { source = \"./child\" }\n"+
+			"output \"vpc_id\" { value = module.child.id }\n")
+	write(filepath.Join(child, "main.tf"),
+		"output \"id\" { value = \"vpc-12345\" }\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "main")
+
+	run("checkout", "-q", "-b", "feature")
+	// feature: child renames output id → vpc_id.
+	write(filepath.Join(child, "main.tf"),
+		"output \"vpc_id\" { value = \"vpc-12345\" }\n")
+	if parentUpdated {
+		write(filepath.Join(parent, "main.tf"),
+			"module \"child\" { source = \"./child\" }\n"+
+				"output \"vpc_id\" { value = module.child.vpc_id }\n")
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "feature: rename child output id → vpc_id")
+	return parent
+}
+
+func TestDiffRefOutputRenamedAtomicallyIsNotBreaking(t *testing.T) {
+	ws := makeRefTestRepoOutputRef(t, true)
+	bin := buildTflens(t)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected exit 0 (parent reference updated), got err=%v\nstderr=%s", err, stderr.String())
+	}
+	var out refJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
+	}
+	for _, m := range out.Modules {
+		if m.Summary.Breaking != 0 {
+			t.Errorf("module %s: expected no breaking changes, got %+v", m.Name, m)
+		}
+	}
+}
+
+func TestDiffRefOutputRemovedWhileParentReferencesIsBreaking(t *testing.T) {
+	ws := makeRefTestRepoOutputRef(t, false)
+	bin := buildTflens(t)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 (parent still references removed output), got err=%v\nstderr=%s", err, stderr.String())
+	}
+	var out refJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
+	}
+	saw := false
+	for _, m := range out.Modules {
+		for _, c := range m.Changes {
+			if strings.Contains(c.Detail, "module.child.id") && strings.Contains(c.Detail, "no such output") {
+				saw = true
+			}
+		}
+	}
+	if !saw {
+		t.Errorf("expected a 'module.child.id ... no such output' message, got: %+v", out.Modules)
+	}
+}
+
+func TestDiffRefLocalChangeWithBrokenParentIsBreaking(t *testing.T) {
+	ws := makeRefTestRepoBrokenLocal(t)
+	bin := buildTflens(t)
+
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", "--format=json", ws)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit 1 (parent's usage is broken), got err=%v\nstderr=%s", err, stderr.String())
+	}
+
+	var out refJSON
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
 	if len(out.Modules) != 1 {
 		t.Fatalf("expected 1 module entry, got %d: %+v", len(out.Modules), out.Modules)
 	}
 	child := out.Modules[0]
-	if child.Name != "child" {
-		t.Errorf("name = %q, want child", child.Name)
-	}
-	if child.Status != "changed" {
-		t.Errorf("status = %q, want changed", child.Status)
-	}
 	if child.Summary.Breaking == 0 {
-		t.Errorf("expected breaking changes, summary = %+v", child.Summary)
+		t.Errorf("expected breaking changes (parent passes unknown x, missing required y), got summary=%+v", child.Summary)
 	}
-	// Look for a change that mentions 'x' (the removed variable).
-	foundX := false
+	sawUnknownX, sawMissingY := false, false
 	for _, c := range child.Changes {
-		if strings.Contains(c.Subject, "variable.x") || strings.Contains(c.Detail, "\"x\"") {
-			foundX = true
+		if strings.Contains(c.Detail, "unknown argument") && strings.Contains(c.Detail, "\"x\"") {
+			sawUnknownX = true
+		}
+		if strings.Contains(c.Detail, "required input") && strings.Contains(c.Detail, "\"y\"") {
+			sawMissingY = true
 		}
 	}
-	if !foundX {
-		t.Errorf("expected a change referencing x, got: %+v", child.Changes)
+	if !sawUnknownX {
+		t.Errorf("expected an 'unknown argument x' message, got: %+v", child.Changes)
+	}
+	if !sawMissingY {
+		t.Errorf("expected a 'required input y' message, got: %+v", child.Changes)
 	}
 }
 
@@ -349,7 +525,11 @@ func makeNestedRefTestRepo(t *testing.T) string {
 	return parent
 }
 
-func TestDiffRefReportsNestedSubmoduleChange(t *testing.T) {
+// makeNestedRefTestRepo updates vpc → sg atomically, so under the
+// consumer-view rule for local-source children `diff` reports no
+// breaking change at the vpc.sg pair — the nested parent (vpc) updated
+// its call to match sg's new variable name.
+func TestDiffRefNestedAtomicUpdateIsNotBreaking(t *testing.T) {
 	ws := makeNestedRefTestRepo(t)
 	bin := buildTflens(t)
 
@@ -358,27 +538,18 @@ func TestDiffRefReportsNestedSubmoduleChange(t *testing.T) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-		t.Fatalf("expected exit 1 for breaking nested change, got err=%v\nstderr=%s", err, stderr.String())
+	if err != nil {
+		t.Fatalf("expected exit 0 (nested parent updated atomically), got err=%v\nstderr=%s", err, stderr.String())
 	}
 
 	var out refJSON
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
-	// Expect an entry keyed by the dotted path "vpc.sg" with a breaking change.
-	var sg *refModuleJSON
-	for i, m := range out.Modules {
-		if m.Name == "vpc.sg" {
-			sg = &out.Modules[i]
-			break
+	for _, m := range out.Modules {
+		if m.Summary.Breaking != 0 {
+			t.Errorf("module %s: expected no breaking changes, got summary=%+v", m.Name, m.Summary)
 		}
-	}
-	if sg == nil {
-		t.Fatalf("expected a module entry for vpc.sg, got: %+v", out.Modules)
-	}
-	if sg.Summary.Breaking == 0 {
-		t.Errorf("vpc.sg should report breaking changes, got summary=%+v", sg.Summary)
 	}
 }
 
@@ -402,10 +573,13 @@ func TestWhatifRefByNestedCallName(t *testing.T) {
 }
 
 func TestDiffRefAutoDetectsBase(t *testing.T) {
-	ws := makeRefTestRepo(t)
+	// Use the broken-local fixture so the test exercises both auto-ref
+	// detection AND a non-zero exit (the parent's usage is broken under
+	// the new child).
+	ws := makeRefTestRepoBrokenLocal(t)
 	bin := buildTflens(t)
 
-	// --branch auto with no explicit ref should find "main" via the
+	// --ref auto with no explicit ref should find "main" via the
 	// local-branches fallback (no upstream, no origin/HEAD in this
 	// freshly init'd repo).
 	cmd := exec.Command(bin, "--offline", "diff", "--ref", "auto", "--format=json", ws)
@@ -414,7 +588,7 @@ func TestDiffRefAutoDetectsBase(t *testing.T) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-		t.Fatalf("expected exit 1 (breaking change), got err=%v\nstderr=%s", err, stderr.String())
+		t.Fatalf("expected exit 1 (broken parent usage), got err=%v\nstderr=%s", err, stderr.String())
 	}
 	var out struct {
 		BaseRef string `json:"base_ref"`

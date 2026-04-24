@@ -4,145 +4,65 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/resolver"
 )
 
 var diffCmd = &cobra.Command{
-	Use:   "diff [<old> <new>]",
-	Short: "Compare two module versions and report breaking changes",
-	Long: `Diff classifies every detected change as:
+	Use:   "diff [path]",
+	Short: "Compare module APIs in path against a git ref (author view)",
+	Long: `Diff is the author view: it answers "what changed in the module's
+API between this checkout and the base ref?". Use it when reviewing a
+module release or PR; pair it with whatif (consumer view) when you want
+to know whether your specific caller breaks.
+
+Compares every module call in path (default cwd) against its counterpart
+at the given git ref (branch, tag, SHA, origin/main, HEAD~3, …).
+Classifies each detected change as:
   - Breaking: existing callers or state will be affected
   - NonBreaking: safe to upgrade through
   - Informational: operational or cosmetic, but worth surfacing
 
 Exits non-zero when any Breaking changes exist (suitable for CI gating).
 
-Two modes:
-
-  tflens diff <old> <new>        Explicit: compare two module directories.
-  tflens diff --ref <base> [ws]  Ref: compare every module call in ws
-                                 (default cwd) against its counterpart at
-                                 the given git ref (branch, tag, SHA,
-                                 origin/main, HEAD~3, …). Reports per-call
-                                 diffs plus added/removed calls.`,
-	Args: cobra.RangeArgs(0, 2),
+The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
+→ main → master.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		path := "."
+		if len(args) == 1 {
+			path = args[0]
+		}
 		base, _ := cmd.Flags().GetString("ref")
-		if base != "" {
-			if len(args) > 1 {
-				return fmt.Errorf("--ref mode takes at most one positional arg (workspace); got %d", len(args))
+		if base == RefAutoKeyword {
+			auto, err := resolveAutoRef(path)
+			if err != nil {
+				return err
 			}
-			ws := "."
-			if len(args) == 1 {
-				ws = args[0]
-			}
-			if base == RefAutoKeyword {
-				auto, err := resolveAutoRef(ws)
-				if err != nil {
-					return err
-				}
-				base = auto
-			}
-			return runDiffRef(cmd, ws, base)
+			base = auto
 		}
-		if len(args) != 2 {
-			return fmt.Errorf("diff requires <old> <new>, or --ref <base> [workspace]")
-		}
-		runDiff(cmd, args[0], args[1])
-		return nil
+		return runDiffRef(cmd, path, base)
 	},
 }
 
 func init() {
-	diffCmd.Flags().String("ref", "",
-		"compare the workspace's module calls against a git ref (branch, tag, SHA, …); pass 'auto' to detect (@{upstream} → origin/HEAD → main → master)")
+	diffCmd.Flags().String("ref", RefAutoKeyword,
+		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	rootCmd.AddCommand(diffCmd)
 }
 
-func runDiff(cmd *cobra.Command, oldPath, newPath string) {
-	oldMod := mustLoadModule(oldPath)
-	newMod := mustLoadModule(newPath)
-	changes := diff.Diff(oldMod, newMod)
-
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range changes {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
-
-	if outputJSON(cmd) {
-		all := make([]jsonChange, 0, len(changes))
-		for _, c := range changes {
-			all = append(all, toJSONChange(c))
-		}
-		code := 0
-		if len(breaking) > 0 {
-			code = 1
-		}
-		exitJSON(struct {
-			Changes []jsonChange `json:"changes"`
-			Summary struct {
-				Breaking      int `json:"breaking"`
-				NonBreaking   int `json:"non_breaking"`
-				Informational int `json:"informational"`
-			} `json:"summary"`
-		}{
-			Changes: all,
-			Summary: struct {
-				Breaking      int `json:"breaking"`
-				NonBreaking   int `json:"non_breaking"`
-				Informational int `json:"informational"`
-			}{len(breaking), len(nonBreaking), len(info)},
-		}, code)
-		return
-	}
-
-	if len(breaking)+len(nonBreaking)+len(info) == 0 {
-		fmt.Println("No changes detected.")
-		return
-	}
-
-	printSection := func(title string, list []diff.Change) {
-		if len(list) == 0 {
-			return
-		}
-		fmt.Printf("%s (%d):\n", title, len(list))
-		for _, c := range list {
-			fmt.Printf("  %s: %s\n", c.Subject, c.Detail)
-		}
-	}
-	printSection("Breaking changes", breaking)
-	if len(breaking) > 0 && len(nonBreaking)+len(info) > 0 {
-		fmt.Println()
-	}
-	printSection("Non-breaking changes", nonBreaking)
-	if len(nonBreaking) > 0 && len(info) > 0 {
-		fmt.Println()
-	}
-	printSection("Informational", info)
-
-	if len(breaking) > 0 {
-		os.Exit(1)
-	}
-}
-
-// ---- ref mode ------------------------------------------------------
-
-func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
-	newProj, err := loadProject(cmd, workspace)
+func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
+	newProj, err := loadProject(cmd, path)
 	if err != nil {
-		return fmt.Errorf("loading workspace: %w", err)
+		return fmt.Errorf("loading path: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
@@ -156,7 +76,21 @@ func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
 	for _, p := range pairs {
 		r := refModuleResult{pair: p}
 		if p.status == statusChanged && p.oldNode != nil && p.newNode != nil {
-			r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
+			// Local-source children are owned by this repo: their API is
+			// implementation detail and only the parent's consumption
+			// matters. External (registry/git) children come from a
+			// publisher who's responsible for breaking-change discipline,
+			// so we surface every API change.
+			if resolver.IsLocalSource(p.newSource) {
+				r.changes = consumptionChangesForLocal(p)
+			} else {
+				r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
+			}
+			// Tracked-attribute changes apply regardless of source type:
+			// authors opt in to surface specific attributes (engine
+			// versions, instance classes, …) the API diff intentionally
+			// ignores.
+			r.changes = append(r.changes, diff.DiffTracked(p.oldNode.Module, p.newNode.Module)...)
 			for _, c := range r.changes {
 				if c.Kind == diff.Breaking {
 					totalBreaking++
@@ -166,16 +100,82 @@ func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
 		results = append(results, r)
 	}
 
+	// Tracked attributes on the root module are not covered by
+	// pairModuleCalls (which keys off module CALLS). Run a parallel pass
+	// against the root and surface findings as a dedicated section.
+	rootTracked := diff.DiffTracked(rootModule(oldProj), rootModule(newProj))
+	for _, c := range rootTracked {
+		if c.Kind == diff.Breaking {
+			totalBreaking++
+		}
+	}
+
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, workspace, results), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, path, results, rootTracked), exitCodeFor(totalBreaking))
 		return nil
 	}
 
-	printRefResults(baseRef, results)
+	printRefResults(baseRef, results, rootTracked)
 	if totalBreaking > 0 {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// rootModule returns p.Root.Module if both are non-nil, otherwise nil.
+// DiffTracked is nil-safe so this just lets us avoid a nil chain.
+func rootModule(p *loader.Project) *analysis.Module {
+	if p == nil || p.Root == nil {
+		return nil
+	}
+	return p.Root.Module
+}
+
+// consumptionChangesForLocal turns cross_validate findings against the
+// new parent + new child into diff.Change entries. Used in place of
+// diff.Diff for local-source ("internal") children, where the child's
+// API is implementation detail and only the parent's consumption is
+// observable.
+//
+// Returns an empty slice when the parent's usage is consistent — i.e.
+// every required child variable is passed, no unknown args, types
+// compatible, and every module.<name>.<output> reference still resolves.
+func consumptionChangesForLocal(p modulePair) []diff.Change {
+	if p.newParent == nil {
+		return nil
+	}
+	cvErrs := loader.CrossValidateCall(p.newParent.Module, p.localName, p.newNode.Module)
+	if len(cvErrs) == 0 {
+		return nil
+	}
+	out := make([]diff.Change, 0, len(cvErrs))
+	for _, e := range cvErrs {
+		out = append(out, diff.Change{
+			Kind:    diff.Breaking,
+			Subject: e.EntityID,
+			Detail:  e.Msg,
+			Hint:    hintForCrossValidateMsg(e.Msg),
+			NewPos:  e.Pos,
+		})
+	}
+	return out
+}
+
+// hintForCrossValidateMsg returns a one-line "how to fix this" hint
+// based on the shape of the cross_validate error message. Recognises
+// the four error templates emitted by loader/cross_validate.go.
+func hintForCrossValidateMsg(msg string) string {
+	switch {
+	case strings.Contains(msg, "unknown argument"):
+		return "remove the argument from the module block, or restore the matching variable in the child"
+	case strings.Contains(msg, "required input"):
+		return "add the input to the module block, or give the child variable a default"
+	case strings.Contains(msg, "but child variable expects"):
+		return "convert the value to the expected type (tostring/tolist/...) or change the parent's expression"
+	case strings.Contains(msg, "no such output"):
+		return "restore the output in the child, or remove the parent's reference"
+	}
+	return ""
 }
 
 // refModuleResult is the per-module-call result of a branch diff.
@@ -209,8 +209,12 @@ func exitCodeFor(breaking int) int {
 
 // ---- text rendering ----
 
-func printRefResults(baseRef string, results []refModuleResult) {
+func printRefResults(baseRef string, results []refModuleResult, rootTracked []diff.Change) {
 	any := false
+	if len(rootTracked) > 0 {
+		printRootTracked(rootTracked)
+		any = true
+	}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
@@ -223,6 +227,34 @@ func printRefResults(baseRef string, results []refModuleResult) {
 	}
 	if !any {
 		fmt.Printf("No module-call changes detected vs %s.\n", baseRef)
+	}
+}
+
+// printRootTracked emits the tracked-attribute changes for the root
+// module under a dedicated heading, since the root isn't a module call
+// and so doesn't appear in the per-module section below.
+func printRootTracked(changes []diff.Change) {
+	fmt.Println("Root module tracked attributes:")
+	var breaking, info []diff.Change
+	for _, c := range changes {
+		switch c.Kind {
+		case diff.Breaking:
+			breaking = append(breaking, c)
+		case diff.Informational:
+			info = append(info, c)
+		}
+	}
+	if len(breaking) > 0 {
+		fmt.Printf("  Breaking (%d):\n", len(breaking))
+		for _, c := range breaking {
+			printChangeLine("    ", c)
+		}
+	}
+	if len(info) > 0 {
+		fmt.Printf("  Informational (%d):\n", len(info))
+		for _, c := range info {
+			printChangeLine("    ", c)
+		}
 	}
 }
 
@@ -279,27 +311,47 @@ func printOneRefResult(r refModuleResult) {
 	if len(breaking) > 0 {
 		fmt.Printf("  Breaking (%d):\n", len(breaking))
 		for _, c := range breaking {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
 	}
 	if len(nonBreaking) > 0 {
 		fmt.Printf("  Non-breaking (%d):\n", len(nonBreaking))
 		for _, c := range nonBreaking {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
 	}
 	if len(info) > 0 {
 		fmt.Printf("  Informational (%d):\n", len(info))
 		for _, c := range info {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
+	}
+}
+
+// printChangeLine prints "<indent><subject>: <detail>" plus, when the
+// change has a Hint, an aligned "<indent>  hint: <hint>" follow-up.
+func printChangeLine(indent string, c diff.Change) {
+	fmt.Printf("%s%s: %s\n", indent, c.Subject, c.Detail)
+	if c.Hint != "" {
+		fmt.Printf("%s  hint: %s\n", indent, c.Hint)
 	}
 }
 
 // ---- JSON rendering ----
 
-func buildRefJSON(baseRef, workspace string, results []refModuleResult) any {
-	out := refJSON{BaseRef: baseRef, Workspace: workspace}
+func buildRefJSON(baseRef, path string, results []refModuleResult, rootTracked []diff.Change) any {
+	out := refJSON{BaseRef: baseRef, Path: path}
+	for _, c := range rootTracked {
+		out.RootTracked = append(out.RootTracked, toJSONChange(c))
+		switch c.Kind {
+		case diff.Breaking:
+			out.Summary.Breaking++
+		case diff.NonBreaking:
+			out.Summary.NonBreaking++
+		case diff.Informational:
+			out.Summary.Informational++
+		}
+	}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
@@ -332,10 +384,11 @@ func buildRefJSON(baseRef, workspace string, results []refModuleResult) any {
 }
 
 type refJSON struct {
-	BaseRef   string             `json:"base_ref"`
-	Workspace string             `json:"workspace"`
-	Modules   []refModuleJSON `json:"modules"`
-	Summary   refSummaryJSON  `json:"summary"`
+	BaseRef     string          `json:"base_ref"`
+	Path        string          `json:"path"`
+	Modules     []refModuleJSON `json:"modules"`
+	RootTracked []jsonChange    `json:"root_tracked,omitempty"`
+	Summary     refSummaryJSON  `json:"summary"`
 }
 
 type refModuleJSON struct {

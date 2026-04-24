@@ -197,6 +197,17 @@ var crossValidateCases = []crossValidateCase{
 		Name: "child_with_no_type_constraint_skips_typecheck",
 		MustNotContainMsg: []string{"but child variable expects"},
 	},
+	{
+		Name: "output_reference_satisfied",
+		WantNoErrors: true,
+	},
+	{
+		Name: "output_reference_missing",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"references module.net.gone", "no such output"}},
+	},
 
 	// ---- richer setups via Custom ----
 

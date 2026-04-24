@@ -15,11 +15,11 @@ import (
 )
 
 var statediffCmd = &cobra.Command{
-	Use:   "statediff --ref <base> [workspace]",
+	Use:   "statediff [path]",
 	Short: "Identify resources a PR may create, destroy, or re-instance",
-	Long: `statediff compares the working tree against a git ref at the resource
-identity level and surfaces changes that may alter Terraform state when
-the PR is merged:
+	Long: `statediff compares the working tree in path (default cwd) against
+a git ref at the resource identity level and surfaces changes that may
+alter Terraform state when the PR is merged:
 
   1. Resource declarations added or removed between the two trees.
   2. Locals or variable defaults whose value expression changed AND
@@ -34,46 +34,44 @@ the PR is merged:
 Exits non-zero when anything is flagged (renames and state orphans do
 not count). Suitable for CI gating.
 
-The ref can be any git ref (branch, tag, SHA, origin/main, HEAD~3, …);
-pass 'auto' to detect one.
+The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
+→ main → master.
 
 What it does NOT do: attribute-level plan simulation. That needs
 provider schemas and expression evaluation — run 'terraform plan' for
 that. statediff is a static hazard detector, not a plan replacement.`,
-	Args: cobra.RangeArgs(0, 1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		base, _ := cmd.Flags().GetString("ref")
-		if base == "" {
-			return fmt.Errorf("statediff requires --ref <base>")
-		}
-		ws := "."
+		path := "."
 		if len(args) == 1 {
-			ws = args[0]
+			path = args[0]
 		}
+		base, _ := cmd.Flags().GetString("ref")
 		if base == RefAutoKeyword {
-			auto, err := resolveAutoRef(ws)
+			auto, err := resolveAutoRef(path)
 			if err != nil {
 				return err
 			}
 			base = auto
 		}
 		statePath, _ := cmd.Flags().GetString("state")
-		return runStatediff(cmd, ws, base, statePath)
+		return runStatediff(cmd, path, base, statePath)
 	},
 }
 
 func init() {
-	statediffCmd.Flags().String("ref", "", "base git ref to compare against (branch, tag, SHA, …); pass 'auto' to detect")
+	statediffCmd.Flags().String("ref", RefAutoKeyword,
+		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	statediffCmd.Flags().String("state", "", "optional Terraform state v4 JSON file for instance cross-reference")
 	rootCmd.AddCommand(statediffCmd)
 }
 
-func runStatediff(cmd *cobra.Command, workspace, baseRef, statePath string) error {
-	newProj, err := loadProject(cmd, workspace)
+func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
+	newProj, err := loadProject(cmd, path)
 	if err != nil {
-		return fmt.Errorf("loading workspace: %w", err)
+		return fmt.Errorf("loading path: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
@@ -89,7 +87,7 @@ func runStatediff(cmd *cobra.Command, workspace, baseRef, statePath string) erro
 
 	result := analyzeStatediff(oldProj, newProj, state)
 	result.BaseRef = baseRef
-	result.Workspace = workspace
+	result.Path = path
 
 	if outputJSON(cmd) {
 		exitJSON(result, exitCodeFor(result.flaggedCount()))
@@ -108,7 +106,7 @@ func runStatediff(cmd *cobra.Command, workspace, baseRef, statePath string) erro
 // payload, so field tags matter.
 type statediffResult struct {
 	BaseRef           string            `json:"base_ref"`
-	Workspace         string            `json:"workspace"`
+	Path         string            `json:"path"`
 	AddedResources    []resourceRef     `json:"added_resources"`
 	RemovedResources  []resourceRef     `json:"removed_resources"`
 	RenamedResources  []renamePair      `json:"renamed_resources,omitempty"`

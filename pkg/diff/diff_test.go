@@ -37,6 +37,11 @@ type diffCase struct {
 	// DetailExcludes lists substrings that change.Detail must NOT include.
 	DetailExcludes []string
 
+	// HintContains lists substrings that change.Hint must include. Use to
+	// pin the most-important hints in place; cases that don't care leave
+	// this empty (the hint just isn't asserted).
+	HintContains []string
+
 	// WantNoChanges asserts the diff produced zero changes.
 	WantNoChanges bool
 
@@ -124,6 +129,11 @@ func assertSingleChange(t *testing.T, changes []diff.Change, tc diffCase) {
 			t.Errorf("detail should not contain %q: %q", sub, c.Detail)
 		}
 	}
+	for _, sub := range tc.HintContains {
+		if !strings.Contains(c.Hint, sub) {
+			t.Errorf("hint should contain %q: %q", sub, c.Hint)
+		}
+	}
 }
 
 // findChange returns the first Change whose Subject matches subject, or nil.
@@ -158,10 +168,12 @@ var diffCases = []diffCase{
 	{
 		Name: "variable_required_added", Subject: "variable.region",
 		WantKind: diff.Breaking, DetailContains: []string{"required"},
+		HintContains: []string{"default = ..."},
 	},
 	{
 		Name: "variable_default_removed", Subject: "variable.env",
 		WantKind: diff.Breaking, DetailContains: []string{"default removed"},
+		HintContains: []string{"keep the default"},
 	},
 	{
 		Name: "variable_default_added", Subject: "variable.env",
@@ -236,6 +248,7 @@ var diffCases = []diffCase{
 	{
 		Name: "variable_nullable_false_added", Subject: "variable.x",
 		WantKind: diff.Breaking, DetailContains: []string{"nullable"},
+		HintContains: []string{"callers passing null are now rejected"},
 	},
 	{
 		Name: "variable_nullable_false_removed", Subject: "variable.x",
@@ -244,10 +257,12 @@ var diffCases = []diffCase{
 	{
 		Name: "variable_sensitive_added", Subject: "variable.x",
 		WantKind: diff.Breaking, DetailContains: []string{"sensitive"},
+		HintContains: []string{"must also be marked sensitive"},
 	},
 	{
 		Name: "variable_ephemeral_added", Subject: "variable.tok",
 		WantKind: diff.Breaking, DetailContains: []string{"ephemeral"},
+		HintContains: []string{"ephemeral"},
 	},
 	{
 		Name: "variable_ephemeral_removed", Subject: "variable.tok",
@@ -296,7 +311,8 @@ var diffCases = []diffCase{
 	// ---- outputs ----
 	{
 		Name: "output_removed", Subject: "output.id",
-		WantKind: diff.Breaking,
+		WantKind:     diff.Breaking,
+		HintContains: []string{"module.X.id"},
 	},
 	{
 		Name: "output_added", Subject: "output.id",
@@ -309,6 +325,7 @@ var diffCases = []diffCase{
 	{
 		Name: "output_sensitive_removed_is_leak", Subject: "output.x",
 		WantKind: diff.Breaking, DetailContains: []string{"leak"},
+		HintContains: []string{"restore `sensitive = true`"},
 	},
 	{
 		Name: "output_postcondition_added", Subject: "output.x",
@@ -381,6 +398,7 @@ var diffCases = []diffCase{
 	{
 		Name: "resource_renamed", Subject: "resource.aws_vpc.old_name → resource.aws_vpc.new_name",
 		WantKind: diff.Breaking, DetailContains: []string{"moved"},
+		HintContains: []string{"moved { from = resource.aws_vpc.old_name, to = resource.aws_vpc.new_name }"},
 	},
 	{
 		Name: "resource_type_change_not_rename",
@@ -477,6 +495,7 @@ var diffCases = []diffCase{
 	{
 		Name: "count_to_for_each", Subject: "resource.aws_subnet.pub",
 		WantKind: diff.Breaking, DetailContains: []string{"count", "for_each"},
+		HintContains: []string{"moved {}"},
 	},
 	{
 		Name: "for_each_to_count", Subject: "resource.aws_subnet.pub",
@@ -546,6 +565,7 @@ var diffCases = []diffCase{
 	{
 		Name: "lifecycle_ignore_changes_all_narrowed", Subject: "resource.aws_vpc.main",
 		WantKind: diff.Breaking, DetailContains: []string{"narrowed"},
+		HintContains: []string{"drift detection"},
 	},
 	{
 		Name: "lifecycle_ignore_changes_widened_to_all", Subject: "resource.aws_vpc.main",
@@ -594,10 +614,12 @@ var diffCases = []diffCase{
 	{
 		Name: "backend_added", Subject: "terraform.backend",
 		WantKind: diff.Breaking, DetailContains: []string{"s3"},
+		HintContains: []string{"terraform init -migrate-state"},
 	},
 	{
 		Name: "backend_type_changed", Subject: "terraform.backend",
 		WantKind: diff.Breaking, DetailContains: []string{"backend type changed"},
+		HintContains: []string{"terraform init -migrate-state"},
 	},
 	{
 		Name: "backend_config_key_changed", Subject: "terraform.backend",
@@ -608,6 +630,7 @@ var diffCases = []diffCase{
 	{
 		Name: "object_field_added_required", Subject: "variable.cfg",
 		WantKind: diff.Breaking, DetailContains: []string{`"b"`, "required"},
+		HintContains: []string{"optional("},
 	},
 	{
 		Name: "object_field_added_optional", Subject: "variable.cfg",

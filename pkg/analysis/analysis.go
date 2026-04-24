@@ -168,6 +168,17 @@ type Module struct {
 	requiredVersion   string
 	requiredProviders map[string]ProviderRequirement
 	backend           *Backend
+
+	// moduleOutputRefs is the set of output names referenced via
+	// module.<callName>.<outputName> traversals anywhere in this module's
+	// expressions, keyed by call name. Populated during dep collection so
+	// cross_validate can flag references whose target output no longer
+	// exists in the new child.
+	moduleOutputRefs map[string]map[string]bool
+
+	// tracked is the set of attributes annotated with `# tflens:track`
+	// markers, in source order across all files in this module.
+	tracked []TrackedAttribute
 }
 
 // Backend describes the terraform { backend "X" { ... } } block.
@@ -190,6 +201,7 @@ func newModule() *Module {
 		moved:             make(map[string]string),
 		removedIDs:        make(map[string]bool),
 		requiredProviders: make(map[string]ProviderRequirement),
+		moduleOutputRefs:  make(map[string]map[string]bool),
 	}
 }
 
@@ -247,6 +259,22 @@ func (m *Module) ModuleSource(name string) string { return m.moduleSources[name]
 
 // ModuleVersion returns the version constraint for a module call.
 func (m *Module) ModuleVersion(name string) string { return m.moduleVersions[name] }
+
+// ModuleOutputReferences returns the sorted set of output names this
+// module references via module.<callName>.<outputName> traversals (in
+// outputs, locals, resource attributes, or anywhere else in the module's
+// expressions). Returns an empty slice when callName has no recognised
+// references — including the case where every reference was just bare
+// `module.<callName>` with no .attribute suffix.
+func (m *Module) ModuleOutputReferences(callName string) []string {
+	set := m.moduleOutputRefs[callName]
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
 
 func (m *Module) addEntity(e Entity) {
 	if _, exists := m.byID[e.ID()]; !exists {
@@ -370,6 +398,10 @@ func AnalyseFiles(files []*File) *Module {
 	for _, f := range files {
 		typeCheckBodies(m, f)
 	}
+	for _, f := range files {
+		m.tracked = append(m.tracked, collectTrackedAttributes(f)...)
+	}
+	m.resolveTrackedRefs()
 	checkSensitivePropagation(m)
 	return m
 }
@@ -804,6 +836,18 @@ func (m *Module) walkExpr(fromID string, expr hclsyntax.Expression) {
 func (m *Module) recordRef(fromID string, parts []string, pos token.Position) {
 	if dep, ok := m.classifyRef(parts); ok {
 		m.addDep(fromID, dep.ID())
+		// Track which outputs of each module call are referenced so
+		// cross_validate can detect when a removed output broke a
+		// caller. parts is e.g. ["module", "vpc", "subnet_ids"]; we want
+		// "subnet_ids" recorded against "vpc".
+		if dep.Kind == KindModule && len(parts) >= 3 {
+			set, ok := m.moduleOutputRefs[parts[1]]
+			if !ok {
+				set = make(map[string]bool)
+				m.moduleOutputRefs[parts[1]] = set
+			}
+			set[parts[2]] = true
+		}
 		return
 	}
 	if len(parts) < 2 {
