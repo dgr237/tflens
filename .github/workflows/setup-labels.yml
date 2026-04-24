@@ -1,0 +1,46 @@
+name: Setup release labels
+
+# One-shot workflow that creates (or updates) the three release:*
+# labels used by .github/workflows/auto-release.yml.
+#
+# Run via the Actions tab → "Setup release labels" → "Run workflow".
+# Idempotent — uses `gh label create --force`, so re-running just
+# refreshes colour/description without erroring on already-present
+# labels.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  issues: write   # `gh label` operates under the issues permission
+
+jobs:
+  create-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create release labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Traffic-light colours: green = safe, yellow = additive,
+          # red = breaking.
+          gh label create "release:patch" \
+            --color "0e8a16" \
+            --description "Bug fixes / small adjustments — auto-bumps the patch version on merge." \
+            --force
+
+          gh label create "release:minor" \
+            --color "fbca04" \
+            --description "Backwards-compatible additions — auto-bumps the minor version on merge." \
+            --force
+
+          gh label create "release:major" \
+            --color "d73a4a" \
+            --description "Breaking changes — auto-bumps the major version on merge." \
+            --force
+
+          echo "Labels ready:"
+          gh label list --search "release:"

@@ -1,6 +1,8 @@
 package diff_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,122 +10,142 @@ import (
 	"github.com/dgr237/tflens/pkg/diff"
 )
 
-// TestDiffTrackedCrossModuleParentChange exercises the cross-module
-// resolution path: a marker on a child resource attribute that
-// references a parent-supplied variable. The change is entirely on
-// the parent side (new optional variable + a now-conditional local
-// passed down to the child). Without parent context, the child's
-// view shows nothing changed; with TrackedContext, the diff climbs
-// through the parent's call argument and surfaces the local + new
-// variable as parent-prefixed refs.
-func TestDiffTrackedCrossModuleParentChange(t *testing.T) {
-	const childOldSrc = `
-variable "cluster_version" { type = string }
-resource "aws_eks_cluster" "this" {
-  name            = "prod"
-  cluster_version = var.cluster_version
+// crossModuleCase drives TestDiffTrackedCrossModuleCases. Each case
+// names a directory under pkg/diff/testdata/cross_module_tracked/<name>/
+// laid out as a real Terraform project:
+//
+//	<name>/old/main.tf                 (parent / root)
+//	<name>/old/modules/<call>/main.tf  (child module — where the marker lives)
+//	<name>/new/main.tf
+//	<name>/new/modules/<call>/main.tf
+//
+// CallName is the module call's local name in the parent
+// (`module "<call>" { ... }`). Empty defaults to "eks".
+type crossModuleCase struct {
+	Name           string
+	CallName       string
+	WantKind       diff.ChangeKind
+	Subject        string // tracked attr key, e.g. "resource.aws_eks_cluster.this.cluster_version"
+	DetailContains []string
+	DetailExcludes []string
+	HintContains   []string
 }
-`
-	const childNewSrc = `
-variable "cluster_version" { type = string }
-resource "aws_eks_cluster" "this" {
-  name            = "prod"
-  cluster_version = var.cluster_version # tflens:track: EKS minor — bump only after add-on compat
-}
-`
-	const parentOldSrc = `
-locals { cluster_version = "1.34" }
-module "eks" {
-  source          = "./modules/eks"
-  cluster_version = local.cluster_version
-}
-`
-	const parentNewSrc = `
-variable "upgrade" {
-  type    = bool
-  default = true
-}
-locals { cluster_version = var.upgrade ? "1.35" : "1.34" }
-module "eks" {
-  source          = "./modules/eks"
-  cluster_version = local.cluster_version
-}
-`
-	oldChild := analyseFromTestdata(t, "old/child/main.tf", childOldSrc)
-	newChild := analyseFromTestdata(t, "new/child/main.tf", childNewSrc)
-	oldParent := analyseFromTestdata(t, "old/main.tf", parentOldSrc)
-	newParent := analyseFromTestdata(t, "new/main.tf", parentNewSrc)
 
-	// Without parent context: the marker addition produces an
-	// Informational-only result, since the child's view shows nothing
-	// changed (variable still has no default; resource attr text
-	// unchanged).
-	bare := diff.DiffTracked(oldChild, newChild)
-	if len(bare) != 1 || bare[0].Kind != diff.Informational {
-		t.Errorf("DiffTracked without parent ctx: want 1 Informational, got %v", bare)
-	}
+func TestDiffTrackedCrossModuleCases(t *testing.T) {
+	for _, tc := range crossModuleCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			callName := tc.CallName
+			if callName == "" {
+				callName = "eks"
+			}
+			oldParent, oldChild := loadCrossModuleSide(t, tc.Name, "old", callName)
+			newParent, newChild := loadCrossModuleSide(t, tc.Name, "new", callName)
 
-	// With parent context: parent.local.cluster_version differs and
-	// parent.variable.upgrade is newly referenced, so the change is
-	// promoted to Breaking with both parent-side facts in the detail.
-	got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
-		OldParent: oldParent, NewParent: newParent, CallName: "eks",
-	})
-	if len(got) != 1 {
-		t.Fatalf("want 1 change, got %d: %v", len(got), got)
-	}
-	c := got[0]
-	if c.Kind != diff.Breaking {
-		t.Errorf("Kind = %v, want Breaking", c.Kind)
-	}
-	wantSubstrings := []string{
-		"marker added",
-		"parent.local.cluster_version", `"1.34"`, `var.upgrade ? "1.35" : "1.34"`,
-		"parent.variable.upgrade", "true",
-	}
-	for _, s := range wantSubstrings {
-		if !strings.Contains(c.Detail, s) {
-			t.Errorf("detail missing %q: %s", s, c.Detail)
-		}
-	}
-	if !strings.Contains(c.Hint, "add-on compat") {
-		t.Errorf("hint missing 'add-on compat': %s", c.Hint)
+			got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
+				OldParent: oldParent,
+				NewParent: newParent,
+				CallName:  callName,
+			})
+			if len(got) != 1 {
+				t.Fatalf("want 1 change, got %d: %v", len(got), got)
+			}
+			c := got[0]
+			if c.Subject != tc.Subject {
+				t.Errorf("Subject = %q, want %q", c.Subject, tc.Subject)
+			}
+			if c.Kind != tc.WantKind {
+				t.Errorf("Kind = %v, want %v; detail=%q", c.Kind, tc.WantKind, c.Detail)
+			}
+			for _, s := range tc.DetailContains {
+				if !strings.Contains(c.Detail, s) {
+					t.Errorf("detail missing %q: %s", s, c.Detail)
+				}
+			}
+			for _, s := range tc.DetailExcludes {
+				if strings.Contains(c.Detail, s) {
+					t.Errorf("detail should not contain %q: %s", s, c.Detail)
+				}
+			}
+			for _, s := range tc.HintContains {
+				if !strings.Contains(c.Hint, s) {
+					t.Errorf("hint missing %q: %s", s, c.Hint)
+				}
+			}
+		})
 	}
 }
 
-// TestDiffTrackedCrossModuleNoChangeStaysQuiet confirms cross-module
-// resolution doesn't introduce false positives: marker added in the
-// child, NOTHING changed in the parent → still Informational only.
-func TestDiffTrackedCrossModuleNoChangeStaysQuiet(t *testing.T) {
-	const childOldSrc = `
-variable "cluster_version" { type = string }
-resource "aws_eks_cluster" "this" {
-  cluster_version = var.cluster_version
+// loadCrossModuleSide reads {parent main.tf, child modules/<call>/main.tf}
+// for one side (old or new) of a cross_module_tracked fixture and
+// returns the analysed modules.
+func loadCrossModuleSide(t *testing.T, name, side, callName string) (parent, child *analysis.Module) {
+	t.Helper()
+	parentPath := filepath.Join("testdata", "cross_module_tracked", name, side, "main.tf")
+	childPath := filepath.Join("testdata", "cross_module_tracked", name, side, "modules", callName, "main.tf")
+	parentSrc := mustReadFile(t, parentPath)
+	childSrc := mustReadFile(t, childPath)
+	parent = analyseFromTestdata(t, parentPath, parentSrc)
+	child = analyseFromTestdata(t, childPath, childSrc)
+	return parent, child
 }
-`
-	const childNewSrc = `
-variable "cluster_version" { type = string }
-resource "aws_eks_cluster" "this" {
-  cluster_version = var.cluster_version # tflens:track
-}
-`
-	const parentSrc = `
-locals { cluster_version = "1.34" }
-module "eks" {
-  source          = "./modules/eks"
-  cluster_version = local.cluster_version
-}
-`
-	oldChild := analyseFromTestdata(t, "old/child/main.tf", childOldSrc)
-	newChild := analyseFromTestdata(t, "new/child/main.tf", childNewSrc)
-	parent := analyseFromTestdata(t, "main.tf", parentSrc)
 
-	got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
-		OldParent: parent, NewParent: parent, CallName: "eks",
-	})
-	if len(got) != 1 || got[0].Kind != diff.Informational {
-		t.Errorf("want 1 Informational (marker added, nothing else changed), got %v", got)
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
 	}
+	return string(b)
+}
+
+var crossModuleCases = []crossModuleCase{
+	{
+		// Marker added in child + parent introduces var.upgrade
+		// defaulting to true → conditional flips the cluster version
+		// from "1.34" to "1.35". Real value change → Breaking.
+		Name:     "parent_change_real",
+		Subject:  "resource.aws_eks_cluster.this.cluster_version",
+		WantKind: diff.Breaking,
+		DetailContains: []string{
+			"marker added",
+			"parent.local.cluster_version", `"1.34"`, `var.upgrade ? "1.35" : "1.34"`,
+			"parent.variable.upgrade", "true",
+		},
+		HintContains: []string{"add-on compat"},
+	},
+	{
+		// Same shape but var.upgrade defaults to FALSE → conditional
+		// resolves to "1.34", same as the old static value. The
+		// effective tracked value didn't move; eval suppression
+		// should demote to Informational with the new variable as
+		// supporting context. Mirrors the "stage the upgrade flag
+		// without flipping it yet" workflow. The detail must
+		// include the "text changes collapsed" clause so a reviewer
+		// understands WHY this isn't Breaking even though a new
+		// variable appeared.
+		Name:     "parent_change_eval_unchanged",
+		Subject:  "resource.aws_eks_cluster.this.cluster_version",
+		WantKind: diff.Informational,
+		DetailContains: []string{
+			"marker added",
+			"text changes collapsed",
+			"same effective value",
+			"now references parent.variable.upgrade", "false",
+		},
+		DetailExcludes: []string{
+			"parent.local.cluster_version changed",
+		},
+		HintContains: []string{"add-on compat"},
+	},
+	{
+		// Sanity check: marker added in child, parent identical on
+		// both sides. No false positives from cross-module
+		// resolution — Informational only.
+		Name:           "no_parent_change",
+		Subject:        "resource.aws_eks_cluster.this.cluster_version",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"marker added"},
+	},
 }
 
 // TestDiffTrackedCrossModuleEmptyContextEqualsBare proves that
@@ -156,9 +178,6 @@ locals {
 	}
 }
 
-// Silence unused-import warning if analyseFromTestdata stops needing
-// the analysis package directly.
-var _ = analysis.KindLocal
 
 // trackedCase mirrors diffCase but drives diff.DiffTracked instead of
 // diff.Diff. Reads testdata/<name>/{old.tf,new.tf}.
@@ -383,6 +402,25 @@ var trackedCases = []trackedCase{
 		DetailContains: []string{
 			`-prod`, `-staging`,
 		},
+	},
+	{
+		// Single-module mirror of the cross-module
+		// var.upgrade=false scenario: marker added on the resource
+		// attribute, parent introduces a new variable + conditional
+		// local. With var.upgrade=false the conditional resolves to
+		// "1.34" (same as old), so eval suppression should kick in
+		// and demote to Informational. Confirms the resource-level
+		// marker path participates in the eval-equivalence collapse,
+		// not just the local-level one.
+		Name:     "tracked_marker_added_on_resource_eval_unchanged",
+		Subject:  "resource.aws_eks_cluster.this.cluster_version",
+		WantKind: diff.Informational,
+		DetailContains: []string{
+			"marker added",
+			"text changes collapsed",
+			"now references variable.upgrade", "false",
+		},
+		HintContains: []string{"add-on compat"},
 	},
 	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".

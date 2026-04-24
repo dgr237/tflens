@@ -126,8 +126,11 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 			// tracked attribute's effective output, it's just context).
 			var details []string
 			hasValueChange := false
+			suppressedByEval := false
 			if oldText, located := oldMod.LookupAttrText(n.EntityID, n.AttrName); located && oldText != n.ExprText {
-				if !equivalentByEval(oldText, n.ExprText, ec.oldChild, ec.newChild) {
+				if equivalentByEval(oldText, n.ExprText, ec.oldChild, ec.newChild) {
+					suppressedByEval = true
+				} else {
 					details = append(details, fmt.Sprintf("value %s → %s", display(oldText), display(n.ExprText)))
 					hasValueChange = true
 				}
@@ -140,6 +143,7 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 					details = append(details, fmt.Sprintf("now references %s = %s", id, display(newRefText)))
 				case oldRefText != newRefText:
 					if equivalentByEval(oldRefText, newRefText, ec.ctxFor(id, true), ec.ctxFor(id, false)) {
+						suppressedByEval = true
 						continue
 					}
 					details = append(details, fmt.Sprintf("%s changed: %s → %s", id, display(oldRefText), display(newRefText)))
@@ -163,7 +167,11 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 				// same branch). Informational with the refs as
 				// supporting context — useful for the reviewer to see
 				// what's new, but not gating CI.
-				details = append([]string{"tracked-attribute marker added"}, details...)
+				lead := "tracked-attribute marker added"
+				if suppressedByEval {
+					lead += " (text changes collapsed: same effective value)"
+				}
+				details = append([]string{lead}, details...)
 				changes = append(changes, Change{
 					Kind:    Informational,
 					Subject: key,
@@ -172,31 +180,54 @@ func DiffTrackedCtx(oldMod, newMod *analysis.Module, ctx TrackedContext) []Chang
 					NewPos:  n.Pos,
 				})
 			default:
+				detail := "tracked-attribute marker added"
+				if suppressedByEval {
+					// Tell the reviewer WHY this isn't Breaking — text
+					// did move, eval proved it doesn't matter. Without
+					// this, "marker added" looks like there was simply
+					// nothing to compare against.
+					detail = "tracked-attribute marker added (effective value unchanged: underlying text differs but evaluates to the same constant)"
+				}
 				changes = append(changes, Change{
 					Kind:    Informational,
 					Subject: key,
-					Detail:  "tracked-attribute marker added",
+					Detail:  detail,
 					Hint:    n.Description,
 					NewPos:  n.Pos,
 				})
 			}
 		default:
-			diffs, hasValueChange := compareTrackedWithEval(o, n, ec)
-			if len(diffs) == 0 {
-				continue
+			diffs, hasValueChange, suppressed := compareTrackedWithEval(o, n, ec)
+			switch {
+			case len(diffs) > 0:
+				kind := Informational
+				if hasValueChange {
+					kind = Breaking
+				}
+				changes = append(changes, Change{
+					Kind:    kind,
+					Subject: key,
+					Detail:  strings.Join(diffs, "; "),
+					Hint:    n.Description,
+					OldPos:  o.Pos,
+					NewPos:  n.Pos,
+				})
+			case suppressed:
+				// Text genuinely moved on both sides, but every
+				// candidate diff was eval-equivalent. Surface this
+				// as Informational so the reviewer knows the marker
+				// is doing its job (the change wasn't a no-op text
+				// edit; it was a real expression change that
+				// evaluated to the same value).
+				changes = append(changes, Change{
+					Kind:    Informational,
+					Subject: key,
+					Detail:  "tracked attribute texts changed but evaluate to the same constant (no effective value change)",
+					Hint:    n.Description,
+					OldPos:  o.Pos,
+					NewPos:  n.Pos,
+				})
 			}
-			kind := Informational
-			if hasValueChange {
-				kind = Breaking
-			}
-			changes = append(changes, Change{
-				Kind:    kind,
-				Subject: key,
-				Detail:  strings.Join(diffs, "; "),
-				Hint:    n.Description,
-				OldPos:  o.Pos,
-				NewPos:  n.Pos,
-			})
 		}
 	}
 
@@ -321,16 +352,24 @@ func indexTracked(m *analysis.Module) map[string]analysis.TrackedAttribute {
 // (the attribute itself, plus each transitively-referenced var/local).
 // hasValueChange reports whether at least one of those diffs is an
 // actual value change rather than a ref-existence reorganisation —
-// callers use this to choose between Breaking and Informational. Empty
-// diffs slice + false means nothing changed.
+// callers use this to choose between Breaking and Informational.
+// suppressed reports whether at least one text-different pair was
+// dropped because both sides evaluated to the same cty.Value; callers
+// use it to surface a brief explanation when the entire diff
+// collapses to no change. Empty diffs + !hasValueChange + !suppressed
+// means nothing changed.
 //
 // When evaluation contexts are supplied, two text-different
 // expressions that evaluate to the same cty.Value are treated as
 // equal (constant folding through known var/local bindings).
-func compareTrackedWithEval(o, n analysis.TrackedAttribute, ec evalCtxs) (diffs []string, hasValueChange bool) {
-	if o.ExprText != n.ExprText && !equivalentByEval(o.ExprText, n.ExprText, ec.oldChild, ec.newChild) {
-		diffs = append(diffs, fmt.Sprintf("value %s → %s", display(o.ExprText), display(n.ExprText)))
-		hasValueChange = true
+func compareTrackedWithEval(o, n analysis.TrackedAttribute, ec evalCtxs) (diffs []string, hasValueChange, suppressed bool) {
+	if o.ExprText != n.ExprText {
+		if equivalentByEval(o.ExprText, n.ExprText, ec.oldChild, ec.newChild) {
+			suppressed = true
+		} else {
+			diffs = append(diffs, fmt.Sprintf("value %s → %s", display(o.ExprText), display(n.ExprText)))
+			hasValueChange = true
+		}
 	}
 	refIDs := unionSortedRefIDs(o.Refs, n.Refs)
 	for _, id := range refIDs {
@@ -343,13 +382,14 @@ func compareTrackedWithEval(o, n analysis.TrackedAttribute, ec evalCtxs) (diffs 
 			diffs = append(diffs, fmt.Sprintf("now references %s = %s", id, display(nv)))
 		case ov != nv:
 			if equivalentByEval(ov, nv, ec.ctxFor(id, true), ec.ctxFor(id, false)) {
+				suppressed = true
 				continue
 			}
 			diffs = append(diffs, fmt.Sprintf("%s changed: %s → %s", id, display(ov), display(nv)))
 			hasValueChange = true
 		}
 	}
-	return diffs, hasValueChange
+	return diffs, hasValueChange, suppressed
 }
 
 // evalCtxs bundles the four evaluation contexts a diff might consult:

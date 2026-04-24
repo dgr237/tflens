@@ -1,0 +1,78 @@
+# Changelog
+
+All notable changes to tflens are documented here. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and tflens adheres to [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed
+
+- **`pkg/diff/semver.go` and the deleted `pkg/constraint` package both replaced by [`hashicorp/go-version`](https://github.com/hashicorp/go-version)** — the same library Terraform itself uses for `required_version`, module `version` constraints, and registry version selection. Two follow-on behaviour changes:
+  - **Prerelease ordering** is now SemVer 2.0.0 §11-compliant: `1.0.0-beta < 1.0.0`, `>= 2.0.0-rc` is correctly broader than `>= 2.0.0`, etc. Previously prereleases were stripped during parsing and treated as equal to their release counterpart. Aligns with Terraform exactly. Build metadata is still stripped per §10.
+  - **4+-segment versions** (Maven-style `1.2.3.4`) are now explicitly rejected. go-version accepts them, but tflens's `~>` interval logic only defines behaviour for 1/2/3 components.
+- **`$TFE_TOKENS_FILE` renamed to `$TFLENS_TFE_TOKENS_FILE`.** The env var is namespaced to make the source unambiguous in environments where multiple tools may share TFE-style tokens. **Action required:** if you exported the old name in a shell profile or CI config, rename it. The Go constant `resolver.TfeTokensFileEnv` keeps the same name — only the underlying string changed.
+- **Tracked-attribute Informational messages now explain *why* a change wasn't flagged Breaking** when static evaluation suppressed the value-change details. New phrasings: `"text changes collapsed: same effective value"` (when supporting refs are also surfaced), `"effective value unchanged: underlying text differs but evaluates to the same constant"` (when nothing else changed), and `"tracked attribute texts changed but evaluate to the same constant (no effective value change)"` (when both old and new have the marker and every diff was eval-equivalent).
+
+### Added
+
+- **Automated releases on PR merge.** Adding a `release:patch`, `release:minor`, or `release:major` label to a PR before merging triggers `.github/workflows/auto-release.yml`, which computes the next version, promotes `[Unreleased]` to a versioned section, tags the commit, and creates a GitHub Release with the new section as the body. PRs without a release label are silently skipped — `[Unreleased]` entries accumulate until the next release-labelled merge.
+- **`scripts/release.sh` + `make release` / `make release-push` targets** for the manual release path (run from a maintainer's checkout when cutting a release that bundles already-merged PRs).
+- **`.github/workflows/release.yml`** that fires on manually-pushed `vX.Y.Z` tags and creates the matching GitHub Release.
+- `SECURITY.md` defining the reporting channel (GitHub private security advisories), supported-versions policy, and scope (credential leakage, path traversal, parser DoS in scope; Terraform itself and hostile git-source fetches out).
+- `CONTRIBUTING.md` covering scope/philosophy, dev setup, the table-driven testdata pattern (single-module + cross-module layouts), commit message convention, the release flow (both automated and manual paths), and a package map.
+- `pkg/diff/testdata/cross_module_tracked/` testdata layout that mirrors a real Terraform project (`<case>/<old|new>/main.tf` + `<case>/<old|new>/modules/<call>/main.tf`). Three cases lock down the cross-module marker behaviour: `parent_change_real` (var.upgrade=true → Breaking), `parent_change_eval_unchanged` (var.upgrade=false → Informational, locks down the false-positive fix), `no_parent_change` (sanity).
+
+### Removed
+
+- `pkg/constraint` package (~290 LOC + tests). Functionality moved to direct `hashicorp/go-version` calls in `pkg/resolver/registry.go`.
+
+## [0.1.3] — 2026-04-24
+
+### Added
+
+- **Cross-module resolution for tracked attributes.** A marker on `var.cluster_version` inside a child module now climbs through the parent's `module "<name>" { cluster_version = ... }` argument and walks any locals/vars it transitively references. Parent-side refs are surfaced under `parent.` prefixes so reviewers can see which side of the boundary moved.
+- **Static evaluation suppresses no-op text changes.** When two text-different expressions evaluate to the same `cty.Value` (e.g. `"1.34"` vs `var.upgrade ? "1.35" : "1.34"` with `var.upgrade = false` → both yield `"1.34"`), the value-change detail is suppressed and the diff demotes to Informational. Distinguishes ref-existence reorganisations (Informational supporting context) from actual value changes (Breaking + CI gate). Falls back conservatively to text comparison when expressions reference unevaluable constructs (data sources, computed resource attributes, Terraform-specific functions like `length`, `contains`, `keys`, `merge`).
+
+### Fixed
+
+- **`LookupAttrText` now reports entity existence rather than value presence.** A variable that exists with no default returns `("", true)` instead of `("", false)`, preventing `"now references variable.X = <unset>"` false positives when the variable was already there. Marker-added cases against existing-but-undefaulted variables now correctly emit Informational.
+
+## [0.1.2] — 2026-04-24
+
+### Added
+
+- **Markers inside `locals { }` blocks** are now bound to the local as its own entity (`local.<name>.value`, mirroring the output convention). Authors can annotate the source-of-truth declaration directly rather than every consumer.
+- **Marker added + value also moved in same PR is now Breaking.** Previously emitted Informational ("marker added") regardless of whether the underlying value moved. Now consults the old entity's attribute text — and, for resource attributes (whose individual attrs aren't cached on `Entity`), each transitively-referenced var/local — and promotes to Breaking when any underlying value changed. Surfaces `value <old> → <new>` in the detail so the reviewer sees what shifted.
+
+### Fixed
+
+- **TFE tokens YAML: strip default ports when matching credentials.** A `tokens.yaml` entry written as `https://tfe.example.com:443` produced a key of `tfe.example.com:443`, while requests arrived as bare `tfe.example.com` — silent 401s on private TFE registries that included the port in their addresses. Normalisation now strips `:443` for `https` and `:80` for `http` on both sides; non-default ports preserved.
+
+## [0.1.1] — 2026-04-24
+
+### Added
+
+- **`tflens diff` covers the root module.** Previously only child module calls were paired by `pairModuleCalls`; the root went undetected. Adding a required root variable, removing a root output, changing the backend, etc. now show up under a `Root module:` section. Output JSON gets a `root_changes` field.
+- **Cross-module input/output validation now follows object-field traversals.** `var.config.property` against `variable "config" { type = object({property = number}) }` now correctly resolves to `number` instead of being misreported as an object/number type mismatch. Also handles map-style `m.k` access (HCL2 treats `m.k` as `m["k"]` for maps).
+- **TFE tokens via `$TFE_TOKENS_FILE`** (since renamed to `$TFLENS_TFE_TOKENS_FILE` in 0.1.4). YAML format used by some Terraform Enterprise org-management tooling. Strictly opt-in: with the env var unset, the loader returns empty credentials and never touches the filesystem. Address may be a bare host, `host:port`, or a full URL.
+
+## [0.1.0] — 2026-04-24
+
+First tagged release of tflens — a static Terraform analyser focused on breaking-change detection across module versions.
+
+### Highlights
+
+- **`hcl/v2`-backed parser** (matches Terraform's own front-end), replacing the original hand-rolled lexer + parser.
+- **`cty.Convert`-driven type compatibility classification.** Type widening / narrowing on variables, output type narrowing, `for_each` key-type narrowing.
+- **Source-type-aware diff.** Local children get the consumer view (cross-validate parent vs new child; only consumption errors are Breaking); registry/git children get the full API diff (publisher's release contract).
+- **`# tflens:track` marker** for opting specific resource attributes (engine versions, force-new names like `cluster_name`, instance classes, …) into the diff. The indirection walker follows `var.X` / `local.X` references one or two hops deep, including string interpolation. Removing the marker is itself flagged as Breaking.
+- **`whatif`** — consumer-view `diff`: cross-validates the parent's argument set + output references against the candidate child; only flags changes that affect this specific caller.
+- **`statediff`** — state-level hazard detection: resource adds/removes vs base ref, plus locals whose value changed and whose dependency chain reaches `count` / `for_each`. With `--state`, lists the state instances that may be affected.
+- **Semver-aware version constraint comparison** (Equal / Broadened / Narrowed / Overlap / Disjoint) for module `version`, `required_version`, and provider `required_providers` constraints.
+- **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
+- **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
+
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/dgr237/tflens/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/dgr237/tflens/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/dgr237/tflens/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/dgr237/tflens/releases/tag/v0.1.0

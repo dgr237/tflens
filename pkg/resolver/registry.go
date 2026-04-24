@@ -13,8 +13,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hashicorp/go-version"
+
 	"github.com/dgr237/tflens/pkg/cache"
-	"github.com/dgr237/tflens/pkg/constraint"
 )
 
 // DefaultRegistryHost is the public Terraform Registry.
@@ -196,7 +197,7 @@ func (r *RegistryResolver) discover(ctx context.Context, host string) (string, e
 	return base, nil
 }
 
-func (r *RegistryResolver) listVersions(ctx context.Context, base string, src registrySource) ([]constraint.V, error) {
+func (r *RegistryResolver) listVersions(ctx context.Context, base string, src registrySource) ([]*version.Version, error) {
 	u := base + path.Join(src.ns, src.name, src.provider, "versions")
 	body, err := r.getJSON(ctx, u)
 	if err != nil {
@@ -215,9 +216,9 @@ func (r *RegistryResolver) listVersions(ctx context.Context, base string, src re
 	if len(payload.Modules) == 0 {
 		return nil, nil
 	}
-	out := make([]constraint.V, 0, len(payload.Modules[0].Versions))
+	out := make([]*version.Version, 0, len(payload.Modules[0].Versions))
 	for _, v := range payload.Modules[0].Versions {
-		parsed, err := constraint.ParseVersion(v.Version)
+		parsed, err := version.NewVersion(v.Version)
 		if err != nil {
 			continue // skip unparseable versions rather than failing the whole list
 		}
@@ -228,16 +229,29 @@ func (r *RegistryResolver) listVersions(ctx context.Context, base string, src re
 
 // selectVersion picks the highest version matching the user's constraint
 // string. An empty constraint means "any version".
-func selectVersion(constraintStr string, versions []constraint.V) (constraint.V, error) {
-	c, err := constraint.Parse(constraintStr)
-	if err != nil {
-		return constraint.V{}, fmt.Errorf("parsing version constraint %q: %w", constraintStr, err)
+func selectVersion(constraintStr string, versions []*version.Version) (*version.Version, error) {
+	constraintStr = strings.TrimSpace(constraintStr)
+	var c version.Constraints
+	if constraintStr != "" {
+		parsed, err := version.NewConstraint(constraintStr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing version constraint %q: %w", constraintStr, err)
+		}
+		c = parsed
 	}
-	v, ok := constraint.Highest(c, versions)
-	if !ok {
-		return constraint.V{}, fmt.Errorf("no published version matches constraint %q", constraintStr)
+	var best *version.Version
+	for _, v := range versions {
+		if c != nil && !c.Check(v) {
+			continue
+		}
+		if best == nil || v.GreaterThan(best) {
+			best = v
+		}
 	}
-	return v, nil
+	if best == nil {
+		return nil, fmt.Errorf("no published version matches constraint %q", constraintStr)
+	}
+	return best, nil
 }
 
 // getDownloadURL asks the registry for the download URL of a specific

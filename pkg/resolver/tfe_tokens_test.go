@@ -115,7 +115,7 @@ tokens:
 }
 
 // TestLoadTfeTokensWithEnvUnsetReturnsEmpty confirms loading is strictly
-// opt-in: with $TFE_TOKENS_FILE unset we never touch the filesystem and
+// opt-in: with $TFLENS_TFE_TOKENS_FILE unset we never touch the filesystem and
 // always yield an empty, non-nil source. This avoids accidentally
 // picking up an unrelated file at any conventional path.
 func TestLoadTfeTokensWithEnvUnsetReturnsEmpty(t *testing.T) {
