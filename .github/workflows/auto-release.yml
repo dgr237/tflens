@@ -1,0 +1,125 @@
+name: Auto-release on PR merge
+
+# Triggers when a PR is merged to main carrying a release:patch /
+# release:minor / release:major label. The workflow computes the next
+# semver from the latest existing v*.*.* tag, runs scripts/release.sh
+# to promote CHANGELOG.md and create the tag, and creates the matching
+# GitHub Release in the same job.
+#
+# Why "in the same job": tags pushed by GITHUB_TOKEN do NOT trigger
+# downstream workflows (the well-known token recursion guard). So the
+# tag-push release.yml workflow won't fire from this auto path; we
+# create the Release inline instead. release.yml still serves the
+# manual `make release-push` path where the maintainer pushes the tag
+# from their own credentials.
+#
+# PRs without a release label are silently skipped — the [Unreleased]
+# entries simply accumulate until a release-labelled PR triggers the
+# next bump.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write   # push commit + tag + create Release
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine bump type from PR labels
+        id: bump
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          # JSON array of label names → bump type. major beats minor
+          # beats patch when multiple labels are present (rare, but
+          # handle it deterministically rather than failing).
+          bump=$(printf '%s' "$LABELS" | jq -r '
+            if any(. == "release:major") then "major"
+            elif any(. == "release:minor") then "minor"
+            elif any(. == "release:patch") then "patch"
+            else empty
+            end
+          ')
+          if [ -z "$bump" ]; then
+            echo "no release:* label on PR; skipping auto-release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=$bump" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout main
+        if: steps.bump.outputs.skip == 'false'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0   # need full history + tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute next version
+        if: steps.bump.outputs.skip == 'false'
+        id: version
+        run: |
+          set -euo pipefail
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+          if [ -z "$latest" ]; then
+            echo "error: no existing v*.*.* tags to bump from" >&2
+            exit 1
+          fi
+          latest=${latest#v}
+          IFS='.' read -r major minor patch <<< "$latest"
+          case "${{ steps.bump.outputs.bump }}" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          echo "version=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        if: steps.bump.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run release script
+        if: steps.bump.outputs.skip == 'false'
+        run: ./scripts/release.sh ${{ steps.version.outputs.version }} --push
+
+      - name: Extract CHANGELOG section for the new tag
+        if: steps.bump.outputs.skip == 'false'
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          body="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\] — " { in_section=1; next }
+            in_section && /^## \[/ { in_section=0 }
+            in_section && /^\[.*\]: / { in_section=0 }
+            in_section { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' -e ':a;/^\n*$/{$d;N;ba;}')"
+          if [ -z "$body" ]; then
+            echo "error: no CHANGELOG entry for v${VERSION}" >&2
+            exit 1
+          fi
+          {
+            echo "body<<__END__"
+            echo "$body"
+            echo "__END__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --notes "${{ steps.notes.outputs.body }}" \
+            --verify-tag

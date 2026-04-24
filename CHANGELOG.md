@@ -14,8 +14,11 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ### Added
 
+- **Automated releases on PR merge.** Adding a `release:patch`, `release:minor`, or `release:major` label to a PR before merging triggers `.github/workflows/auto-release.yml`, which computes the next version, promotes `[Unreleased]` to a versioned section, tags the commit, and creates a GitHub Release with the new section as the body. PRs without a release label are silently skipped — `[Unreleased]` entries accumulate until the next release-labelled merge.
+- **`scripts/release.sh` + `make release` / `make release-push` targets** for the manual release path (run from a maintainer's checkout when cutting a release that bundles already-merged PRs).
+- **`.github/workflows/release.yml`** that fires on manually-pushed `vX.Y.Z` tags and creates the matching GitHub Release.
 - `SECURITY.md` defining the reporting channel (GitHub private security advisories), supported-versions policy, and scope (credential leakage, path traversal, parser DoS in scope; Terraform itself and hostile git-source fetches out).
-- `CONTRIBUTING.md` covering scope/philosophy, dev setup, the table-driven testdata pattern (single-module + cross-module layouts), commit message convention, and a package map.
+- `CONTRIBUTING.md` covering scope/philosophy, dev setup, the table-driven testdata pattern (single-module + cross-module layouts), commit message convention, the release flow (both automated and manual paths), and a package map.
 - `pkg/diff/testdata/cross_module_tracked/` testdata layout that mirrors a real Terraform project (`<case>/<old|new>/main.tf` + `<case>/<old|new>/modules/<call>/main.tf`). Three cases lock down the cross-module marker behaviour: `parent_change_real` (var.upgrade=true → Breaking), `parent_change_eval_unchanged` (var.upgrade=false → Informational, locks down the false-positive fix), `no_parent_change` (sanity).
 
 ### Removed

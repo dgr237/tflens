@@ -118,23 +118,39 @@ Describe the incident / failure mode, the root cause, and the fix. Include the u
 
 ## Releases
 
-The release flow is two stages, designed so the maintainer's local action triggers everything else:
+Two paths, both ending in a tagged GitHub Release with the relevant CHANGELOG section as the body.
 
-1. **Maintainer runs `make release-push VERSION=X.Y.Z` on `main`.** That:
-   - Promotes the `## [Unreleased]` section in `CHANGELOG.md` to `## [X.Y.Z] — <today>`, inserting a fresh empty `[Unreleased]` above
-   - Updates the comparison-link footer
-   - Creates a `Release vX.Y.Z` commit on `main`
-   - Creates an annotated `vX.Y.Z` tag with the CHANGELOG section as the message body
-   - Pushes both the commit and the tag to `origin`
+### Path 1 — Automated, on PR merge (preferred)
 
-2. **GitHub Actions takes over once the tag lands** (`.github/workflows/release.yml`):
-   - Triggers on any `vX.Y.Z` tag push
-   - Extracts the matching CHANGELOG section
-   - Creates a GitHub Release with the section as the body
+Add a `release:patch`, `release:minor`, or `release:major` label to a PR before merging. When the PR lands on `main`, `.github/workflows/auto-release.yml`:
 
-There are no built binaries to attach — consumers install via `go install github.com/dgr237/tflens@vX.Y.Z`.
+1. Reads the label (highest bump wins if multiple are set)
+2. Computes the next version from the latest existing `vX.Y.Z` tag
+3. Runs `scripts/release.sh` to promote `## [Unreleased]` → `## [vX.Y.Z]` and tag the commit
+4. Creates the GitHub Release with the new section as the body
 
-The release script enforces preconditions to make accidents hard: must be on `main`, working tree clean, tag must not exist, `[Unreleased]` must be non-empty. Run `make release VERSION=X.Y.Z` (without `-push`) first if you want to inspect the commit and tag before publishing them.
+**PRs without a release label are silently skipped** — `[Unreleased]` entries accumulate until the next release-labelled PR triggers a bump.
+
+### Path 2 — Manual, from a maintainer's checkout
+
+For releases that aren't tied to a single PR (e.g. cutting a release that bundles several already-merged PRs):
+
+```bash
+git checkout main && git pull
+make release-push VERSION=X.Y.Z
+```
+
+`scripts/release.sh`:
+
+- Verifies preconditions (on `main`, clean tree, tag doesn't exist, `[Unreleased]` non-empty)
+- Promotes the CHANGELOG, commits, tags, pushes
+- The tag-push triggers `.github/workflows/release.yml` which creates the GitHub Release
+
+Run `make release VERSION=X.Y.Z` (without `-push`) first if you want to inspect the commit and tag before publishing.
+
+### Why two workflows?
+
+`auto-release.yml` does its own GitHub Release creation inline because tags pushed by `GITHUB_TOKEN` don't trigger downstream workflows (the well-known recursion guard). `release.yml` still handles the manual-tag case where the maintainer pushes the tag from their own credentials, which DO trigger workflows.
 
 If you ever need to redo a release (typo in the changelog, etc.):
 
