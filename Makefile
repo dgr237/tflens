@@ -6,7 +6,7 @@ GO     := go
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install test test-race test-verbose coverage vet fmt fmt-check check clean
+.PHONY: help build install test test-race test-verbose coverage vet fmt fmt-check check clean release release-push
 
 help:
 	@echo "tflens - targets:"
@@ -23,6 +23,9 @@ help:
 	@echo "  fmt           Format all .go files with gofmt"
 	@echo "  fmt-check     Verify formatting without writing (suitable for CI)"
 	@echo "  check         Run vet, fmt-check, and tests"
+	@echo ""
+	@echo "  release       Promote CHANGELOG [Unreleased] to v\$$(VERSION), commit and tag locally"
+	@echo "  release-push  Same as release, plus push commit and tag to origin"
 	@echo ""
 	@echo "  clean         Remove build artifacts"
 
@@ -67,6 +70,25 @@ fmt-check:
 	fi
 
 check: vet fmt-check test
+
+# ---- release ----
+#
+# `make release VERSION=0.1.4` runs scripts/release.sh, which promotes
+# CHANGELOG.md's [Unreleased] section to a versioned section,
+# commits the change, and creates an annotated tag — all locally.
+# Add release-push to push commit + tag to origin.
+
+release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "error: VERSION not set. Usage: make release VERSION=X.Y.Z"; exit 1; \
+	fi
+	./scripts/release.sh $(VERSION)
+
+release-push:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "error: VERSION not set. Usage: make release-push VERSION=X.Y.Z"; exit 1; \
+	fi
+	./scripts/release.sh $(VERSION) --push
 
 # ---- housekeeping ----
 

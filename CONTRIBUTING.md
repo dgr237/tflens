@@ -116,6 +116,36 @@ actually changed.
 
 Describe the incident / failure mode, the root cause, and the fix. Include the user-visible change (what a reviewer would see differently) when relevant.
 
+## Releases
+
+The release flow is two stages, designed so the maintainer's local action triggers everything else:
+
+1. **Maintainer runs `make release-push VERSION=X.Y.Z` on `main`.** That:
+   - Promotes the `## [Unreleased]` section in `CHANGELOG.md` to `## [X.Y.Z] — <today>`, inserting a fresh empty `[Unreleased]` above
+   - Updates the comparison-link footer
+   - Creates a `Release vX.Y.Z` commit on `main`
+   - Creates an annotated `vX.Y.Z` tag with the CHANGELOG section as the message body
+   - Pushes both the commit and the tag to `origin`
+
+2. **GitHub Actions takes over once the tag lands** (`.github/workflows/release.yml`):
+   - Triggers on any `vX.Y.Z` tag push
+   - Extracts the matching CHANGELOG section
+   - Creates a GitHub Release with the section as the body
+
+There are no built binaries to attach — consumers install via `go install github.com/dgr237/tflens@vX.Y.Z`.
+
+The release script enforces preconditions to make accidents hard: must be on `main`, working tree clean, tag must not exist, `[Unreleased]` must be non-empty. Run `make release VERSION=X.Y.Z` (without `-push`) first if you want to inspect the commit and tag before publishing them.
+
+If you ever need to redo a release (typo in the changelog, etc.):
+
+```bash
+git tag -d vX.Y.Z                          # local
+git push origin :refs/tags/vX.Y.Z          # remote
+git reset --hard <commit-before-release>   # rewind main
+git push --force-with-lease origin main    # publish (rare!)
+make release-push VERSION=X.Y.Z            # re-do
+```
+
 ## Pull requests
 
 1. **Branch** off `main`. Name it descriptively (`fix-eval-no-default`, not `patch-1`).
