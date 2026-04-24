@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/resolver"
@@ -85,6 +86,11 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 			} else {
 				r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
 			}
+			// Tracked-attribute changes apply regardless of source type:
+			// authors opt in to surface specific attributes (engine
+			// versions, instance classes, …) the API diff intentionally
+			// ignores.
+			r.changes = append(r.changes, diff.DiffTracked(p.oldNode.Module, p.newNode.Module)...)
 			for _, c := range r.changes {
 				if c.Kind == diff.Breaking {
 					totalBreaking++
@@ -94,16 +100,35 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 		results = append(results, r)
 	}
 
+	// Tracked attributes on the root module are not covered by
+	// pairModuleCalls (which keys off module CALLS). Run a parallel pass
+	// against the root and surface findings as a dedicated section.
+	rootTracked := diff.DiffTracked(rootModule(oldProj), rootModule(newProj))
+	for _, c := range rootTracked {
+		if c.Kind == diff.Breaking {
+			totalBreaking++
+		}
+	}
+
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, path, results), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, path, results, rootTracked), exitCodeFor(totalBreaking))
 		return nil
 	}
 
-	printRefResults(baseRef, results)
+	printRefResults(baseRef, results, rootTracked)
 	if totalBreaking > 0 {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// rootModule returns p.Root.Module if both are non-nil, otherwise nil.
+// DiffTracked is nil-safe so this just lets us avoid a nil chain.
+func rootModule(p *loader.Project) *analysis.Module {
+	if p == nil || p.Root == nil {
+		return nil
+	}
+	return p.Root.Module
 }
 
 // consumptionChangesForLocal turns cross_validate findings against the
@@ -184,8 +209,12 @@ func exitCodeFor(breaking int) int {
 
 // ---- text rendering ----
 
-func printRefResults(baseRef string, results []refModuleResult) {
+func printRefResults(baseRef string, results []refModuleResult, rootTracked []diff.Change) {
 	any := false
+	if len(rootTracked) > 0 {
+		printRootTracked(rootTracked)
+		any = true
+	}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
@@ -198,6 +227,34 @@ func printRefResults(baseRef string, results []refModuleResult) {
 	}
 	if !any {
 		fmt.Printf("No module-call changes detected vs %s.\n", baseRef)
+	}
+}
+
+// printRootTracked emits the tracked-attribute changes for the root
+// module under a dedicated heading, since the root isn't a module call
+// and so doesn't appear in the per-module section below.
+func printRootTracked(changes []diff.Change) {
+	fmt.Println("Root module tracked attributes:")
+	var breaking, info []diff.Change
+	for _, c := range changes {
+		switch c.Kind {
+		case diff.Breaking:
+			breaking = append(breaking, c)
+		case diff.Informational:
+			info = append(info, c)
+		}
+	}
+	if len(breaking) > 0 {
+		fmt.Printf("  Breaking (%d):\n", len(breaking))
+		for _, c := range breaking {
+			printChangeLine("    ", c)
+		}
+	}
+	if len(info) > 0 {
+		fmt.Printf("  Informational (%d):\n", len(info))
+		for _, c := range info {
+			printChangeLine("    ", c)
+		}
 	}
 }
 
@@ -282,8 +339,19 @@ func printChangeLine(indent string, c diff.Change) {
 
 // ---- JSON rendering ----
 
-func buildRefJSON(baseRef, path string, results []refModuleResult) any {
+func buildRefJSON(baseRef, path string, results []refModuleResult, rootTracked []diff.Change) any {
 	out := refJSON{BaseRef: baseRef, Path: path}
+	for _, c := range rootTracked {
+		out.RootTracked = append(out.RootTracked, toJSONChange(c))
+		switch c.Kind {
+		case diff.Breaking:
+			out.Summary.Breaking++
+		case diff.NonBreaking:
+			out.Summary.NonBreaking++
+		case diff.Informational:
+			out.Summary.Informational++
+		}
+	}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
@@ -316,10 +384,11 @@ func buildRefJSON(baseRef, path string, results []refModuleResult) any {
 }
 
 type refJSON struct {
-	BaseRef   string             `json:"base_ref"`
-	Path string             `json:"path"`
-	Modules   []refModuleJSON `json:"modules"`
-	Summary   refSummaryJSON  `json:"summary"`
+	BaseRef     string          `json:"base_ref"`
+	Path        string          `json:"path"`
+	Modules     []refModuleJSON `json:"modules"`
+	RootTracked []jsonChange    `json:"root_tracked,omitempty"`
+	Summary     refSummaryJSON  `json:"summary"`
 }
 
 type refModuleJSON struct {

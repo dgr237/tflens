@@ -59,7 +59,7 @@ tflens --offline diff --ref main ./my-tf
 | `graph <path>` | Emit the dependency graph in Graphviz DOT format |
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
-| `diff [path]` | What changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Behaviour depends on the child's `source`: **local children** (`./…`, `../…`) are evaluated against your parent's actual usage (only consumption errors surface as Breaking — no API noise); **registry/git children** report the full API diff (publisher's release contract). |
+| `diff [path]` | What changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Behaviour depends on the child's `source`: **local children** (`./…`, `../…`) are evaluated against your parent's actual usage (only consumption errors surface as Breaking — no API noise); **registry/git children** report the full API diff (publisher's release contract). Authors can also opt specific resource attributes into the diff with `# tflens:track` markers (engine versions, instance classes, …). |
 | `whatif [path] [name]` | Like `diff` but **always** consumer-view, regardless of source type. Cross-validates the parent's argument set and output references against the candidate child; only flags changes that actually affect this caller. Use this to gate any external-module upgrade. Optional `name` scopes to one module call. |
 | `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
@@ -167,6 +167,7 @@ Hints cover the common cases: required-variable-added (suggest `default`), requi
 ### What it catches
 
 **Variables:**
+
 | Change | Kind |
 | --- | --- |
 | Variable removed | Breaking |
@@ -195,6 +196,7 @@ Hints cover the common cases: required-variable-added (suggest `default`), requi
 | `validation` / `precondition` / `postcondition` block removed | Informational ("loosens" the contract) |
 
 **Outputs:**
+
 | Change | Kind |
 | --- | --- |
 | Output removed | Breaking |
@@ -210,6 +212,7 @@ Hints cover the common cases: required-variable-added (suggest `default`), requi
 | `depends_on` changed | Informational |
 
 **Resources, data sources, module calls:**
+
 | Change | Kind |
 | --- | --- |
 | Entity removed | Breaking |
@@ -236,6 +239,7 @@ Hints cover the common cases: required-variable-added (suggest `default`), requi
 | Module argument (non-meta-arg attribute) added/removed/value-changed | Informational |
 
 **`terraform {}` block:**
+
 | Change | Kind |
 | --- | --- |
 | `required_version` constraint change (semver-aware) | Breaking / NonBreaking / Informational |
@@ -260,18 +264,17 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 
 ### What it does NOT catch
 
-- **Resource attribute body changes.** A resource gaining or changing an attribute (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) is not diffed. The noise-to-signal ratio of a full body diff is too low; if the resource is removed, renamed, or has its meta-arguments changed, we flag that — but individual attribute edits are treated as internal.
+- **Resource attribute body changes.** A resource gaining or changing an attribute (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) is not diffed by default. The noise-to-signal ratio of a full body diff is too low; if the resource is removed, renamed, or has its meta-arguments changed, we flag that. Authors can opt specific attributes into the diff with the [`# tflens:track`](#tracked-attributes-for-application-development-teams) marker — used for engine versions, instance classes, and **force-new attributes** (`cluster_name`, `identifier`, …) where a change quietly forces a destroy and recreate.
 - **Resource provider schema changes.** We cannot tell that an AWS provider bump from v4 to v5 silently changed `aws_vpc.main.cidr_block` from a string to a list, because we do not embed provider schemas.
 - **Dynamic block content.** `dynamic "ingress" { for_each = ... }` bodies generate blocks at plan time. Without evaluating the `for_each`, the generated block set is opaque.
 - **Condition strictness.** If `validation { condition = length(var.x) > 0 }` becomes `condition = length(var.x) > 5`, we record that a validation block exists in both versions but cannot tell that the new condition rejects strictly more inputs.
-- **Default value *content* changes.** Only the presence or absence of a default is diffed. Changing `default = "dev"` to `default = "prod"` produces no change — most real modules change defaults deliberately, and flagging every edit produces too much noise.
+- **Default value *content* changes.** Only the presence or absence of a default is diffed by default. Changing `default = "dev"` to `default = "prod"` produces no change — most real modules change defaults deliberately, and flagging every edit produces too much noise. When the variable is referenced from a tracked attribute (`# tflens:track`), the default is followed and changes to it ARE flagged against the tracked attribute.
 - **Description / documentation changes.** Informational-only, currently skipped.
 - **Ambiguous renames.** The rename heuristic pairs exactly one removed entity with one added entity of the same kind and type. When there are multiple candidates (two removed, two added of the same type), no pairing is attempted — each is reported individually.
 - **Type coercion subtleties.** `list(string)` → `set(string)` is flagged as a type change. Terraform auto-converts in some expression contexts but not others (index access `[0]` fails on sets); distinguishing safe from unsafe coercions requires knowing how each caller uses the variable, which is cross-module.
 - **Type narrowing of custom objects without `optional()`.** Adding a field to an object type is correctly flagged as breaking, but this tool cannot reason about *what* the provider would accept for that field's value.
 - **`check { assert { ... } }` blocks** (Terraform 1.5+) — not currently parsed.
 - **`import { ... }` blocks** (Terraform 1.5+) — not currently parsed.
-- **Backend configuration diffs** (`terraform { backend "s3" { ... } }`) — not currently parsed. More commonly in root modules than in reusable modules.
 - **Provisioner blocks** (`provisioner "local-exec"`, `connection`) — not currently parsed; their presence or absence affects teardown and creation but is not flagged.
 - **Nested moved-block expressions with indices.** `moved { from = aws_vpc.main[0], to = aws_vpc.main["a"] }` is not recognised; only bare resource references in `from` / `to` are parsed.
 - **Children that cannot be resolved offline.** `diff`, `whatif`, and `statediff` only compare children that both resolvers can materialise. In `--offline` mode or against registry/git sources missing from the cache and from `.terraform/modules/modules.json`, the child is skipped rather than reported.
@@ -333,6 +336,116 @@ Exit code is 1 when any resource add/remove or sensitive local fires.
 - **Full expression evaluation.** A sensitive local with `count = length(local.xs) > 0 ? 1 : 0` is flagged as "may change" without us knowing whether `length` actually crosses the boundary. The signal is a warning, not a definitive answer.
 - **Variable-driven changes across module callers.** A `count = var.n` resource where the caller on one branch passes `n = 3` and the other passes `n = 1` is not currently followed across module boundaries.
 
+## Tracked attributes (for application-development teams)
+
+`diff` deliberately ignores most resource-block attribute changes — they're noise relative to the public API surface (variables, outputs, types). But some attributes are load-bearing for *operations*. Two broad classes are worth pulling out:
+
+- **In-place but disruptive** — an EKS `cluster_version` bump, an RDS `engine_version` jump, an EC2 `instance_class` resize. The resource is updated in place but the change has real-world consequences (downtime, add-on compatibility, cost).
+- **Force-new (destroy + recreate)** — an EKS `cluster_name`, an RDS `identifier`, an `aws_db_subnet_group.name`. Terraform's plan will show `# forces replacement` for these, but only after `terraform plan` runs against an applied state. At PR-review time the diff looks like an innocent string change. Worse, the value is usually computed (`"${var.env}-${local.suffix}"`), so the literal text in the resource block doesn't change at all when `local.suffix` flips from `"primary"` to `"secondary"`.
+
+These are easy to merge by accident and hard to roll back. AD teams own the resource modules; they're the people who know which attributes need a second pair of eyes.
+
+Mark them with `# tflens:track`:
+
+```hcl
+resource "aws_eks_cluster" "this" {
+  name            = "prod"
+  cluster_version = "1.28" # tflens:track: bump only after add-on compatibility check
+}
+```
+
+Now `tflens diff` flags any change to `cluster_version` as **Breaking**, with the comment text surfaced as the hint.
+
+### Marker placement
+
+| Form | Where it goes | Annotates |
+|---|---|---|
+| Trailing | Same line as the attribute, after the value | The attribute on that line |
+| Own-line | On its own line, immediately above the attribute | The attribute on the next line |
+
+Both `#` and `//` comment styles work. The text after `tflens:track:` is free-form — keep it short and operational; it appears verbatim in the diff hint.
+
+```hcl
+# Trailing
+cluster_version = "1.28" # tflens:track: requires planned maintenance window
+
+# Own-line — useful when the value is long
+# tflens:track: requires planned maintenance window
+cluster_version = "1.28"
+```
+
+A bare `# tflens:track` (no description) is also valid; the diff still flags changes, just without a custom hint.
+
+### Indirection through variables and locals
+
+Real modules rarely hard-code these values. The marker follows indirection one or two hops deep:
+
+```hcl
+variable "cluster_version" {
+  type    = string
+  default = "1.28"
+  validation {
+    condition     = contains(["1.28", "1.29", "1.30"], var.cluster_version)
+    error_message = "version must be a supported EKS minor"
+  }
+}
+
+resource "aws_eks_cluster" "this" {
+  cluster_version = var.cluster_version # tflens:track
+}
+```
+
+A change to `var.cluster_version`'s `default` is detected and reported as Breaking against the tracked attribute, with the variable's ID in the message. The same applies to `local.foo`, including chains (`local.outer = local.inner = "1.28"`) — the resolver recurses with cycle protection.
+
+Combine with a `validation { condition = contains([...], var.cluster_version) }` block for two layers of safety: tflens flags the change at PR time, Terraform itself rejects unsupported values at plan time.
+
+#### Force-new attributes with computed values
+
+The indirection rule extends to string interpolation, which is where force-new attributes usually hide. Consider:
+
+```hcl
+variable "env" {
+  type    = string
+  default = "prod"
+}
+
+locals {
+  suffix = "primary"
+}
+
+resource "aws_eks_cluster" "this" {
+  # cluster_name is force-new — changing this destroys and recreates the cluster
+  cluster_name = "${var.env}-${local.suffix}" # tflens:track: force-new — destroys and recreates the cluster
+}
+```
+
+If a teammate changes `local.suffix = "secondary"` in a follow-up PR, the literal text of `cluster_name` is unchanged — the resource block looks identical between branches. But the *computed* value flips from `"prod-primary"` to `"prod-secondary"`, and Terraform will plan a destroy + recreate. tflens follows the interpolated `var.env` and `local.suffix` references and reports:
+
+```
+resource.aws_eks_cluster.this.cluster_name: local.suffix changed: "primary" → "secondary"
+  hint: force-new — destroys and recreates the cluster
+```
+
+Same mechanism, different operational risk profile — and the marker description (the text after `tflens:track:`) is the right place to communicate that risk to reviewers.
+
+### Why removing the marker is itself flagged
+
+If a teammate decides to "just remove the comment" to avoid the diff, that's exactly the failure mode the marker exists to prevent. Marker removal is reported as a Breaking change of its own:
+
+```
+resource.aws_eks_cluster.this.cluster_version: tracked-attribute marker removed (the safety guard is gone)
+  hint: restore the `# tflens:track` comment, or remove the attribute entirely if the resource is gone
+```
+
+Adding a new marker is reported as Informational — useful in PR review but not gating.
+
+### Where it works
+
+- **Root module** — annotated attributes in any `.tf` file at the project root are diffed against the same path at the base ref.
+- **Child modules** — every module call (recursively) is also covered, regardless of source type. Local-source children get tracked diffing in addition to consumption checks; registry/git children get it in addition to the full API diff.
+
+Tracked-attribute diffs always count toward the `tflens diff` exit code, so CI gates work without extra wiring.
+
 ## Module resolution
 
 Commands that traverse a project (`validate`, `diff`, `whatif`, `statediff`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
@@ -372,8 +485,8 @@ These are not bugs but deliberate boundaries:
 
 - **No Terraform execution.** This is a static analyser. Anything that requires planning, applying, or querying a provider is out of scope.
 - **No provider schemas.** We do not embed AWS/GCP/Azure/etc. provider schemas. Resource attribute types, required-vs-optional attributes, and deprecations of resource types are invisible to us. Running `terraform validate` in addition to this tool catches those.
-- **No expression evaluation.** Functions, conditionals, and references to computed attributes cannot be resolved statically. The inferred type of `aws_vpc.main.id` is `TypeUnknown`.
-- **No caller awareness.** We analyse a module in isolation. Whether an existing caller actually uses a removed output, or pinned to the now-incompatible version, cannot be determined without analysing callers too.
+- **No expression evaluation.** Functions, conditionals, and references to computed attributes cannot be resolved statically. The inferred type of `aws_vpc.main.id` is `TypeUnknown`. The tracked-attribute pass does follow `var.X` / `local.X` references one or two hops deep — by comparing the canonical *text* of the referenced default or value, not by evaluating the expression.
+- **Caller awareness only at module-call boundaries.** `whatif` and the local-source path of `diff` cross-validate a parent module's `module "x" { ... }` block against the candidate child's variables and outputs. Beyond that — e.g. whether some external repo that pinned to an old version still works after a registry-module change — is out of scope; we'd need to analyse those callers too.
 - **Mid-expression comments are dropped.** Line and block comments at statement boundaries round-trip correctly; comments embedded inside a function call argument list split across lines, or inside a multi-line object/tuple literal, are lost by `fmt`.
 
 ## Editor integration

@@ -175,6 +175,10 @@ type Module struct {
 	// cross_validate can flag references whose target output no longer
 	// exists in the new child.
 	moduleOutputRefs map[string]map[string]bool
+
+	// tracked is the set of attributes annotated with `# tflens:track`
+	// markers, in source order across all files in this module.
+	tracked []TrackedAttribute
 }
 
 // Backend describes the terraform { backend "X" { ... } } block.
@@ -394,6 +398,10 @@ func AnalyseFiles(files []*File) *Module {
 	for _, f := range files {
 		typeCheckBodies(m, f)
 	}
+	for _, f := range files {
+		m.tracked = append(m.tracked, collectTrackedAttributes(f)...)
+	}
+	m.resolveTrackedRefs()
 	checkSensitivePropagation(m)
 	return m
 }
