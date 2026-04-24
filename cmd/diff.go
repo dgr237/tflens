@@ -128,7 +128,7 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, path, results, rootChanges), diff.ExitCodeFor(totalBreaking))
+		exitJSON(render.BuildJSONDiff(baseRef, path, results, rootChanges), diff.ExitCodeFor(totalBreaking))
 		return nil
 	}
 
@@ -238,76 +238,5 @@ func printOneRefResult(r refModuleResult) {
 		return
 	}
 	render.WriteChangesByKind(os.Stdout, "  ", "    ", r.Changes)
-}
-
-// ---- JSON rendering ----
-
-func buildRefJSON(baseRef, path string, results []refModuleResult, rootChanges []diff.Change) any {
-	out := refJSON{BaseRef: baseRef, Path: path}
-	for _, c := range rootChanges {
-		out.RootChanges = append(out.RootChanges, render.JSONChg(c))
-		switch c.Kind {
-		case diff.Breaking:
-			out.Summary.Breaking++
-		case diff.NonBreaking:
-			out.Summary.NonBreaking++
-		case diff.Informational:
-			out.Summary.Informational++
-		}
-	}
-	for _, r := range results {
-		if !r.Interesting() {
-			continue
-		}
-		entry := refModuleJSON{
-			Name:       r.Pair.Key,
-			Status:     r.Pair.Status.String(),
-			OldSource:  r.Pair.OldSource,
-			OldVersion: r.Pair.OldVersion,
-			NewSource:  r.Pair.NewSource,
-			NewVersion: r.Pair.NewVersion,
-		}
-		for _, c := range r.Changes {
-			entry.Changes = append(entry.Changes, render.JSONChg(c))
-			switch c.Kind {
-			case diff.Breaking:
-				entry.Summary.Breaking++
-				out.Summary.Breaking++
-			case diff.NonBreaking:
-				entry.Summary.NonBreaking++
-				out.Summary.NonBreaking++
-			case diff.Informational:
-				entry.Summary.Informational++
-				out.Summary.Informational++
-			}
-		}
-		out.Modules = append(out.Modules, entry)
-	}
-	return out
-}
-
-type refJSON struct {
-	BaseRef     string          `json:"base_ref"`
-	Path        string          `json:"path"`
-	Modules     []refModuleJSON `json:"modules"`
-	RootChanges []render.JSONChange    `json:"root_changes,omitempty"`
-	Summary     refSummaryJSON  `json:"summary"`
-}
-
-type refModuleJSON struct {
-	Name       string            `json:"name"`
-	Status     string            `json:"status"`
-	OldSource  string            `json:"old_source,omitempty"`
-	OldVersion string            `json:"old_version,omitempty"`
-	NewSource  string            `json:"new_source,omitempty"`
-	NewVersion string            `json:"new_version,omitempty"`
-	Changes    []render.JSONChange      `json:"changes,omitempty"`
-	Summary    refSummaryJSON `json:"summary"`
-}
-
-type refSummaryJSON struct {
-	Breaking      int `json:"breaking"`
-	NonBreaking   int `json:"non_breaking"`
-	Informational int `json:"informational"`
 }
 

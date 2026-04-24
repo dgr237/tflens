@@ -105,7 +105,7 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(whatifBranchJSONPayload(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
+		exitJSON(render.BuildJSONWhatif(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
 		return nil
 	}
 
@@ -160,52 +160,3 @@ func printOneWhatifCall(path string, r whatifCallResult) {
 	render.WriteChangesByKind(os.Stdout, "    ", "      ", r.APIChanges)
 }
 
-// ---- JSON rendering ----
-
-type whatifBranchJSON struct {
-	BaseRef   string                 `json:"base_ref"`
-	Path string                 `json:"path"`
-	Calls     []whatifCallJSON       `json:"calls"`
-	Summary   whatifBranchSummaryJSON `json:"summary"`
-}
-
-type whatifCallJSON struct {
-	Name         string                `json:"name"`
-	Status       string                `json:"status"`
-	DirectImpact []render.JSONValidationError `json:"direct_impact"`
-	APIChanges   []render.JSONChange          `json:"api_changes,omitempty"`
-}
-
-type whatifBranchSummaryJSON struct {
-	DirectImpact int `json:"direct_impact"`
-	Breaking     int `json:"breaking"`
-	NonBreaking  int `json:"non_breaking"`
-	Informational int `json:"informational"`
-}
-
-func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) whatifBranchJSON {
-	out := whatifBranchJSON{BaseRef: baseRef, Path: path}
-	for _, r := range calls {
-		entry := whatifCallJSON{
-			Name:   r.Pair.Key,
-			Status: r.Pair.Status.String(),
-		}
-		for _, e := range r.DirectImpact {
-			entry.DirectImpact = append(entry.DirectImpact, render.JSONValErr(e))
-			out.Summary.DirectImpact++
-		}
-		for _, c := range r.APIChanges {
-			entry.APIChanges = append(entry.APIChanges, render.JSONChg(c))
-			switch c.Kind {
-			case diff.Breaking:
-				out.Summary.Breaking++
-			case diff.NonBreaking:
-				out.Summary.NonBreaking++
-			case diff.Informational:
-				out.Summary.Informational++
-			}
-		}
-		out.Calls = append(out.Calls, entry)
-	}
-	return out
-}

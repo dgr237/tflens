@@ -12,6 +12,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 // ---- unit tests on loader.PairModuleCalls (pure logic) -----------------------
@@ -192,7 +193,7 @@ func TestDiffRefLocalChangeWithAtomicUpdateIsNotBreaking(t *testing.T) {
 		t.Fatalf("expected exit 0 (parent's usage is consistent), got err=%v\nstderr=%s", err, stderr.String())
 	}
 
-	var out refJSON
+	var out render.JSONDiffOutput
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -317,7 +318,7 @@ func TestDiffRefOutputRenamedAtomicallyIsNotBreaking(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("expected exit 0 (parent reference updated), got err=%v\nstderr=%s", err, stderr.String())
 	}
-	var out refJSON
+	var out render.JSONDiffOutput
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -339,7 +340,7 @@ func TestDiffRefOutputRemovedWhileParentReferencesIsBreaking(t *testing.T) {
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("expected exit 1 (parent still references removed output), got err=%v\nstderr=%s", err, stderr.String())
 	}
-	var out refJSON
+	var out render.JSONDiffOutput
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -369,7 +370,7 @@ func TestDiffRefLocalChangeWithBrokenParentIsBreaking(t *testing.T) {
 		t.Fatalf("expected exit 1 (parent's usage is broken), got err=%v\nstderr=%s", err, stderr.String())
 	}
 
-	var out refJSON
+	var out render.JSONDiffOutput
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
@@ -542,7 +543,7 @@ func TestDiffRefNestedAtomicUpdateIsNotBreaking(t *testing.T) {
 		t.Fatalf("expected exit 0 (nested parent updated atomically), got err=%v\nstderr=%s", err, stderr.String())
 	}
 
-	var out refJSON
+	var out render.JSONDiffOutput
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("unmarshal: %v\nstdout=%s", err, stdout.String())
 	}
