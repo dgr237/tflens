@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-24
+
 ### Changed (internal)
 
 - **Module-call pairing logic moved from `cmd/` to `pkg/loader`** as exported `PairModuleCalls`, `ModuleCallPair`, `ModuleCallStatus`. Same behaviour; now unit-tested directly rather than only via subprocess integration tests.
@@ -90,7 +92,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/dgr237/tflens/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dgr237/tflens/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/dgr237/tflens/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/dgr237/tflens/compare/v0.1.1...v0.1.2
