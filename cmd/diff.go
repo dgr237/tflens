@@ -11,138 +11,54 @@ import (
 )
 
 var diffCmd = &cobra.Command{
-	Use:   "diff [<old> <new>]",
-	Short: "Compare two module versions and report breaking changes",
-	Long: `Diff classifies every detected change as:
+	Use:   "diff [path]",
+	Short: "Compare module APIs in path against a git ref (author view)",
+	Long: `Diff is the author view: it answers "what changed in the module's
+API between this checkout and the base ref?". Use it when reviewing a
+module release or PR; pair it with whatif (consumer view) when you want
+to know whether your specific caller breaks.
+
+Compares every module call in path (default cwd) against its counterpart
+at the given git ref (branch, tag, SHA, origin/main, HEAD~3, …).
+Classifies each detected change as:
   - Breaking: existing callers or state will be affected
   - NonBreaking: safe to upgrade through
   - Informational: operational or cosmetic, but worth surfacing
 
 Exits non-zero when any Breaking changes exist (suitable for CI gating).
 
-Two modes:
-
-  tflens diff <old> <new>        Explicit: compare two module directories.
-  tflens diff --ref <base> [ws]  Ref: compare every module call in ws
-                                 (default cwd) against its counterpart at
-                                 the given git ref (branch, tag, SHA,
-                                 origin/main, HEAD~3, …). Reports per-call
-                                 diffs plus added/removed calls.`,
-	Args: cobra.RangeArgs(0, 2),
+The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
+→ main → master.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		path := "."
+		if len(args) == 1 {
+			path = args[0]
+		}
 		base, _ := cmd.Flags().GetString("ref")
-		if base != "" {
-			if len(args) > 1 {
-				return fmt.Errorf("--ref mode takes at most one positional arg (workspace); got %d", len(args))
+		if base == RefAutoKeyword {
+			auto, err := resolveAutoRef(path)
+			if err != nil {
+				return err
 			}
-			ws := "."
-			if len(args) == 1 {
-				ws = args[0]
-			}
-			if base == RefAutoKeyword {
-				auto, err := resolveAutoRef(ws)
-				if err != nil {
-					return err
-				}
-				base = auto
-			}
-			return runDiffRef(cmd, ws, base)
+			base = auto
 		}
-		if len(args) != 2 {
-			return fmt.Errorf("diff requires <old> <new>, or --ref <base> [workspace]")
-		}
-		runDiff(cmd, args[0], args[1])
-		return nil
+		return runDiffRef(cmd, path, base)
 	},
 }
 
 func init() {
-	diffCmd.Flags().String("ref", "",
-		"compare the workspace's module calls against a git ref (branch, tag, SHA, …); pass 'auto' to detect (@{upstream} → origin/HEAD → main → master)")
+	diffCmd.Flags().String("ref", RefAutoKeyword,
+		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	rootCmd.AddCommand(diffCmd)
 }
 
-func runDiff(cmd *cobra.Command, oldPath, newPath string) {
-	oldMod := mustLoadModule(oldPath)
-	newMod := mustLoadModule(newPath)
-	changes := diff.Diff(oldMod, newMod)
-
-	var breaking, nonBreaking, info []diff.Change
-	for _, c := range changes {
-		switch c.Kind {
-		case diff.Breaking:
-			breaking = append(breaking, c)
-		case diff.NonBreaking:
-			nonBreaking = append(nonBreaking, c)
-		case diff.Informational:
-			info = append(info, c)
-		}
-	}
-
-	if outputJSON(cmd) {
-		all := make([]jsonChange, 0, len(changes))
-		for _, c := range changes {
-			all = append(all, toJSONChange(c))
-		}
-		code := 0
-		if len(breaking) > 0 {
-			code = 1
-		}
-		exitJSON(struct {
-			Changes []jsonChange `json:"changes"`
-			Summary struct {
-				Breaking      int `json:"breaking"`
-				NonBreaking   int `json:"non_breaking"`
-				Informational int `json:"informational"`
-			} `json:"summary"`
-		}{
-			Changes: all,
-			Summary: struct {
-				Breaking      int `json:"breaking"`
-				NonBreaking   int `json:"non_breaking"`
-				Informational int `json:"informational"`
-			}{len(breaking), len(nonBreaking), len(info)},
-		}, code)
-		return
-	}
-
-	if len(breaking)+len(nonBreaking)+len(info) == 0 {
-		fmt.Println("No changes detected.")
-		return
-	}
-
-	printSection := func(title string, list []diff.Change) {
-		if len(list) == 0 {
-			return
-		}
-		fmt.Printf("%s (%d):\n", title, len(list))
-		for _, c := range list {
-			fmt.Printf("  %s: %s\n", c.Subject, c.Detail)
-		}
-	}
-	printSection("Breaking changes", breaking)
-	if len(breaking) > 0 && len(nonBreaking)+len(info) > 0 {
-		fmt.Println()
-	}
-	printSection("Non-breaking changes", nonBreaking)
-	if len(nonBreaking) > 0 && len(info) > 0 {
-		fmt.Println()
-	}
-	printSection("Informational", info)
-
-	if len(breaking) > 0 {
-		os.Exit(1)
-	}
-}
-
-// ---- ref mode ------------------------------------------------------
-
-func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
-	newProj, err := loadProject(cmd, workspace)
+func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
+	newProj, err := loadProject(cmd, path)
 	if err != nil {
-		return fmt.Errorf("loading workspace: %w", err)
+		return fmt.Errorf("loading path: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
@@ -167,7 +83,7 @@ func runDiffRef(cmd *cobra.Command, workspace, baseRef string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, workspace, results), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, path, results), exitCodeFor(totalBreaking))
 		return nil
 	}
 
@@ -298,8 +214,8 @@ func printOneRefResult(r refModuleResult) {
 
 // ---- JSON rendering ----
 
-func buildRefJSON(baseRef, workspace string, results []refModuleResult) any {
-	out := refJSON{BaseRef: baseRef, Workspace: workspace}
+func buildRefJSON(baseRef, path string, results []refModuleResult) any {
+	out := refJSON{BaseRef: baseRef, Path: path}
 	for _, r := range results {
 		if !r.interesting() {
 			continue
@@ -333,7 +249,7 @@ func buildRefJSON(baseRef, workspace string, results []refModuleResult) any {
 
 type refJSON struct {
 	BaseRef   string             `json:"base_ref"`
-	Workspace string             `json:"workspace"`
+	Path string             `json:"path"`
 	Modules   []refModuleJSON `json:"modules"`
 	Summary   refSummaryJSON  `json:"summary"`
 }

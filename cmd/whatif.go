@@ -12,241 +12,65 @@ import (
 )
 
 var whatifCmd = &cobra.Command{
-	Use:   "whatif <workspace> <module-call-name> <new-version-path>",
-	Short: "Simulate upgrading a module call to a candidate new version",
-	Long: `Answers: if I upgraded module.<name> to this candidate version, what
-would break in my current workspace?
+	Use:   "whatif [path] [module-call-name]",
+	Short: "Simulate module-call upgrades and report whether the caller breaks (consumer view)",
+	Long: `Whatif is the consumer view: it answers "if I merged the working
+tree's module changes, would my parent still work?". Strictly more
+focused than diff — a child can ship many Breaking API changes that
+don't affect a particular caller, and whatif suppresses those by
+cross-validating the parent's argument set against the candidate
+child's variables.
 
-Loads the parent workspace (using .terraform/modules/modules.json when
-present to find the currently-installed child), loads the candidate new
-version as a standalone module, and reports:
+For every module call in path (default cwd) that differs between
+the working tree and the base ref, whatif loads the parent at base,
+loads the candidate child from the working tree, and reports:
 
   1. Direct impact on the parent — missing required inputs, unknown
      arguments, type mismatches the upgrade would introduce.
-  2. Full API diff between the currently-installed child and the candidate,
-     for context.
+  2. Full API diff between the base and working-tree child, for context.
 
-Exits non-zero when the parent would break.
+With an optional module-call-name, scope to a single call. Exits
+non-zero when the direct-impact list is non-empty.
 
-Two modes:
-
-  tflens whatif <workspace> <name> <new-version-path>
-      Explicit: parent is <workspace>, candidate child is at <path>.
-
-  tflens whatif --ref <base> [workspace] [name]
-      Ref: parent is the workspace checked out at the given git ref
-      (branch, tag, SHA, …); candidate child is whatever the working
-      tree resolves to now. With no <name>, every module call that
-      differs between base and working tree is simulated.`,
-	Args: cobra.RangeArgs(0, 3),
+The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
+→ main → master.`,
+	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		path := "."
+		name := ""
+		if len(args) >= 1 {
+			path = args[0]
+		}
+		if len(args) == 2 {
+			name = args[1]
+		}
 		base, _ := cmd.Flags().GetString("ref")
-		if base != "" {
-			if len(args) > 2 {
-				return fmt.Errorf("--ref mode takes at most 2 positional args (workspace, name); got %d", len(args))
+		if base == RefAutoKeyword {
+			auto, err := resolveAutoRef(path)
+			if err != nil {
+				return err
 			}
-			ws := "."
-			name := ""
-			if len(args) >= 1 {
-				ws = args[0]
-			}
-			if len(args) == 2 {
-				name = args[1]
-			}
-			if base == RefAutoKeyword {
-				auto, err := resolveAutoRef(ws)
-				if err != nil {
-					return err
-				}
-				base = auto
-			}
-			return runWhatifRef(cmd, ws, base, name)
+			base = auto
 		}
-		if len(args) != 3 {
-			return fmt.Errorf("whatif requires <workspace> <name> <new-version-path>, or --ref <base> [workspace] [name]")
-		}
-		runWhatif(cmd, args[0], args[1], args[2])
-		return nil
+		return runWhatifRef(cmd, path, base, name)
 	},
 }
 
 func init() {
-	whatifCmd.Flags().String("ref", "",
-		"simulate upgrades derived from the working tree vs a git ref (branch, tag, SHA, …); pass 'auto' to detect")
+	whatifCmd.Flags().String("ref", RefAutoKeyword,
+		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	rootCmd.AddCommand(whatifCmd)
 }
-
-func runWhatif(cmd *cobra.Command, workspace, moduleCallName, newVersionPath string) {
-	info, err := os.Stat(workspace)
-	if err != nil {
-		fatalf("%v", err)
-	}
-	if !info.IsDir() {
-		fatalf("whatif requires a workspace directory, got a file")
-	}
-	project, err := loadProject(cmd, workspace)
-	if err != nil {
-		fatalf("loading workspace: %v", err)
-	}
-	parent := project.Root.Module
-
-	// Confirm the module call exists in the parent.
-	var found bool
-	for _, e := range parent.Filter(analysis.KindModule) {
-		if e.Name == moduleCallName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		fatalf("no module call named %q in %s", moduleCallName, workspace)
-	}
-
-	// Find the currently-installed child (for the API diff).
-	oldChild, oldChildFound := project.Root.Children[moduleCallName]
-	if !oldChildFound {
-		fmt.Fprintf(os.Stderr,
-			"note: current version of module %q is not on disk (no manifest or local source); running parent-vs-new checks only\n",
-			moduleCallName)
-	}
-
-	// Load the candidate new version.
-	newChild, newFileErrs, err := loader.LoadDir(newVersionPath)
-	if err != nil {
-		fatalf("loading new version from %s: %v", newVersionPath, err)
-	}
-	for _, fe := range newFileErrs {
-		fmt.Fprintf(os.Stderr, "warning: parse errors in candidate %s\n", fe.Path)
-		for _, e := range fe.Errors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
-	}
-
-	// (1) Direct impact on the parent.
-	impact := loader.CrossValidateCall(parent, moduleCallName, newChild)
-
-	if outputJSON(cmd) {
-		impactJSON := make([]jsonValidationError, 0, len(impact))
-		for _, e := range impact {
-			impactJSON = append(impactJSON, toJSONValErr(e))
-		}
-		out := struct {
-			ModuleCallName string                `json:"module_call_name"`
-			Workspace      string                `json:"workspace"`
-			NewVersionPath string                `json:"new_version_path"`
-			DirectImpact   []jsonValidationError `json:"direct_impact"`
-			APIChanges     *struct {
-				Changes []jsonChange `json:"changes"`
-				Summary struct {
-					Breaking      int `json:"breaking"`
-					NonBreaking   int `json:"non_breaking"`
-					Informational int `json:"informational"`
-				} `json:"summary"`
-			} `json:"api_changes,omitempty"`
-		}{
-			ModuleCallName: moduleCallName,
-			Workspace:      workspace,
-			NewVersionPath: newVersionPath,
-			DirectImpact:   impactJSON,
-		}
-		if oldChildFound {
-			changes := diff.Diff(oldChild.Module, newChild)
-			var brk, nb, info int
-			allJSON := make([]jsonChange, 0, len(changes))
-			for _, c := range changes {
-				allJSON = append(allJSON, toJSONChange(c))
-				switch c.Kind {
-				case diff.Breaking:
-					brk++
-				case diff.NonBreaking:
-					nb++
-				case diff.Informational:
-					info++
-				}
-			}
-			out.APIChanges = &struct {
-				Changes []jsonChange `json:"changes"`
-				Summary struct {
-					Breaking      int `json:"breaking"`
-					NonBreaking   int `json:"non_breaking"`
-					Informational int `json:"informational"`
-				} `json:"summary"`
-			}{
-				Changes: allJSON,
-				Summary: struct {
-					Breaking      int `json:"breaking"`
-					NonBreaking   int `json:"non_breaking"`
-					Informational int `json:"informational"`
-				}{brk, nb, info},
-			}
-		}
-		code := 0
-		if len(impact) > 0 {
-			code = 1
-		}
-		exitJSON(out, code)
-		return
-	}
-
-	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n", moduleCallName, workspace, len(impact))
-	if len(impact) == 0 {
-		fmt.Println("  (none — the parent's current usage is compatible with the new version)")
-	} else {
-		for _, e := range impact {
-			fmt.Printf("  %s\n", e)
-		}
-	}
-
-	// (2) Full API diff, when we have both versions.
-	if oldChildFound {
-		changes := diff.Diff(oldChild.Module, newChild)
-		fmt.Println()
-		fmt.Printf("Module API changes old (%s) → new (%s):\n", oldChild.Dir, newVersionPath)
-		if len(changes) == 0 {
-			fmt.Println("  (no changes detected)")
-		} else {
-			var breaking, nonBreaking, info []diff.Change
-			for _, c := range changes {
-				switch c.Kind {
-				case diff.Breaking:
-					breaking = append(breaking, c)
-				case diff.NonBreaking:
-					nonBreaking = append(nonBreaking, c)
-				case diff.Informational:
-					info = append(info, c)
-				}
-			}
-			printWhatifSection := func(title string, list []diff.Change) {
-				if len(list) == 0 {
-					return
-				}
-				fmt.Printf("  %s (%d):\n", title, len(list))
-				for _, c := range list {
-					fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
-				}
-			}
-			printWhatifSection("Breaking", breaking)
-			printWhatifSection("Non-breaking", nonBreaking)
-			printWhatifSection("Informational", info)
-		}
-	}
-
-	if len(impact) > 0 {
-		os.Exit(1)
-	}
-}
-
-// ---- ref mode ------------------------------------------------------
 
 // runWhatifRef simulates merging the working tree's module upgrades
 // against callers at baseRef. If only is non-empty it restricts to that
 // one call name; otherwise every call that differs is simulated.
-func runWhatifRef(cmd *cobra.Command, workspace, baseRef, only string) error {
-	newProj, err := loadProject(cmd, workspace)
+func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
+	newProj, err := loadProject(cmd, path)
 	if err != nil {
-		return fmt.Errorf("loading workspace: %w", err)
+		return fmt.Errorf("loading path: %w", err)
 	}
-	oldProj, cleanup, err := loadOldProjectForRef(cmd, workspace, baseRef)
+	oldProj, cleanup, err := loadOldProjectForRef(cmd, path, baseRef)
 	if err != nil {
 		return err
 	}
@@ -262,7 +86,7 @@ func runWhatifRef(cmd *cobra.Command, workspace, baseRef, only string) error {
 		}
 		pairs = filtered
 		if len(pairs) == 0 {
-			return fmt.Errorf("no module call named %q differs between %s and the workspace (or call does not exist)", only, baseRef)
+			return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
 		}
 	}
 
@@ -281,11 +105,11 @@ func runWhatifRef(cmd *cobra.Command, workspace, baseRef, only string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(whatifBranchJSONPayload(baseRef, workspace, calls), exitCodeFor(totalImpact))
+		exitJSON(whatifBranchJSONPayload(baseRef, path, calls), exitCodeFor(totalImpact))
 		return nil
 	}
 
-	printWhatifBranchResults(baseRef, workspace, calls)
+	printWhatifBranchResults(baseRef, path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
 	}
@@ -324,27 +148,27 @@ func buildWhatifCallResult(p modulePair) whatifCallResult {
 
 // ---- text rendering ----
 
-func printWhatifBranchResults(baseRef, workspace string, calls []whatifCallResult) {
+func printWhatifBranchResults(baseRef, path string, calls []whatifCallResult) {
 	if len(calls) == 0 {
-		fmt.Printf("No upgraded module calls to simulate (workspace vs %s).\n", baseRef)
+		fmt.Printf("No upgraded module calls to simulate (path vs %s).\n", baseRef)
 		return
 	}
 	for i, r := range calls {
 		if i > 0 {
 			fmt.Println()
 		}
-		printOneWhatifCall(workspace, r)
+		printOneWhatifCall(path, r)
 	}
 }
 
-func printOneWhatifCall(workspace string, r whatifCallResult) {
+func printOneWhatifCall(path string, r whatifCallResult) {
 	if r.pair.status == statusRemoved {
 		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
 			r.pair.key, r.pair.oldSource, r.pair.oldVersion)
 		return
 	}
 	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.pair.key, workspace, len(r.directImpact))
+		r.pair.key, path, len(r.directImpact))
 	if len(r.directImpact) == 0 {
 		fmt.Println("  (none — callers at base are compatible with the new child)")
 	} else {
@@ -386,7 +210,7 @@ func printOneWhatifCall(workspace string, r whatifCallResult) {
 
 type whatifBranchJSON struct {
 	BaseRef   string                 `json:"base_ref"`
-	Workspace string                 `json:"workspace"`
+	Path string                 `json:"path"`
 	Calls     []whatifCallJSON       `json:"calls"`
 	Summary   whatifBranchSummaryJSON `json:"summary"`
 }
@@ -405,8 +229,8 @@ type whatifBranchSummaryJSON struct {
 	Informational int `json:"informational"`
 }
 
-func whatifBranchJSONPayload(baseRef, workspace string, calls []whatifCallResult) whatifBranchJSON {
-	out := whatifBranchJSON{BaseRef: baseRef, Workspace: workspace}
+func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) whatifBranchJSON {
+	out := whatifBranchJSON{BaseRef: baseRef, Path: path}
 	for _, r := range calls {
 		entry := whatifCallJSON{
 			Name:   r.pair.key,

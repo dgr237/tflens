@@ -43,8 +43,8 @@ Global flags accepted on every subcommand:
 - `--offline` — disable registry and git fetches; only local paths and `.terraform/modules/modules.json` entries are resolved.
 
 ```
-tflens --format json validate ./my-workspace | jq '.cross_module_issues[]'
-tflens --offline diff --ref main ./my-workspace
+tflens --format json validate ./my-tf | jq '.cross_module_issues[]'
+tflens --offline diff --ref main ./my-tf
 ```
 
 ## Commands
@@ -59,11 +59,9 @@ tflens --offline diff --ref main ./my-workspace
 | `graph <path>` | Emit the dependency graph in Graphviz DOT format |
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
-| `diff <old> <new>` | **Author view** — what changed in the module's API? Compare two module versions and classify changes as Breaking, NonBreaking, or Informational. Use this when reviewing a module release in isolation. |
-| `diff --ref <base> [ws]` | Author view, ref mode — same classification, applied to every module call in the workspace against its counterpart at a git ref |
-| `whatif <workspace> <module> <new-dir>` | **Consumer view** — does *my parent* break under this upgrade? Cross-validates the parent's argument set against the candidate child's variables; only flags changes that actually affect this caller. Use this when reviewing a PR that bumps a dependency. |
-| `whatif --ref <base> [ws] [name]` | Consumer view, ref mode — simulate every working-tree upgrade against callers at `<base>`; with no `<name>`, every changed call is simulated |
-| `statediff --ref <base> [ws] [--state file]` | Static hazard detector: resource adds/removes between branches, plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
+| `diff [path]` | **Author view** — what changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Classifies each change as Breaking, NonBreaking, or Informational. Use this when reviewing a module release. |
+| `whatif [path] [name]` | **Consumer view** — does *my parent* break under the working tree's module changes vs `--ref` (default `auto`)? Cross-validates the parent's argument set against the candidate child's variables; only flags changes that actually affect this caller. Optional `name` scopes to one module call. |
+| `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
 
@@ -134,9 +132,15 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 
 ## Diff (`diff`)
 
-`diff` is the **author view**: it answers *what changed in this module's API?* — independent of any particular caller. Use it when you're publishing or reviewing a module release; pair it with `whatif` (below) when you're consuming a module and want to know whether *your specific caller* breaks.
+`diff` is the **author view**: it answers *what changed in module APIs between the working tree and the base ref?* — independent of any particular caller. Use it when you're publishing or reviewing a module release; pair it with `whatif` (below) when you're consuming a module and want to know whether *your specific caller* breaks.
 
-Every detected change is classified as one of three kinds, and the command exits non-zero when any Breaking changes exist (suitable for CI gating):
+```
+tflens diff [path] [--ref <base>]
+```
+
+`path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command pairs every module call between the two trees by dotted key (e.g. `vpc.sg`) and diffs each child module resolved on each side.
+
+Every detected change is classified as one of three kinds; exits non-zero when any Breaking changes exist (suitable for CI gating):
 
 - **Breaking** — existing callers or state will be affected
 - **NonBreaking** — safe to upgrade through
@@ -252,47 +256,30 @@ Version constraints (`>= 1.0`, `~> 4.0`, `!= 1.2.3`, compound forms like `">= 1.
 - **Backend configuration diffs** (`terraform { backend "s3" { ... } }`) — not currently parsed. More commonly in root modules than in reusable modules.
 - **Provisioner blocks** (`provisioner "local-exec"`, `connection`) — not currently parsed; their presence or absence affects teardown and creation but is not flagged.
 - **Nested moved-block expressions with indices.** `moved { from = aws_vpc.main[0], to = aws_vpc.main["a"] }` is not recognised; only bare resource references in `from` / `to` are parsed.
-- **Cross-module diffs in explicit mode.** `tflens diff <old> <new>` compares exactly the two directories you supply — it does not recurse into child modules. Use `tflens diff --ref <base>` (or `whatif --ref`, `statediff --ref`) when you want the whole tree walked; those commands pair module calls across branches by dotted key (e.g. `vpc.sg`) and diff each child module resolved on each side.
-- **Children that cannot be resolved offline.** Branch-mode commands only diff children that both resolvers can materialise. In `--offline` mode or against registry/git sources missing from the cache and from `.terraform/modules/modules.json`, the child is skipped rather than reported.
+- **Children that cannot be resolved offline.** `diff`, `whatif`, and `statediff` only compare children that both resolvers can materialise. In `--offline` mode or against registry/git sources missing from the cache and from `.terraform/modules/modules.json`, the child is skipped rather than reported.
 
 ## What-if upgrade analysis (`whatif`)
 
-`whatif` is the **consumer view**: it answers *if I bumped this module to a new version, would my current usage still work?*
-
-This is a strictly more focused question than `diff`. A child module can ship many "Breaking" API changes that don't affect a particular caller — e.g. removing a variable the parent never passed, or tightening a type the parent's value already satisfies. `whatif` cross-validates the parent's argument set against the candidate child's variables and only flags changes that *actually break this caller*. Use `diff` when reviewing the module release; use `whatif` when reviewing a PR that bumps a dependency.
-
-It has two modes.
-
-### Explicit mode
+`whatif` is the **consumer view**: it answers *if I merged the working tree's module changes, would my parent still work?*
 
 ```
-tflens whatif <workspace> <module-call-name> <new-version-path>
+tflens whatif [path] [module-call-name] [--ref <base>]
 ```
 
-Point at a workspace, the module call you want to simulate, and a directory containing the candidate new version (a local checkout at a tag, an extracted tarball, or a separate `.terraform/modules/<name>` tree).
+For every module call in `path` (default cwd) that differs between the working tree and the base ref (default `auto` → `@{upstream}` → `origin/HEAD` → `main` → `master`), `whatif` loads the parent at base, loads the candidate child from the working tree, and reports:
 
-1. Loads the workspace and locates the current version of `module.<name>` via the normal resolution rules.
-2. Loads the candidate new version as a standalone module from `<new-version-path>`.
-3. **Direct impact:** runs cross-validation of the parent's `module "<name>" { ... }` block against the *candidate* — reports missing required inputs, unknown arguments, and type mismatches the upgrade would introduce.
-4. **Module API changes:** runs a full `diff` between the currently-installed child and the candidate for context (Breaking / NonBreaking / Informational).
+1. **Direct impact:** cross-validation of the parent's `module "<name>" { ... }` block against the candidate — missing required inputs, unknown arguments, and type mismatches the upgrade would introduce.
+2. **Module API changes:** the full `diff` between the base and working-tree child, for context.
 
-### Branch mode
+With an optional `module-call-name`, scope to one call. Exits non-zero when the direct-impact list is non-empty (suitable for CI gating).
 
-```
-tflens whatif --ref <base> [workspace] [call-name]
-```
+This is strictly more focused than `diff`. A child module can ship many "Breaking" API changes that don't affect a particular caller — e.g. removing a variable the parent never passed, or tightening a type the parent's value already satisfies. `whatif` cross-validates the parent's argument set against the candidate child's variables and only flags changes that *actually break this caller*.
 
-The candidate new version is whatever the working tree resolves to. The "current" caller is the workspace checked out at git ref `<base>`. Useful for CI-gating an upgrade PR: on a feature branch that bumps `version = "..."` or refactors a local child, run `tflens whatif --ref main` to see whether callers on main would break.
+### `whatif` vs `diff`
 
-With no `call-name`, every module call that differs between `<base>` and the working tree is simulated and aggregated; pass a name to scope to one call.
+Both compare the path against a git base. The difference is what they report:
 
-Both modes exit non-zero when the direct-impact list is non-empty — suitable for CI gating.
-
-### `whatif --ref` vs `diff --ref`
-
-Both compare a workspace against a git base. The difference is what they report:
-
-| | `diff --ref` | `whatif --ref` |
+| | `diff` | `whatif` |
 |---|---|---|
 | Question | What changed in the child module's API? | Does my parent break under the upgrade? |
 | Audience | Module author | Module consumer |
@@ -305,8 +292,10 @@ For a single-repo monorepo where the same author wrote both the child and the pa
 ## State-level hazard detection (`statediff`)
 
 ```
-tflens statediff --ref <base> [workspace] [--state state.json]
+tflens statediff [path] [--ref <base>] [--state state.json]
 ```
+
+`path` defaults to cwd; `--ref` defaults to `auto`.
 
 A static hazard detector for PRs that may unintentionally add, destroy, or re-instance resources. It answers: *if I merge this branch, which of my state's resource instances are at risk?*
 
@@ -328,7 +317,7 @@ Exit code is 1 when any resource add/remove or sensitive local fires.
 
 ## Module resolution
 
-Commands that traverse a workspace (`validate`, `whatif`, `diff --ref`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
+Commands that traverse a project (`validate`, `diff`, `whatif`, `statediff`) turn each `module "x" { source = "..." }` call into a directory on disk via a chain of resolvers, tried in order:
 
 1. **Local path** — `source = "./x"` and `source = "../y"` resolve relative to the caller's directory. Always tried.
 2. **`.terraform/modules/modules.json`** — if the manifest produced by `terraform init` is present, every module call is resolved through it by dotted key path (`vpc`, `vpc.sg`, etc.). Always tried.
