@@ -90,7 +90,7 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 		}
 	}
 
-	var calls []whatifCallResult
+	var calls []diff.WhatifResult
 	totalImpact := 0
 	for _, p := range pairs {
 		// whatif is only meaningful for calls that existed at base — we
@@ -109,54 +109,10 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 		return nil
 	}
 
-	printWhatifBranchResults(baseRef, path, calls)
+	render.WriteWhatifResults(os.Stdout, baseRef, path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
 	}
 	return nil
-}
-
-// whatifCallResult is a thin alias around diff.WhatifResult so the
-// rendering / JSON code below keeps a stable local name. The fields
-// (Pair, DirectImpact, APIChanges) are exported on the underlying
-// type — the rendering code below references them directly.
-type whatifCallResult = diff.WhatifResult
-
-// ---- text rendering ----
-
-func printWhatifBranchResults(baseRef, path string, calls []whatifCallResult) {
-	if len(calls) == 0 {
-		fmt.Printf("No upgraded module calls to simulate (path vs %s).\n", baseRef)
-		return
-	}
-	for i, r := range calls {
-		if i > 0 {
-			fmt.Println()
-		}
-		printOneWhatifCall(path, r)
-	}
-}
-
-func printOneWhatifCall(path string, r whatifCallResult) {
-	if r.Pair.Status == loader.StatusRemoved {
-		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
-			r.Pair.Key, r.Pair.OldSource, r.Pair.OldVersion)
-		return
-	}
-	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.Pair.Key, path, len(r.DirectImpact))
-	if len(r.DirectImpact) == 0 {
-		fmt.Println("  (none — callers at base are compatible with the new child)")
-	} else {
-		for _, e := range r.DirectImpact {
-			fmt.Printf("  %s\n", e)
-		}
-	}
-	if len(r.APIChanges) == 0 {
-		return
-	}
-	fmt.Println()
-	fmt.Printf("  API changes for module.%s:\n", r.Pair.Key)
-	render.WriteChangesByKind(os.Stdout, "    ", "      ", r.APIChanges)
 }
 

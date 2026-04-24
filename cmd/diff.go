@@ -132,7 +132,7 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 		return nil
 	}
 
-	printRefResults(baseRef, results, rootChanges)
+	render.WriteDiffResults(os.Stdout, baseRef, results, rootChanges)
 	if totalBreaking > 0 {
 		os.Exit(1)
 	}
@@ -165,78 +165,4 @@ func parentModule(n *loader.ModuleNode) *analysis.Module {
 // internally without reaching for the exported field names.
 type refModuleResult = diff.PairResult
 
-// ---- text rendering ----
-
-func printRefResults(baseRef string, results []refModuleResult, rootChanges []diff.Change) {
-	any := false
-	if len(rootChanges) > 0 {
-		printRootChanges(rootChanges)
-		any = true
-	}
-	for _, r := range results {
-		if !r.Interesting() {
-			continue
-		}
-		if any {
-			fmt.Println()
-		}
-		any = true
-		printOneRefResult(r)
-	}
-	if !any {
-		fmt.Printf("No changes detected vs %s.\n", baseRef)
-	}
-}
-
-// printRootChanges emits the API + tracked-attribute changes for the
-// root module under a dedicated heading. The root isn't a module call,
-// so it doesn't show up in the per-module section below — but a new
-// required root variable, a removed output, etc. still matter to the
-// operator running `terraform plan` against this directory.
-func printRootChanges(changes []diff.Change) {
-	fmt.Println("Root module:")
-	render.WriteChangesByKind(os.Stdout, "  ", "    ", changes)
-}
-
-func printOneRefResult(r refModuleResult) {
-	switch r.Pair.Status {
-	case loader.StatusAdded:
-		fmt.Printf("Module %q: ADDED (source=%s", r.Pair.Key, r.Pair.NewSource)
-		if r.Pair.NewVersion != "" {
-			fmt.Printf(", version=%s", r.Pair.NewVersion)
-		}
-		fmt.Println(")")
-		return
-	case loader.StatusRemoved:
-		fmt.Printf("Module %q: REMOVED (was source=%s", r.Pair.Key, r.Pair.OldSource)
-		if r.Pair.OldVersion != "" {
-			fmt.Printf(", version=%s", r.Pair.OldVersion)
-		}
-		fmt.Println(")")
-		return
-	}
-
-	// changed
-	fmt.Printf("Module %q:", r.Pair.Key)
-	if r.Pair.OldSource != r.Pair.NewSource {
-		fmt.Printf(" source %s → %s", r.Pair.OldSource, r.Pair.NewSource)
-	}
-	if r.Pair.OldVersion != r.Pair.NewVersion {
-		sep := " "
-		if r.Pair.OldSource != r.Pair.NewSource {
-			sep = ", "
-		}
-		fmt.Printf("%sversion %q → %q", sep, r.Pair.OldVersion, r.Pair.NewVersion)
-	}
-	if !r.AttrsChanged() {
-		fmt.Printf(" (content changed)")
-	}
-	fmt.Println()
-
-	if len(r.Changes) == 0 {
-		fmt.Println("  (no API changes)")
-		return
-	}
-	render.WriteChangesByKind(os.Stdout, "  ", "    ", r.Changes)
-}
 
