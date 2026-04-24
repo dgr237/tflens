@@ -136,9 +136,11 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 tflens diff [path] [--ref <base>]
 ```
 
-`path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command pairs every module call between the two trees by dotted key (e.g. `vpc.sg`) and diffs each child module resolved on each side.
+`path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command diffs the **root module** (the directory at `path`) and pairs every child module call between the two trees by dotted key (e.g. `vpc.sg`).
 
-The classification depends on **how the child is sourced**:
+The root module gets a full API diff — adding a required variable, removing an output, changing the backend, etc. all show up under a `Root module:` section. The operator running `terraform plan` against this directory IS the consumer, even though no parent calls the root.
+
+For child module calls, the classification depends on **how the child is sourced**:
 
 - **Local children** (`source = "./…"` or `"../…"`) — internal to this repo. Their API is implementation detail; only the parent's actual consumption is observable. `diff` runs cross-validation of the new parent against the new child and reports a Breaking change only when the parent's usage is broken (passes an unknown arg, fails to pass a now-required input, or references a removed `module.<name>.<output>`). Renaming a variable that the parent updated atomically is silent.
 - **Registry / git children** — published by someone else (or by you, in a release). The publisher owns breaking-change discipline. `diff` reports the full API diff (every variable / output / type / lifecycle change) classified as Breaking, NonBreaking, or Informational. A removed variable shows up regardless of whether your specific parent passed it.
@@ -461,17 +463,33 @@ Downloaded modules are stored under the OS user cache directory (e.g. `~/.cache/
 
 ### Private registries
 
-Credentials for private registries are read from the Terraform CLI config file (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere). The format is identical to Terraform's:
+Credentials are read from two sources, in this order:
 
-```
-credentials "app.terraform.io" {
-  token = "your-api-token"
-}
+1. **TFE tokens YAML file**, opt-in via `$TFE_TOKENS_FILE`. Some Terraform Enterprise org-management tooling ships per-organisation tokens in this format:
 
-credentials "registry.example.com" {
-  token = "..."
-}
-```
+   ```yaml
+   tokens:
+     - address: tfe.example.com
+       token: your-tfe-token
+     - address: https://other.tfe.example.com
+       token: another-tfe-token
+   ```
+
+   `address` may be a bare host, a `host:port` pair, or a full URL — only the host (with port if non-default) is matched against the outgoing request. Loading is strictly opt-in: with `$TFE_TOKENS_FILE` unset, tflens never reads from any conventional path. Set the variable to enable the source.
+
+2. **Terraform CLI config file** (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere) — the standard Terraform format:
+
+   ```
+   credentials "app.terraform.io" {
+     token = "your-api-token"
+   }
+
+   credentials "registry.example.com" {
+     token = "..."
+   }
+   ```
+
+When both files name the same host, the TFE-tokens entry wins (it's typically org-managed and more authoritative than a personal CLI config). Either source missing is fine; running with neither falls through to anonymous access.
 
 Bearer tokens are sent **only** to requests whose `URL.Host` exactly matches a configured entry. This means a registry that redirects its tarball download URL at a third-party CDN (typical for GitHub-backed public modules) never receives the token.
 

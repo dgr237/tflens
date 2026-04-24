@@ -636,7 +636,60 @@ func TestDiffRefNoChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("diff --branch: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "No module-call changes") {
-		t.Errorf("expected 'No module-call changes' message, got:\n%s", out)
+	if !strings.Contains(string(out), "No changes detected") {
+		t.Errorf("expected 'No changes detected' message, got:\n%s", out)
+	}
+}
+
+// TestDiffRefRootRequiredVariableAdded covers the case where the root
+// module gains a new required variable. The root isn't a module call so
+// it isn't paired by pairModuleCalls; without an explicit root-module
+// diff pass it would go undetected. Regression test for that.
+func TestDiffRefRootRequiredVariableAdded(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet", "-b", "main")
+	ws := filepath.Join(repo, "workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "main.tf"),
+		[]byte(`resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "init")
+	run("checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(ws, "main.tf"),
+		[]byte("variable \"test\" { type = string }\n"+
+			`resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := buildTflens(t)
+	cmd := exec.Command(bin, "--offline", "diff", "--ref", "main", ws)
+	out, _ := cmd.CombinedOutput() // exits 1 on Breaking, that's expected
+	s := string(out)
+	if !strings.Contains(s, "Root module:") {
+		t.Errorf("expected 'Root module:' header, got:\n%s", s)
+	}
+	if !strings.Contains(s, "variable.test") || !strings.Contains(s, "required variable added") {
+		t.Errorf("expected required-variable-added on variable.test, got:\n%s", s)
+	}
+	if cmd.ProcessState.ExitCode() != 1 {
+		t.Errorf("expected exit 1 for Breaking root change, got %d", cmd.ProcessState.ExitCode())
 	}
 }

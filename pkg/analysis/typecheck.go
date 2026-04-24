@@ -520,11 +520,44 @@ func (m *Module) inferValueType(expr hclsyntax.Expression) *TFType {
 		if len(parts) >= 2 && parts[0] == "var" {
 			varID := (Entity{Kind: KindVariable, Name: parts[1]}).ID()
 			if e, ok := m.byID[varID]; ok && e.DeclaredType != nil {
-				return e.DeclaredType
+				return descendDeclaredType(e.DeclaredType, parts[2:])
 			}
 		}
 	}
 	return &TFType{Kind: TypeUnknown}
+}
+
+// descendDeclaredType walks attr-traversal parts (e.g. `.property` or
+// `.config.property`) into a declared type. Returns the leaf type when
+// the path resolves cleanly; returns TypeUnknown when a step doesn't
+// match (e.g. unknown field on an object) so callers don't false-positive
+// against an unrelated parent type. Handles object-field access and
+// map-style dotted access (HCL2 treats `m.k` as `m["k"]` for maps).
+func descendDeclaredType(t *TFType, attrPath []string) *TFType {
+	cur := t
+	for _, name := range attrPath {
+		if cur == nil {
+			return &TFType{Kind: TypeUnknown}
+		}
+		switch cur.Kind {
+		case TypeObject:
+			next, ok := cur.Fields[name]
+			if !ok {
+				return &TFType{Kind: TypeUnknown}
+			}
+			cur = next
+		case TypeMap:
+			if cur.Elem == nil {
+				return &TFType{Kind: TypeUnknown}
+			}
+			cur = cur.Elem
+		case TypeAny:
+			return &TFType{Kind: TypeAny}
+		default:
+			return &TFType{Kind: TypeUnknown}
+		}
+	}
+	return cur
 }
 
 // blockEntityID returns the canonical entity ID for a resource/data/module

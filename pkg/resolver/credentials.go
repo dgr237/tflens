@@ -26,6 +26,23 @@ type StaticCredentials map[string]string
 
 func (s StaticCredentials) Token(host string) string { return s[host] }
 
+// MergedCredentials tries each underlying source in order and returns
+// the first non-empty token. nil entries are skipped, so callers can
+// safely pass `MergedCredentials{a, b, nil}`.
+type MergedCredentials []CredentialsSource
+
+func (m MergedCredentials) Token(host string) string {
+	for _, c := range m {
+		if c == nil {
+			continue
+		}
+		if tok := c.Token(host); tok != "" {
+			return tok
+		}
+	}
+	return ""
+}
+
 // LoadTerraformrc reads the user's Terraform CLI config file and returns
 // the credentials it declares. Resolution order:
 //

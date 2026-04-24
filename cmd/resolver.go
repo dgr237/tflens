@@ -55,14 +55,23 @@ func buildResolver(cmd *cobra.Command, absRoot string) (resolver.Resolver, []loa
 	if err != nil {
 		return nil, seed, fmt.Errorf("locating module cache: %w", err)
 	}
-	creds, err := resolver.LoadTerraformrc()
+	tfrcCreds, err := resolver.LoadTerraformrc()
 	if err != nil {
 		// A malformed CLI config is a user-visible misconfiguration,
 		// but we should not abort the whole command over it — degrade
 		// to anonymous access and warn.
 		fmt.Fprintf(os.Stderr, "warning: loading Terraform CLI config: %v\n", err)
-		creds = resolver.StaticCredentials{}
+		tfrcCreds = resolver.StaticCredentials{}
 	}
+	tfeCreds, err := resolver.LoadTfeTokens()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: loading TFE tokens (~/.tfe/tokens.yaml): %v\n", err)
+		tfeCreds = resolver.StaticCredentials{}
+	}
+	// TFE tokens win over .terraformrc when both name the same host —
+	// the .tfe/tokens.yaml file is typically org-managed and more
+	// specific than a personal CLI config.
+	creds := resolver.MergedCredentials{tfeCreds, tfrcCreds}
 	git, err := resolver.NewGitResolver(resolver.GitConfig{Cache: c})
 	if err != nil {
 		return nil, seed, err
