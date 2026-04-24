@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -68,23 +67,23 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 	}
 	defer cleanup()
 
-	pairs := pairModuleCalls(oldProj, newProj)
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].key < pairs[j].key })
+	pairs := loader.PairModuleCalls(oldProj, newProj)
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
 
 	results := make([]refModuleResult, 0, len(pairs))
 	totalBreaking := 0
 	for _, p := range pairs {
-		r := refModuleResult{pair: p}
-		if p.status == statusChanged && p.oldNode != nil && p.newNode != nil {
+		r := refModuleResult{Pair: p}
+		if p.Status == loader.StatusChanged && p.OldNode != nil && p.NewNode != nil {
 			// Local-source children are owned by this repo: their API is
 			// implementation detail and only the parent's consumption
 			// matters. External (registry/git) children come from a
 			// publisher who's responsible for breaking-change discipline,
 			// so we surface every API change.
-			if resolver.IsLocalSource(p.newSource) {
-				r.changes = consumptionChangesForLocal(p)
+			if resolver.IsLocalSource(p.NewSource) {
+				r.Changes = diff.ConsumptionChangesForLocal(p)
 			} else {
-				r.changes = diff.Diff(p.oldNode.Module, p.newNode.Module)
+				r.Changes = diff.Diff(p.OldNode.Module, p.NewNode.Module)
 			}
 			// Tracked-attribute changes apply regardless of source type:
 			// authors opt in to surface specific attributes (engine
@@ -93,12 +92,12 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 			// the child catches changes flowing through the parent
 			// (parent-side conditional, flipped variable default,
 			// different local).
-			r.changes = append(r.changes, diff.DiffTrackedCtx(p.oldNode.Module, p.newNode.Module, diff.TrackedContext{
-				OldParent: parentModule(p.oldParent),
-				NewParent: parentModule(p.newParent),
-				CallName:  p.localName,
+			r.Changes = append(r.Changes, diff.DiffTrackedCtx(p.OldNode.Module, p.NewNode.Module, diff.TrackedContext{
+				OldParent: parentModule(p.OldParent),
+				NewParent: parentModule(p.NewParent),
+				CallName:  p.LocalName,
 			})...)
-			for _, c := range r.changes {
+			for _, c := range r.Changes {
 				if c.Kind == diff.Breaking {
 					totalBreaking++
 				}
@@ -107,7 +106,7 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 		results = append(results, r)
 	}
 
-	// The root module is not covered by pairModuleCalls (which keys off
+	// The root module is not covered by loader.PairModuleCalls (which keys off
 	// module CALLS). Diff it directly: a new required root variable, a
 	// removed root output, a backend reconfiguration, etc. all matter to
 	// the operator running `terraform plan` against this directory, even
@@ -128,7 +127,7 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, path, results, rootChanges), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, path, results, rootChanges), diff.ExitCodeFor(totalBreaking))
 		return nil
 	}
 
@@ -159,81 +158,11 @@ func parentModule(n *loader.ModuleNode) *analysis.Module {
 	return n.Module
 }
 
-// consumptionChangesForLocal turns cross_validate findings against the
-// new parent + new child into diff.Change entries. Used in place of
-// diff.Diff for local-source ("internal") children, where the child's
-// API is implementation detail and only the parent's consumption is
-// observable.
-//
-// Returns an empty slice when the parent's usage is consistent — i.e.
-// every required child variable is passed, no unknown args, types
-// compatible, and every module.<name>.<output> reference still resolves.
-func consumptionChangesForLocal(p modulePair) []diff.Change {
-	if p.newParent == nil {
-		return nil
-	}
-	cvErrs := loader.CrossValidateCall(p.newParent.Module, p.localName, p.newNode.Module)
-	if len(cvErrs) == 0 {
-		return nil
-	}
-	out := make([]diff.Change, 0, len(cvErrs))
-	for _, e := range cvErrs {
-		out = append(out, diff.Change{
-			Kind:    diff.Breaking,
-			Subject: e.EntityID,
-			Detail:  e.Msg,
-			Hint:    hintForCrossValidateMsg(e.Msg),
-			NewPos:  e.Pos,
-		})
-	}
-	return out
-}
-
-// hintForCrossValidateMsg returns a one-line "how to fix this" hint
-// based on the shape of the cross_validate error message. Recognises
-// the four error templates emitted by loader/cross_validate.go.
-func hintForCrossValidateMsg(msg string) string {
-	switch {
-	case strings.Contains(msg, "unknown argument"):
-		return "remove the argument from the module block, or restore the matching variable in the child"
-	case strings.Contains(msg, "required input"):
-		return "add the input to the module block, or give the child variable a default"
-	case strings.Contains(msg, "but child variable expects"):
-		return "convert the value to the expected type (tostring/tolist/...) or change the parent's expression"
-	case strings.Contains(msg, "no such output"):
-		return "restore the output in the child, or remove the parent's reference"
-	}
-	return ""
-}
-
-// refModuleResult is the per-module-call result of a branch diff.
-// For added/removed calls, changes is empty — they're reported structurally.
-type refModuleResult struct {
-	pair    modulePair
-	changes []diff.Change
-}
-
-func (r refModuleResult) hasContentChanges() bool { return len(r.changes) > 0 }
-
-func (r refModuleResult) attrsChanged() bool {
-	return r.pair.oldSource != r.pair.newSource || r.pair.oldVersion != r.pair.newVersion
-}
-
-func (r refModuleResult) interesting() bool {
-	switch r.pair.status {
-	case statusAdded, statusRemoved:
-		return true
-	default:
-		return r.hasContentChanges() || r.attrsChanged()
-	}
-}
-
-func exitCodeFor(breaking int) int {
-	if breaking > 0 {
-		return 1
-	}
-	return 0
-}
+// refModuleResult is the per-module-call result type the cmd layer
+// renders. It's a thin alias around diff.PairResult that lets the
+// existing rendering / JSON code keep using r.Pair / r.Changes
+// internally without reaching for the exported field names.
+type refModuleResult = diff.PairResult
 
 // ---- text rendering ----
 
@@ -244,7 +173,7 @@ func printRefResults(baseRef string, results []refModuleResult, rootChanges []di
 		any = true
 	}
 	for _, r := range results {
-		if !r.interesting() {
+		if !r.Interesting() {
 			continue
 		}
 		if any {
@@ -297,46 +226,46 @@ func printRootChanges(changes []diff.Change) {
 }
 
 func printOneRefResult(r refModuleResult) {
-	switch r.pair.status {
-	case statusAdded:
-		fmt.Printf("Module %q: ADDED (source=%s", r.pair.key, r.pair.newSource)
-		if r.pair.newVersion != "" {
-			fmt.Printf(", version=%s", r.pair.newVersion)
+	switch r.Pair.Status {
+	case loader.StatusAdded:
+		fmt.Printf("Module %q: ADDED (source=%s", r.Pair.Key, r.Pair.NewSource)
+		if r.Pair.NewVersion != "" {
+			fmt.Printf(", version=%s", r.Pair.NewVersion)
 		}
 		fmt.Println(")")
 		return
-	case statusRemoved:
-		fmt.Printf("Module %q: REMOVED (was source=%s", r.pair.key, r.pair.oldSource)
-		if r.pair.oldVersion != "" {
-			fmt.Printf(", version=%s", r.pair.oldVersion)
+	case loader.StatusRemoved:
+		fmt.Printf("Module %q: REMOVED (was source=%s", r.Pair.Key, r.Pair.OldSource)
+		if r.Pair.OldVersion != "" {
+			fmt.Printf(", version=%s", r.Pair.OldVersion)
 		}
 		fmt.Println(")")
 		return
 	}
 
 	// changed
-	fmt.Printf("Module %q:", r.pair.key)
-	if r.pair.oldSource != r.pair.newSource {
-		fmt.Printf(" source %s → %s", r.pair.oldSource, r.pair.newSource)
+	fmt.Printf("Module %q:", r.Pair.Key)
+	if r.Pair.OldSource != r.Pair.NewSource {
+		fmt.Printf(" source %s → %s", r.Pair.OldSource, r.Pair.NewSource)
 	}
-	if r.pair.oldVersion != r.pair.newVersion {
+	if r.Pair.OldVersion != r.Pair.NewVersion {
 		sep := " "
-		if r.pair.oldSource != r.pair.newSource {
+		if r.Pair.OldSource != r.Pair.NewSource {
 			sep = ", "
 		}
-		fmt.Printf("%sversion %q → %q", sep, r.pair.oldVersion, r.pair.newVersion)
+		fmt.Printf("%sversion %q → %q", sep, r.Pair.OldVersion, r.Pair.NewVersion)
 	}
-	if !r.attrsChanged() {
+	if !r.AttrsChanged() {
 		fmt.Printf(" (content changed)")
 	}
 	fmt.Println()
 
-	if len(r.changes) == 0 {
+	if len(r.Changes) == 0 {
 		fmt.Println("  (no API changes)")
 		return
 	}
 	var breaking, nonBreaking, info []diff.Change
-	for _, c := range r.changes {
+	for _, c := range r.Changes {
 		switch c.Kind {
 		case diff.Breaking:
 			breaking = append(breaking, c)
@@ -391,18 +320,18 @@ func buildRefJSON(baseRef, path string, results []refModuleResult, rootChanges [
 		}
 	}
 	for _, r := range results {
-		if !r.interesting() {
+		if !r.Interesting() {
 			continue
 		}
 		entry := refModuleJSON{
-			Name:       r.pair.key,
-			Status:     statusString(r.pair.status),
-			OldSource:  r.pair.oldSource,
-			OldVersion: r.pair.oldVersion,
-			NewSource:  r.pair.newSource,
-			NewVersion: r.pair.newVersion,
+			Name:       r.Pair.Key,
+			Status:     r.Pair.Status.String(),
+			OldSource:  r.Pair.OldSource,
+			OldVersion: r.Pair.OldVersion,
+			NewSource:  r.Pair.NewSource,
+			NewVersion: r.Pair.NewVersion,
 		}
-		for _, c := range r.changes {
+		for _, c := range r.Changes {
 			entry.Changes = append(entry.Changes, toJSONChange(c))
 			switch c.Kind {
 			case diff.Breaking:
@@ -444,16 +373,5 @@ type refSummaryJSON struct {
 	Breaking      int `json:"breaking"`
 	NonBreaking   int `json:"non_breaking"`
 	Informational int `json:"informational"`
-}
-
-func statusString(s moduleCallStatus) string {
-	switch s {
-	case statusAdded:
-		return "added"
-	case statusRemoved:
-		return "removed"
-	default:
-		return "changed"
-	}
 }
 

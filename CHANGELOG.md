@@ -4,6 +4,13 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Changed (internal)
+
+- **Module-call pairing logic moved from `cmd/` to `pkg/loader`** as exported `PairModuleCalls`, `ModuleCallPair`, `ModuleCallStatus`. Same behaviour; now unit-tested directly rather than only via subprocess integration tests.
+- **Diff helpers moved from `cmd/diff.go` to `pkg/diff`** as exported `PairResult`, `ConsumptionChangesForLocal`, `HintForCrossValidateMsg`, `ExitCodeFor`. Same behaviour; now unit-tested directly. `cmd/diff` is now a thin orchestration + rendering layer over `pkg/diff` + `pkg/loader`.
+
+No user-facing API changes — all extractions are internal package surfaces.
+
 ## [0.2.0] — 2026-04-24
 
 ### Changed

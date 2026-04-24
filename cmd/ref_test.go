@@ -14,7 +14,7 @@ import (
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// ---- unit tests on pairModuleCalls (pure logic) -----------------------
+// ---- unit tests on loader.PairModuleCalls (pure logic) -----------------------
 
 // fakeProject builds a minimal loader.Project whose root module exposes
 // the given module calls and whose Children map holds the listed
@@ -64,29 +64,29 @@ func TestPairModuleCallsChangedAddedRemoved(t *testing.T) {
 			"fresh":  {"./new", ""},
 		}, nil)
 
-	byName := map[string]modulePair{}
-	for _, p := range pairModuleCalls(old, new_) {
-		byName[p.key] = p
+	byName := map[string]loader.ModuleCallPair{}
+	for _, p := range loader.PairModuleCalls(old, new_) {
+		byName[p.Key] = p
 	}
 
-	if p, ok := byName["same"]; !ok || p.status != statusChanged {
+	if p, ok := byName["same"]; !ok || p.Status != loader.StatusChanged {
 		t.Errorf("same: got %+v", p)
 	}
-	if p, ok := byName["bumped"]; !ok || p.status != statusChanged {
+	if p, ok := byName["bumped"]; !ok || p.Status != loader.StatusChanged {
 		t.Errorf("bumped: got %+v", p)
-	} else if p.oldVersion != "1.0.0" || p.newVersion != "2.0.0" {
+	} else if p.OldVersion != "1.0.0" || p.NewVersion != "2.0.0" {
 		t.Errorf("bumped versions: %+v", p)
 	}
-	if p, ok := byName["retired"]; !ok || p.status != statusRemoved {
+	if p, ok := byName["retired"]; !ok || p.Status != loader.StatusRemoved {
 		t.Errorf("retired: got %+v", p)
 	}
-	if p, ok := byName["fresh"]; !ok || p.status != statusAdded {
+	if p, ok := byName["fresh"]; !ok || p.Status != loader.StatusAdded {
 		t.Errorf("fresh: got %+v", p)
 	}
 }
 
 func TestPairModuleCallsEmptyProjects(t *testing.T) {
-	if got := pairModuleCalls(
+	if got := loader.PairModuleCalls(
 		&loader.Project{Root: &loader.ModuleNode{Module: &analysis.Module{}}},
 		&loader.Project{Root: &loader.ModuleNode{Module: &analysis.Module{}}},
 	); len(got) != 0 {
@@ -643,7 +643,7 @@ func TestDiffRefNoChanges(t *testing.T) {
 
 // TestDiffRefRootRequiredVariableAdded covers the case where the root
 // module gains a new required variable. The root isn't a module call so
-// it isn't paired by pairModuleCalls; without an explicit root-module
+// it isn't paired by loader.PairModuleCalls; without an explicit root-module
 // diff pass it would go undetected. Regression test for that.
 func TestDiffRefRootRequiredVariableAdded(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

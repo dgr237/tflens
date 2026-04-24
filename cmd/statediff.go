@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/tfstate"
 )
@@ -90,7 +91,7 @@ func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
 	result.Path = path
 
 	if outputJSON(cmd) {
-		exitJSON(result, exitCodeFor(result.flaggedCount()))
+		exitJSON(result, diff.ExitCodeFor(result.flaggedCount()))
 		return nil
 	}
 	printStatediff(&result)

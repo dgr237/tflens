@@ -76,11 +76,11 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 	}
 	defer cleanup()
 
-	pairs := pairModuleCalls(oldProj, newProj)
+	pairs := loader.PairModuleCalls(oldProj, newProj)
 	if only != "" {
 		filtered := pairs[:0]
 		for _, p := range pairs {
-			if p.key == only || p.localName == only {
+			if p.Key == only || p.LocalName == only {
 				filtered = append(filtered, p)
 			}
 		}
@@ -96,7 +96,7 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 		// whatif is only meaningful for calls that existed at base — we
 		// need an "old parent" that called an "old child" to diff
 		// against the new child. Added calls have no base-side caller.
-		if p.status == statusAdded {
+		if p.Status == loader.StatusAdded {
 			continue
 		}
 		r := buildWhatifCallResult(p)
@@ -105,7 +105,7 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(whatifBranchJSONPayload(baseRef, path, calls), exitCodeFor(totalImpact))
+		exitJSON(whatifBranchJSONPayload(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
 		return nil
 	}
 
@@ -117,31 +117,31 @@ func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
 }
 
 type whatifCallResult struct {
-	pair         modulePair
+	pair         loader.ModuleCallPair
 	directImpact []analysis.ValidationError
 	apiChanges   []diff.Change // empty when we cannot compute (removed or missing child)
 }
 
-func buildWhatifCallResult(p modulePair) whatifCallResult {
+func buildWhatifCallResult(p loader.ModuleCallPair) whatifCallResult {
 	r := whatifCallResult{pair: p}
 	// Direct impact: does the old parent's usage break under the new
 	// child's API? For "removed" calls there's no new child, so we can
 	// only note the removal.
-	if p.status == statusRemoved {
+	if p.Status == loader.StatusRemoved {
 		return r
 	}
-	if p.newNode == nil || p.oldParent == nil {
+	if p.NewNode == nil || p.OldParent == nil {
 		// No child API available OR the old side doesn't have a
 		// parent to cross-validate against (e.g. nested call's parent
 		// was itself added in the new tree).
-		if p.oldNode != nil && p.newNode != nil {
-			r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
+		if p.OldNode != nil && p.NewNode != nil {
+			r.apiChanges = diff.Diff(p.OldNode.Module, p.NewNode.Module)
 		}
 		return r
 	}
-	r.directImpact = loader.CrossValidateCall(p.oldParent.Module, p.localName, p.newNode.Module)
-	if p.oldNode != nil {
-		r.apiChanges = diff.Diff(p.oldNode.Module, p.newNode.Module)
+	r.directImpact = loader.CrossValidateCall(p.OldParent.Module, p.LocalName, p.NewNode.Module)
+	if p.OldNode != nil {
+		r.apiChanges = diff.Diff(p.OldNode.Module, p.NewNode.Module)
 	}
 	return r
 }
@@ -162,13 +162,13 @@ func printWhatifBranchResults(baseRef, path string, calls []whatifCallResult) {
 }
 
 func printOneWhatifCall(path string, r whatifCallResult) {
-	if r.pair.status == statusRemoved {
+	if r.pair.Status == loader.StatusRemoved {
 		fmt.Printf("module.%s: REMOVED (was source=%s, version=%q)\n",
-			r.pair.key, r.pair.oldSource, r.pair.oldVersion)
+			r.pair.Key, r.pair.OldSource, r.pair.OldVersion)
 		return
 	}
 	fmt.Printf("Direct impact on module.%s in %s (%d issue(s)):\n",
-		r.pair.key, path, len(r.directImpact))
+		r.pair.Key, path, len(r.directImpact))
 	if len(r.directImpact) == 0 {
 		fmt.Println("  (none — callers at base are compatible with the new child)")
 	} else {
@@ -191,7 +191,7 @@ func printOneWhatifCall(path string, r whatifCallResult) {
 		}
 	}
 	fmt.Println()
-	fmt.Printf("  API changes for module.%s:\n", r.pair.key)
+	fmt.Printf("  API changes for module.%s:\n", r.pair.Key)
 	section := func(title string, list []diff.Change) {
 		if len(list) == 0 {
 			return
@@ -233,8 +233,8 @@ func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) wha
 	out := whatifBranchJSON{BaseRef: baseRef, Path: path}
 	for _, r := range calls {
 		entry := whatifCallJSON{
-			Name:   r.pair.key,
-			Status: statusString(r.pair.status),
+			Name:   r.pair.Key,
+			Status: r.pair.Status.String(),
 		}
 		for _, e := range r.directImpact {
 			entry.DirectImpact = append(entry.DirectImpact, toJSONValErr(e))
