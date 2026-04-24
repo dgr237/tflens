@@ -136,9 +136,11 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 tflens diff [path] [--ref <base>]
 ```
 
-`path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command pairs every module call between the two trees by dotted key (e.g. `vpc.sg`) and diffs each child module resolved on each side.
+`path` defaults to cwd; `--ref` defaults to `auto` (resolves to `@{upstream}` → `origin/HEAD` → `main` → `master`). The command diffs the **root module** (the directory at `path`) and pairs every child module call between the two trees by dotted key (e.g. `vpc.sg`).
 
-The classification depends on **how the child is sourced**:
+The root module gets a full API diff — adding a required variable, removing an output, changing the backend, etc. all show up under a `Root module:` section. The operator running `terraform plan` against this directory IS the consumer, even though no parent calls the root.
+
+For child module calls, the classification depends on **how the child is sourced**:
 
 - **Local children** (`source = "./…"` or `"../…"`) — internal to this repo. Their API is implementation detail; only the parent's actual consumption is observable. `diff` runs cross-validation of the new parent against the new child and reports a Breaking change only when the parent's usage is broken (passes an unknown arg, fails to pass a now-required input, or references a removed `module.<name>.<output>`). Renaming a variable that the parent updated atomically is silent.
 - **Registry / git children** — published by someone else (or by you, in a release). The publisher owns breaking-change discipline. `diff` reports the full API diff (every variable / output / type / lifecycle change) classified as Breaking, NonBreaking, or Informational. A removed variable shows up regardless of whether your specific parent passed it.

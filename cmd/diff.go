@@ -100,22 +100,32 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 		results = append(results, r)
 	}
 
-	// Tracked attributes on the root module are not covered by
-	// pairModuleCalls (which keys off module CALLS). Run a parallel pass
-	// against the root and surface findings as a dedicated section.
-	rootTracked := diff.DiffTracked(rootModule(oldProj), rootModule(newProj))
-	for _, c := range rootTracked {
+	// The root module is not covered by pairModuleCalls (which keys off
+	// module CALLS). Diff it directly: a new required root variable, a
+	// removed root output, a backend reconfiguration, etc. all matter to
+	// the operator running `terraform plan` against this directory, even
+	// though no parent module calls the root.
+	oldRoot, newRoot := rootModule(oldProj), rootModule(newProj)
+	rootChanges := diff.Diff(oldRoot, newRoot)
+	rootChanges = append(rootChanges, diff.DiffTracked(oldRoot, newRoot)...)
+	sort.Slice(rootChanges, func(i, j int) bool {
+		if rootChanges[i].Kind != rootChanges[j].Kind {
+			return rootChanges[i].Kind < rootChanges[j].Kind
+		}
+		return rootChanges[i].Subject < rootChanges[j].Subject
+	})
+	for _, c := range rootChanges {
 		if c.Kind == diff.Breaking {
 			totalBreaking++
 		}
 	}
 
 	if outputJSON(cmd) {
-		exitJSON(buildRefJSON(baseRef, path, results, rootTracked), exitCodeFor(totalBreaking))
+		exitJSON(buildRefJSON(baseRef, path, results, rootChanges), exitCodeFor(totalBreaking))
 		return nil
 	}
 
-	printRefResults(baseRef, results, rootTracked)
+	printRefResults(baseRef, results, rootChanges)
 	if totalBreaking > 0 {
 		os.Exit(1)
 	}
@@ -123,7 +133,8 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 }
 
 // rootModule returns p.Root.Module if both are non-nil, otherwise nil.
-// DiffTracked is nil-safe so this just lets us avoid a nil chain.
+// diff.Diff and diff.DiffTracked are nil-safe so this just lets us avoid
+// a nil chain.
 func rootModule(p *loader.Project) *analysis.Module {
 	if p == nil || p.Root == nil {
 		return nil
@@ -209,10 +220,10 @@ func exitCodeFor(breaking int) int {
 
 // ---- text rendering ----
 
-func printRefResults(baseRef string, results []refModuleResult, rootTracked []diff.Change) {
+func printRefResults(baseRef string, results []refModuleResult, rootChanges []diff.Change) {
 	any := false
-	if len(rootTracked) > 0 {
-		printRootTracked(rootTracked)
+	if len(rootChanges) > 0 {
+		printRootChanges(rootChanges)
 		any = true
 	}
 	for _, r := range results {
@@ -226,20 +237,24 @@ func printRefResults(baseRef string, results []refModuleResult, rootTracked []di
 		printOneRefResult(r)
 	}
 	if !any {
-		fmt.Printf("No module-call changes detected vs %s.\n", baseRef)
+		fmt.Printf("No changes detected vs %s.\n", baseRef)
 	}
 }
 
-// printRootTracked emits the tracked-attribute changes for the root
-// module under a dedicated heading, since the root isn't a module call
-// and so doesn't appear in the per-module section below.
-func printRootTracked(changes []diff.Change) {
-	fmt.Println("Root module tracked attributes:")
-	var breaking, info []diff.Change
+// printRootChanges emits the API + tracked-attribute changes for the
+// root module under a dedicated heading. The root isn't a module call,
+// so it doesn't show up in the per-module section below — but a new
+// required root variable, a removed output, etc. still matter to the
+// operator running `terraform plan` against this directory.
+func printRootChanges(changes []diff.Change) {
+	fmt.Println("Root module:")
+	var breaking, nonBreaking, info []diff.Change
 	for _, c := range changes {
 		switch c.Kind {
 		case diff.Breaking:
 			breaking = append(breaking, c)
+		case diff.NonBreaking:
+			nonBreaking = append(nonBreaking, c)
 		case diff.Informational:
 			info = append(info, c)
 		}
@@ -247,6 +262,12 @@ func printRootTracked(changes []diff.Change) {
 	if len(breaking) > 0 {
 		fmt.Printf("  Breaking (%d):\n", len(breaking))
 		for _, c := range breaking {
+			printChangeLine("    ", c)
+		}
+	}
+	if len(nonBreaking) > 0 {
+		fmt.Printf("  Non-breaking (%d):\n", len(nonBreaking))
+		for _, c := range nonBreaking {
 			printChangeLine("    ", c)
 		}
 	}
@@ -339,10 +360,10 @@ func printChangeLine(indent string, c diff.Change) {
 
 // ---- JSON rendering ----
 
-func buildRefJSON(baseRef, path string, results []refModuleResult, rootTracked []diff.Change) any {
+func buildRefJSON(baseRef, path string, results []refModuleResult, rootChanges []diff.Change) any {
 	out := refJSON{BaseRef: baseRef, Path: path}
-	for _, c := range rootTracked {
-		out.RootTracked = append(out.RootTracked, toJSONChange(c))
+	for _, c := range rootChanges {
+		out.RootChanges = append(out.RootChanges, toJSONChange(c))
 		switch c.Kind {
 		case diff.Breaking:
 			out.Summary.Breaking++
@@ -387,7 +408,7 @@ type refJSON struct {
 	BaseRef     string          `json:"base_ref"`
 	Path        string          `json:"path"`
 	Modules     []refModuleJSON `json:"modules"`
-	RootTracked []jsonChange    `json:"root_tracked,omitempty"`
+	RootChanges []jsonChange    `json:"root_changes,omitempty"`
 	Summary     refSummaryJSON  `json:"summary"`
 }
 
