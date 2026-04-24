@@ -1,9 +1,14 @@
-name: Setup release labels
+name: Setup labels
 
-# One-shot workflow that creates (or updates) the three release:*
-# labels used by .github/workflows/auto-release.yml.
+# One-shot workflow that creates (or updates) the labels the release
+# + changelog workflows rely on:
 #
-# Run via the Actions tab → "Setup release labels" → "Run workflow".
+#   - release:patch / release:minor / release:major — drive auto-release
+#     on PR merge (.github/workflows/auto-release.yml)
+#   - no-changelog — opt a PR out of the CHANGELOG.md check
+#     (.github/workflows/changelog-check.yml)
+#
+# Run via the Actions tab → "Setup labels" → "Run workflow".
 # Idempotent — uses `gh label create --force`, so re-running just
 # refreshes colour/description without erroring on already-present
 # labels.
@@ -20,13 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Create release labels
+      - name: Create labels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Traffic-light colours: green = safe, yellow = additive,
-          # red = breaking.
+          # Release labels — traffic-light colours: green = safe,
+          # yellow = additive, red = breaking.
           gh label create "release:patch" \
             --color "0e8a16" \
             --description "Bug fixes / small adjustments — auto-bumps the patch version on merge." \
@@ -42,5 +47,14 @@ jobs:
             --description "Breaking changes — auto-bumps the major version on merge." \
             --force
 
+          # CHANGELOG opt-out — neutral grey, not red, since it's a
+          # legitimate escape hatch for refactors / dep bumps rather
+          # than a red flag.
+          gh label create "no-changelog" \
+            --color "cccccc" \
+            --description "Opt this PR out of the CHANGELOG.md check (refactors, internal cleanup, non-user-visible changes)." \
+            --force
+
           echo "Labels ready:"
           gh label list --search "release:"
+          gh label list --search "no-changelog"

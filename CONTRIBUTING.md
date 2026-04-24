@@ -170,7 +170,7 @@ make release-push VERSION=X.Y.Z            # re-do
    - A summary of the change
    - A test plan (what you ran manually; which tests now cover the scenario)
    - Any README updates alongside the code change — docs and code move together
-   - A `CHANGELOG.md` entry under `## [Unreleased]` for any user-visible change (added behaviour, changed semantics, removed feature, fixed bug, security note). Internal refactors and pure test additions don't need one.
+   - A `CHANGELOG.md` entry under `## [Unreleased]` for any user-visible change (added behaviour, changed semantics, removed feature, fixed bug, security note). Internal refactors and pure test additions don't need one — apply the `no-changelog` label if the PR's diff is non-trivial but the user-facing surface is unchanged. The changelog-check CI workflow auto-skips PRs whose only changed files fall under `*_test.go` / `*/testdata/*` / `.github/*` / `scripts/*` / top-level `.md`, so no label needed for those.
 4. **Wait for CI.** All three OS jobs must pass.
 5. **One reviewer approval** is sufficient for routine changes; architectural shifts may need more discussion.
 
