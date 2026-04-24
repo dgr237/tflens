@@ -2,6 +2,30 @@ package diff
 
 import "testing"
 
+// majorOf returns the first segment of the parsed version, for test
+// assertions that care about rough bounds.
+func majorOf(b bound) int {
+	if b.Kind != 0 || b.V == nil {
+		return -1
+	}
+	seg := b.V.Segments()
+	if len(seg) == 0 {
+		return -1
+	}
+	return seg[0]
+}
+
+func minorOf(b bound) int {
+	if b.Kind != 0 || b.V == nil {
+		return -1
+	}
+	seg := b.V.Segments()
+	if len(seg) < 2 {
+		return -1
+	}
+	return seg[1]
+}
+
 func TestParseSemver(t *testing.T) {
 	cases := []struct {
 		in    string
@@ -23,9 +47,14 @@ func TestParseSemver(t *testing.T) {
 			t.Errorf("parseSemver(%q) error: %v", c.in, err)
 			continue
 		}
-		if v.Major != c.major || v.Minor != c.minor || v.Patch != c.patch {
+		seg := v.Segments()
+		if len(seg) < 3 {
+			t.Errorf("parseSemver(%q): Segments returned <3 entries: %v", c.in, seg)
+			continue
+		}
+		if seg[0] != c.major || seg[1] != c.minor || seg[2] != c.patch {
 			t.Errorf("parseSemver(%q): got {%d,%d,%d}, want {%d,%d,%d}",
-				c.in, v.Major, v.Minor, v.Patch, c.major, c.minor, c.patch)
+				c.in, seg[0], seg[1], seg[2], c.major, c.minor, c.patch)
 		}
 		if n != c.parts {
 			t.Errorf("parseSemver(%q): parts=%d, want %d", c.in, n, c.parts)
@@ -34,7 +63,7 @@ func TestParseSemver(t *testing.T) {
 }
 
 func TestParseSemverErrors(t *testing.T) {
-	for _, s := range []string{"", "abc", "1.2.3.4", "-1"} {
+	for _, s := range []string{"", "abc", "1.2.3.4.5", "-1"} {
 		if _, _, err := parseSemver(s); err == nil {
 			t.Errorf("parseSemver(%q): expected error", s)
 		}
@@ -43,18 +72,20 @@ func TestParseSemverErrors(t *testing.T) {
 
 func TestSemverCompare(t *testing.T) {
 	cases := []struct {
-		a, b semver
+		a, b string
 		want int
 	}{
-		{semver{1, 0, 0}, semver{1, 0, 0}, 0},
-		{semver{1, 0, 0}, semver{1, 0, 1}, -1},
-		{semver{1, 0, 1}, semver{1, 0, 0}, 1},
-		{semver{1, 2, 0}, semver{1, 3, 0}, -1},
-		{semver{2, 0, 0}, semver{1, 99, 99}, 1},
+		{"1.0.0", "1.0.0", 0},
+		{"1.0.0", "1.0.1", -1},
+		{"1.0.1", "1.0.0", 1},
+		{"1.2.0", "1.3.0", -1},
+		{"2.0.0", "1.99.99", 1},
 	}
 	for _, c := range cases {
-		if got := c.a.compare(c.b); got != c.want {
-			t.Errorf("%v.compare(%v) = %d, want %d", c.a, c.b, got, c.want)
+		va, _, _ := parseSemver(c.a)
+		vb, _, _ := parseSemver(c.b)
+		if got := va.Compare(vb); got != c.want {
+			t.Errorf("%s.Compare(%s) = %d, want %d", c.a, c.b, got, c.want)
 		}
 	}
 }
@@ -62,17 +93,14 @@ func TestSemverCompare(t *testing.T) {
 func TestAtomToIntervals(t *testing.T) {
 	// Spot-check a few important shapes.
 	cases := []struct {
-		atom     string
-		loMajor  int
-		hiMajor  int
-		loClosed bool
-		hiClosed bool
+		atom    string
+		loMajor int
 	}{
-		{"= 1.2.3", 1, 1, true, true},
-		{">= 1.0.0", 1, 0, true, false}, // hi is +∞ — we check only lo
-		{">  1.0.0", 1, 0, false, false},
-		{"< 2.0.0", 0, 2, false, false},
-		{"~> 1.2", 1, 1, true, false}, // [1.2.0, 1.3.0) — major stays 1
+		{"= 1.2.3", 1},
+		{">= 1.0.0", 1},
+		{">  1.0.0", 1},
+		{"< 2.0.0", -1}, // lo is -∞
+		{"~> 1.2", 1},
 	}
 	for _, c := range cases {
 		ivs, err := atomToIntervals(c.atom)
@@ -84,10 +112,8 @@ func TestAtomToIntervals(t *testing.T) {
 			t.Errorf("atomToIntervals(%q): got %d intervals, want 1", c.atom, len(ivs))
 			continue
 		}
-		iv := ivs[0]
-		// For finite Lo, check major.
-		if iv.Lo.Kind == 0 && iv.Lo.V.Major != c.loMajor {
-			t.Errorf("atomToIntervals(%q): Lo.Major=%d, want %d", c.atom, iv.Lo.V.Major, c.loMajor)
+		if got := majorOf(ivs[0].Lo); got != c.loMajor {
+			t.Errorf("atomToIntervals(%q): Lo.Major=%d, want %d", c.atom, got, c.loMajor)
 		}
 	}
 }
@@ -122,9 +148,9 @@ func TestPessimisticBounds(t *testing.T) {
 			t.Errorf("%q: unexpected shape %+v", c.in, ivs)
 			continue
 		}
-		hi := ivs[0].Hi.V
-		if hi.Major != c.hiMajor || hi.Minor != c.hiMinor {
-			t.Errorf("%q: hi=%v, want {%d.%d.0}", c.in, hi, c.hiMajor, c.hiMinor)
+		hi := ivs[0].Hi
+		if majorOf(hi) != c.hiMajor || minorOf(hi) != c.hiMinor {
+			t.Errorf("%q: hi=%v, want {%d.%d.0}", c.in, hi.V, c.hiMajor, c.hiMinor)
 		}
 	}
 

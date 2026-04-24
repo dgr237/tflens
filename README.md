@@ -128,7 +128,7 @@ A broken `modules.json` is reported as a warning but does not abort the rest of 
 - **Cross-module validation in `--offline` mode for unresolved remote sources.** When `--offline` is set, parent → child checks require the child's directory to be resolvable — either via a local path (`./x`, `../y`) or via the post-`terraform init` manifest at `.terraform/modules/modules.json`. Registry and git sources cannot be loaded in that mode and are silently skipped. Either run `terraform init` first or drop `--offline`.
 - **Cross-module validation where argument types are opaque.** A parent passing `aws_vpc.main.cidr_block` to a typed child variable produces no type-mismatch error because the resource attribute's type cannot be resolved without provider schemas.
 - **Runtime values.** Defaults that call `timestamp()`, `uuid()`, or similar are not evaluated.
-- **Prerelease/build metadata in semver.** Stripped during parsing.
+- **Build metadata in semver.** Stripped during parsing per SemVer 2.0.0 §10. Prerelease identifiers are preserved and ordered per §11 (via `hashicorp/go-version`, the same library Terraform uses).
 
 ## Diff (`diff`)
 
@@ -550,7 +550,6 @@ Code is organised under `pkg/`:
 | `analysis` | Entity collection, dependency graph, type system, validation, graph algorithms (cycles, topo-sort, impact, unreferenced); consumes `hclsyntax.Body` from `pkg/loader` |
 | `loader` | Multi-file / directory / recursive submodule loading via `hclparse`, cross-module input validation |
 | `diff` | Two-module comparison with semver-aware constraint classification; expression equality goes through `hclwrite.Format` so whitespace-only edits don't show as changes |
-| `constraint` | SemVer parsing and Terraform-style version constraint evaluation (`~>`, `>=`, ...) |
 | `cache` | Content-addressable disk cache for downloaded module sources |
 | `resolver` | Pluggable `Resolver` chain (local path, `.terraform/modules/modules.json`, Terraform Registry, git) with credential support |
 | `tfstate` | Terraform state v4 JSON parser; exposes resource identity + instance keys for cross-reference |

@@ -3,74 +3,67 @@ package diff
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/hashicorp/go-version"
 )
 
-// semver is a parsed MAJOR.MINOR.PATCH version. Prerelease and build metadata
-// are stripped during parsing — they complicate ordering disproportionately
-// to their real-world frequency in Terraform module/provider constraints.
-type semver struct {
-	Major, Minor, Patch int
+// parseSemver parses a version literal like "1", "1.2", or "1.2.3"
+// (with optional leading "v" and optional prerelease/build metadata)
+// and returns it along with the number of core components explicitly
+// provided — needed by ~> to derive the implicit upper bound.
+//
+// Parsing delegates to hashicorp/go-version, the same library Terraform
+// uses; we only count components ourselves because go-version always
+// normalises to three segments internally (no way to tell "1.2" apart
+// from "1.2.0" after parsing).
+//
+// Rejects literals with more than three core (MAJOR[.MINOR[.PATCH]])
+// components. go-version itself accepts 4+ segments (Maven-style), but
+// Terraform's constraint grammar — and our `~>` interval derivation
+// — only defines behaviour for 1, 2, or 3.
+func parseSemver(s string) (*version.Version, int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, 0, fmt.Errorf("empty version")
+	}
+	n := countCoreComponents(s)
+	if n > 3 {
+		return nil, 0, fmt.Errorf("version %q has %d components; expected MAJOR[.MINOR[.PATCH]]", s, n)
+	}
+	v, err := version.NewVersion(s)
+	if err != nil {
+		return nil, 0, err
+	}
+	return v, n, nil
 }
 
-func (a semver) compare(b semver) int {
-	if a.Major != b.Major {
-		if a.Major < b.Major {
-			return -1
-		}
-		return 1
-	}
-	if a.Minor != b.Minor {
-		if a.Minor < b.Minor {
-			return -1
-		}
-		return 1
-	}
-	if a.Patch != b.Patch {
-		if a.Patch < b.Patch {
-			return -1
-		}
-		return 1
-	}
-	return 0
-}
-
-// parseSemver parses "X", "X.Y", or "X.Y.Z", returning the semver and the
-// number of components explicitly provided (needed by ~> for the implied
-// upper bound).
-func parseSemver(s string) (semver, int, error) {
+// countCoreComponents counts the dotted numeric segments in the core
+// of a version literal — the part before any `-` (prerelease) or `+`
+// (build metadata), after stripping any leading "v". Used to drive
+// `~>` upper-bound derivation: `~> 1.2` must widen to `< 2.0.0`, while
+// `~> 1.2.0` widens only to `< 1.3.0`.
+func countCoreComponents(s string) int {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "v")
-	if idx := strings.IndexAny(s, "-+"); idx >= 0 {
-		s = s[:idx]
+	if before, _, found := strings.Cut(s, "+"); found {
+		s = before
 	}
-	if s == "" {
-		return semver{}, 0, fmt.Errorf("empty version")
+	if before, _, found := strings.Cut(s, "-"); found {
+		s = before
 	}
-	parts := strings.Split(s, ".")
-	if len(parts) < 1 || len(parts) > 3 {
-		return semver{}, 0, fmt.Errorf("bad semver %q", s)
+	return len(strings.Split(s, "."))
+}
+
+// mustVersion parses s or panics. Used to construct concrete versions
+// for `~>` upper bounds from already-validated numeric segments — the
+// input is always well-formed at call sites.
+func mustVersion(s string) *version.Version {
+	v, err := version.NewVersion(s)
+	if err != nil {
+		panic(fmt.Sprintf("mustVersion(%q): %v", s, err))
 	}
-	v := semver{}
-	for i, p := range parts {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			return semver{}, 0, fmt.Errorf("bad semver %q: %v", s, err)
-		}
-		if n < 0 {
-			return semver{}, 0, fmt.Errorf("negative component in %q", s)
-		}
-		switch i {
-		case 0:
-			v.Major = n
-		case 1:
-			v.Minor = n
-		case 2:
-			v.Patch = n
-		}
-	}
-	return v, len(parts), nil
+	return v
 }
 
 // ---- interval model ----
@@ -78,7 +71,7 @@ func parseSemver(s string) (semver, int, error) {
 // bound is an interval endpoint. Kind -1 means -∞, +1 means +∞, 0 means V.
 type bound struct {
 	Kind int
-	V    semver
+	V    *version.Version
 }
 
 var negInf = bound{Kind: -1}
@@ -94,7 +87,7 @@ func boundCmp(a, b bound) int {
 	if a.Kind != 0 {
 		return 0
 	}
-	return a.V.compare(b.V)
+	return a.V.Compare(b.V)
 }
 
 // interval is [Lo, Hi] with LoClosed / HiClosed flags controlling inclusivity.
@@ -305,14 +298,20 @@ func atomToIntervals(atom string) ([]interval, error) {
 		//   ~> X        → [X.0.0, ∞)       (1-component ~> is treated as >= X)
 		//   ~> X.Y      → [X.Y.0, (X+1).0.0)  (minor can change within major)
 		//   ~> X.Y.Z    → [X.Y.Z, X.(Y+1).0)  (patch can change within minor)
+		seg := v.Segments()
+		// Segments() pads to three: missing minor/patch are zero,
+		// which is what we want here.
+		for len(seg) < 3 {
+			seg = append(seg, 0)
+		}
 		switch nComponents {
 		case 1:
 			return []interval{{Lo: bound{V: v}, LoClosed: true, Hi: posInf}}, nil
 		case 2:
-			upper := semver{Major: v.Major + 1}
+			upper := mustVersion(fmt.Sprintf("%d.0.0", seg[0]+1))
 			return []interval{{Lo: bound{V: v}, LoClosed: true, Hi: bound{V: upper}, HiClosed: false}}, nil
 		case 3:
-			upper := semver{Major: v.Major, Minor: v.Minor + 1}
+			upper := mustVersion(fmt.Sprintf("%d.%d.0", seg[0], seg[1]+1))
 			return []interval{{Lo: bound{V: v}, LoClosed: true, Hi: bound{V: upper}, HiClosed: false}}, nil
 		}
 	}

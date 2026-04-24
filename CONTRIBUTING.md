@@ -142,8 +142,7 @@ Quick tour for first-time contributors:
 | `pkg/token`      | Source-position type (thin wrapper over `hcl.Pos`)                             |
 | `pkg/analysis`   | Entity inventory, dependency graph, type system, tracked-attribute scanner     |
 | `pkg/loader`     | Multi-file / directory / recursive module loading via `hclparse`               |
-| `pkg/diff`       | Two-module API comparison + tracked-attribute diff + `DiffTrackedCtx` cross-module |
-| `pkg/constraint` | SemVer parsing + Terraform-style version constraint evaluation                 |
+| `pkg/diff`       | Two-module API comparison + tracked-attribute diff + `DiffTrackedCtx` cross-module + version-constraint relation classification (broadened/narrowed/disjoint) |
 | `pkg/resolver`   | Module source resolver chain (local → manifest → registry → git) + credentials |
 | `pkg/cache`      | Content-addressable disk cache for downloaded module sources                   |
 | `pkg/tfstate`    | Terraform state file reader (used by `statediff`)                              |
