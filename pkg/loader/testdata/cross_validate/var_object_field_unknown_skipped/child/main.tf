@@ -1,0 +1,3 @@
+variable "property" {
+  type = number
+}

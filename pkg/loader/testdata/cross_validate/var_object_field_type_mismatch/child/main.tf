@@ -1,0 +1,3 @@
+variable "capacity" {
+  type = number
+}

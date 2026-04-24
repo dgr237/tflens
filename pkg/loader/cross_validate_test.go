@@ -183,6 +183,38 @@ var crossValidateCases = []crossValidateCase{
 	{Name: "any_accepts_anything", WantNoErrors: true},
 	{Name: "var_reference_uses_declared_type", WantNoErrors: true},
 	{
+		// Regression: `var.config.property` where `var.config` has type
+		// object({property = number}) used to be inferred as object(...)
+		// because the type-inference path stopped at parts[1] and ignored
+		// the trailing `.property` traversal. Should infer as number.
+		Name:         "var_object_field_traversal",
+		WantNoErrors: true,
+	},
+	{
+		// Two-hop traversal: var.config.network.cidr where config is
+		// object({network = object({cidr = string})}). Should resolve
+		// to string and pass cross-validation against a string variable.
+		Name:         "var_object_field_nested",
+		WantNoErrors: true,
+	},
+	{
+		// `var.config.notdeclared` against object({property = number}):
+		// the field doesn't exist, so we cannot infer a type. Must NOT
+		// false-positive against the parent's object type — better to
+		// skip the type check than emit a wrong-type complaint.
+		Name:              "var_object_field_unknown_skipped",
+		MustNotContainMsg: []string{"but child variable expects"},
+	},
+	{
+		// `var.config.name` resolves to string; child wants number.
+		// This is a real type mismatch and must still be flagged.
+		Name: "var_object_field_type_mismatch",
+		WantEntityIDAndMsg: &struct {
+			EntityID    string
+			MsgContains []string
+		}{"module.net", []string{"string", "number"}},
+	},
+	{
 		Name: "var_reference_type_mismatch",
 		WantEntityIDAndMsg: &struct {
 			EntityID    string
