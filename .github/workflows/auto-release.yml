@@ -89,7 +89,11 @@ jobs:
 
       - name: Run release script
         if: steps.bump.outputs.skip == 'false'
-        run: ./scripts/release.sh ${{ steps.version.outputs.version }} --push
+        # Invoked via `bash` rather than relying on the executable
+        # bit, since Windows-committed files can end up with the bit
+        # unset — the check-in machine may not preserve mode in git
+        # by default (core.filemode=false).
+        run: bash scripts/release.sh ${{ steps.version.outputs.version }} --push
 
       - name: Extract CHANGELOG section for the new tag
         if: steps.bump.outputs.skip == 'false'

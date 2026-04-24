@@ -82,13 +82,13 @@ release:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "error: VERSION not set. Usage: make release VERSION=X.Y.Z"; exit 1; \
 	fi
-	./scripts/release.sh $(VERSION)
+	bash scripts/release.sh $(VERSION)
 
 release-push:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "error: VERSION not set. Usage: make release-push VERSION=X.Y.Z"; exit 1; \
 	fi
-	./scripts/release.sh $(VERSION) --push
+	bash scripts/release.sh $(VERSION) --push
 
 # ---- housekeeping ----
 
