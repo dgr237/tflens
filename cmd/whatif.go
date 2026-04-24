@@ -172,8 +172,8 @@ type whatifBranchJSON struct {
 type whatifCallJSON struct {
 	Name         string                `json:"name"`
 	Status       string                `json:"status"`
-	DirectImpact []jsonValidationError `json:"direct_impact"`
-	APIChanges   []jsonChange          `json:"api_changes,omitempty"`
+	DirectImpact []render.JSONValidationError `json:"direct_impact"`
+	APIChanges   []render.JSONChange          `json:"api_changes,omitempty"`
 }
 
 type whatifBranchSummaryJSON struct {
@@ -191,11 +191,11 @@ func whatifBranchJSONPayload(baseRef, path string, calls []whatifCallResult) wha
 			Status: r.Pair.Status.String(),
 		}
 		for _, e := range r.DirectImpact {
-			entry.DirectImpact = append(entry.DirectImpact, toJSONValErr(e))
+			entry.DirectImpact = append(entry.DirectImpact, render.JSONValErr(e))
 			out.Summary.DirectImpact++
 		}
 		for _, c := range r.APIChanges {
-			entry.APIChanges = append(entry.APIChanges, toJSONChange(c))
+			entry.APIChanges = append(entry.APIChanges, render.JSONChg(c))
 			switch c.Kind {
 			case diff.Breaking:
 				out.Summary.Breaking++

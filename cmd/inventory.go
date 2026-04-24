@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
@@ -24,13 +25,13 @@ func init() {
 func runInventory(cmd *cobra.Command, path string) {
 	mod := mustLoadModule(path)
 	if outputJSON(cmd) {
-		entities := make([]jsonEntity, 0, len(mod.Entities()))
+		entities := make([]render.JSONEntity, 0, len(mod.Entities()))
 		for _, e := range mod.Entities() {
-			entities = append(entities, toJSONEntity(e))
+			entities = append(entities, render.JSONEnt(e))
 		}
 		emitJSON(struct {
 			Total    int          `json:"total"`
-			Entities []jsonEntity `json:"entities"`
+			Entities []render.JSONEntity `json:"entities"`
 		}{Total: len(entities), Entities: entities})
 		return
 	}

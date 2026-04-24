@@ -245,7 +245,7 @@ func printOneRefResult(r refModuleResult) {
 func buildRefJSON(baseRef, path string, results []refModuleResult, rootChanges []diff.Change) any {
 	out := refJSON{BaseRef: baseRef, Path: path}
 	for _, c := range rootChanges {
-		out.RootChanges = append(out.RootChanges, toJSONChange(c))
+		out.RootChanges = append(out.RootChanges, render.JSONChg(c))
 		switch c.Kind {
 		case diff.Breaking:
 			out.Summary.Breaking++
@@ -268,7 +268,7 @@ func buildRefJSON(baseRef, path string, results []refModuleResult, rootChanges [
 			NewVersion: r.Pair.NewVersion,
 		}
 		for _, c := range r.Changes {
-			entry.Changes = append(entry.Changes, toJSONChange(c))
+			entry.Changes = append(entry.Changes, render.JSONChg(c))
 			switch c.Kind {
 			case diff.Breaking:
 				entry.Summary.Breaking++
@@ -290,7 +290,7 @@ type refJSON struct {
 	BaseRef     string          `json:"base_ref"`
 	Path        string          `json:"path"`
 	Modules     []refModuleJSON `json:"modules"`
-	RootChanges []jsonChange    `json:"root_changes,omitempty"`
+	RootChanges []render.JSONChange    `json:"root_changes,omitempty"`
 	Summary     refSummaryJSON  `json:"summary"`
 }
 
@@ -301,7 +301,7 @@ type refModuleJSON struct {
 	OldVersion string            `json:"old_version,omitempty"`
 	NewSource  string            `json:"new_source,omitempty"`
 	NewVersion string            `json:"new_version,omitempty"`
-	Changes    []jsonChange      `json:"changes,omitempty"`
+	Changes    []render.JSONChange      `json:"changes,omitempty"`
 	Summary    refSummaryJSON `json:"summary"`
 }
 
