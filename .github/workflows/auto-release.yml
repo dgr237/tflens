@@ -1,10 +1,17 @@
-name: Auto-release on PR merge
+name: Auto-release
 
-# Triggers when a PR is merged to main carrying a release:patch /
-# release:minor / release:major label. The workflow computes the next
-# semver from the latest existing v*.*.* tag, runs scripts/release.sh
-# to promote CHANGELOG.md and create the tag, and creates the matching
-# GitHub Release in the same job.
+# Two trigger paths:
+#
+#   1. PR merged to main carrying a release:patch / release:minor /
+#      release:major label → bump computed from the label.
+#   2. Manual workflow_dispatch from the Actions tab → either a
+#      `bump` choice (patch/minor/major) or an explicit `version`
+#      (X.Y.Z), with version overriding bump if both are supplied.
+#
+# In either case the workflow:
+#   - Computes the next version (or uses the explicit one)
+#   - Runs scripts/release.sh to promote CHANGELOG + tag
+#   - Creates the matching GitHub Release inline
 #
 # Why "in the same job": tags pushed by GITHUB_TOKEN do NOT trigger
 # downstream workflows (the well-known token recursion guard). So the
@@ -13,82 +20,116 @@ name: Auto-release on PR merge
 # manual `make release-push` path where the maintainer pushes the tag
 # from their own credentials.
 #
-# PRs without a release label are silently skipped — the [Unreleased]
-# entries simply accumulate until a release-labelled PR triggers the
-# next bump.
+# PR-trigger path: PRs without a release label are silently skipped —
+# the [Unreleased] entries simply accumulate until a release-labelled
+# PR triggers the next bump.
 
 on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit X.Y.Z (e.g. 0.2.0). Overrides 'bump' if both supplied. Leave empty to use 'bump'."
+        required: false
+        type: string
+        default: ""
+      bump:
+        description: "Bump type when 'version' is empty."
+        required: false
+        type: choice
+        default: "patch"
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write   # push commit + tag + create Release
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true
+    # Run when a PR was actually merged (closed-but-not-merged → skip)
+    # or whenever the workflow is triggered manually.
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+      || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Determine bump type from PR labels
-        id: bump
-        env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          set -euo pipefail
-          # JSON array of label names → bump type. major beats minor
-          # beats patch when multiple labels are present (rare, but
-          # handle it deterministically rather than failing).
-          bump=$(printf '%s' "$LABELS" | jq -r '
-            if any(. == "release:major") then "major"
-            elif any(. == "release:minor") then "minor"
-            elif any(. == "release:patch") then "patch"
-            else empty
-            end
-          ')
-          if [ -z "$bump" ]; then
-            echo "no release:* label on PR; skipping auto-release"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "bump=$bump" >> "$GITHUB_OUTPUT"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout main
-        if: steps.bump.outputs.skip == 'false'
         uses: actions/checkout@v6
         with:
           ref: main
-          fetch-depth: 0   # need full history + tags
+          fetch-depth: 0   # full history + tags
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute next version
-        if: steps.bump.outputs.skip == 'false'
+      - name: Determine version
         id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
+
+          # 1. Manual dispatch with explicit version → use it directly,
+          #    skip bump computation.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
+            echo "Using explicit version from input: $INPUT_VERSION"
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 2. Pick a bump type from either the dispatch input or the
+          #    PR's release:* label. PR with no release label → skip
+          #    the whole job.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            bump="$INPUT_BUMP"
+          else
+            bump=$(printf '%s' "$LABELS" | jq -r '
+              if any(. == "release:major") then "major"
+              elif any(. == "release:minor") then "minor"
+              elif any(. == "release:patch") then "patch"
+              else empty
+              end
+            ')
+            if [ -z "$bump" ]; then
+              echo "::notice::No release:* label on PR — skipping auto-release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          # 3. Compute next version from latest existing tag + bump.
           latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
           if [ -z "$latest" ]; then
-            echo "error: no existing v*.*.* tags to bump from" >&2
+            echo "::error::no existing v*.*.* tags to bump from. Use the 'version' input on workflow_dispatch to seed an initial release."
             exit 1
           fi
           latest=${latest#v}
           IFS='.' read -r major minor patch <<< "$latest"
-          case "${{ steps.bump.outputs.bump }}" in
+          case "$bump" in
             major) major=$((major+1)); minor=0; patch=0 ;;
             minor) minor=$((minor+1)); patch=0 ;;
             patch) patch=$((patch+1)) ;;
+            *) echo "::error::unknown bump type: $bump"; exit 1 ;;
           esac
-          echo "version=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+          version="$major.$minor.$patch"
+          echo "Computed version: v$version (latest=$latest, bump=$bump)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Configure git identity
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Run release script
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false'
         # Invoked via `bash` rather than relying on the executable
         # bit, since Windows-committed files can end up with the bit
         # unset — the check-in machine may not preserve mode in git
@@ -96,7 +137,7 @@ jobs:
         run: bash scripts/release.sh ${{ steps.version.outputs.version }} --push
 
       - name: Extract CHANGELOG section for the new tag
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false'
         id: notes
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -109,7 +150,7 @@ jobs:
             in_section { print }
           ' CHANGELOG.md | sed -e '/./,$!d' -e ':a;/^\n*$/{$d;N;ba;}')"
           if [ -z "$body" ]; then
-            echo "error: no CHANGELOG entry for v${VERSION}" >&2
+            echo "::error::no CHANGELOG entry for v${VERSION}"
             exit 1
           fi
           {
@@ -119,7 +160,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        if: steps.bump.outputs.skip == 'false'
+        if: steps.version.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

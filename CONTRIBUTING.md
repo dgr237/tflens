@@ -131,9 +131,17 @@ Add a `release:patch`, `release:minor`, or `release:major` label to a PR before 
 
 **PRs without a release label are silently skipped** — `[Unreleased]` entries accumulate until the next release-labelled PR triggers a bump.
 
-### Path 2 — Manual, from a maintainer's checkout
+### Path 2 — Manual via GitHub UI
 
-For releases that aren't tied to a single PR (e.g. cutting a release that bundles several already-merged PRs):
+For releases that aren't tied to a single PR (e.g. cutting a release that bundles several already-merged PRs), or to retry a failed auto-release:
+
+1. Go to **Actions** → **"Auto-release"** → **"Run workflow"**
+2. Either pick a `bump` type (default: `patch`) or enter an explicit `version` (`X.Y.Z`). If both are supplied, `version` wins.
+3. Confirm
+
+The same flow as the PR-merge path runs: CHANGELOG promoted, commit + tag created, GitHub Release published.
+
+### Path 3 — Manual from a maintainer's checkout
 
 ```bash
 git checkout main && git pull
@@ -150,7 +158,9 @@ Run `make release VERSION=X.Y.Z` (without `-push`) first if you want to inspect 
 
 ### Why two workflows?
 
-`auto-release.yml` does its own GitHub Release creation inline because tags pushed by `GITHUB_TOKEN` don't trigger downstream workflows (the well-known recursion guard). `release.yml` still handles the manual-tag case where the maintainer pushes the tag from their own credentials, which DO trigger workflows.
+`auto-release.yml` does its own GitHub Release creation inline because tags pushed by `GITHUB_TOKEN` don't trigger downstream workflows (the well-known recursion guard). `release.yml` still handles Path 3, where the maintainer pushes the tag from their own credentials, which DO trigger workflows.
+
+Both PR-merge and `workflow_dispatch` paths go through `auto-release.yml`; pick whichever fits the situation.
 
 If you ever need to redo a release (typo in the changelog, etc.):
 
