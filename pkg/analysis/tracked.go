@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/dgr237/tflens/pkg/token"
 )
@@ -397,6 +398,72 @@ func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// EvalContext returns an hcl.EvalContext populated with this module's
+// statically-evaluable variable defaults and local values, suitable
+// for hclsyntax expression evaluation. Variables and locals whose
+// values can't be evaluated cleanly (no default, references a
+// Terraform-specific function we don't wire in, etc.) are simply
+// omitted — callers that try to evaluate an expression touching them
+// get a diagnostic and can fall back to text comparison.
+//
+// No Terraform stdlib functions (length, contains, keys, merge, …)
+// are wired in; only the cty stdlib is available. This is deliberate:
+// the use case is "did the effective value change?" and getting that
+// answer right for ternaries / arithmetic / string interpolation is
+// enough to suppress the most common class of false positive.
+func (m *Module) EvalContext() *hcl.EvalContext {
+	ctx := &hcl.EvalContext{Variables: map[string]cty.Value{}}
+	if m == nil {
+		return ctx
+	}
+	// Variable defaults: Terraform forbids defaults from referencing
+	// other vars or locals, so a nil context is safe.
+	varVals := map[string]cty.Value{}
+	for _, e := range m.Filter(KindVariable) {
+		if e.DefaultExpr == nil || e.DefaultExpr.E == nil {
+			continue
+		}
+		val, diags := e.DefaultExpr.E.Value(nil)
+		if !diags.HasErrors() && !val.IsNull() {
+			varVals[e.Name] = val
+		}
+	}
+	if len(varVals) > 0 {
+		ctx.Variables["var"] = cty.ObjectVal(varVals)
+	}
+	// Locals: can reference vars + other locals. Iterate until we
+	// stop making progress; a local that references something
+	// unevaluable just stays absent from the context.
+	localVals := map[string]cty.Value{}
+	locals := m.Filter(KindLocal)
+	for round := 0; round <= len(locals); round++ {
+		progress := false
+		for _, e := range locals {
+			if _, done := localVals[e.Name]; done {
+				continue
+			}
+			if e.LocalExpr == nil || e.LocalExpr.E == nil {
+				continue
+			}
+			if len(localVals) > 0 {
+				ctx.Variables["local"] = cty.ObjectVal(localVals)
+			}
+			val, diags := e.LocalExpr.E.Value(ctx)
+			if !diags.HasErrors() && !val.IsNull() {
+				localVals[e.Name] = val
+				progress = true
+			}
+		}
+		if !progress {
+			break
+		}
+	}
+	if len(localVals) > 0 {
+		ctx.Variables["local"] = cty.ObjectVal(localVals)
+	}
+	return ctx
 }
 
 // GatherRefsFromExpr walks expr's variable references and returns a

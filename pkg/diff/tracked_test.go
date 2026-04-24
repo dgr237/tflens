@@ -342,6 +342,49 @@ var trackedCases = []trackedCase{
 		HintContains:   []string{"register baseline"},
 	},
 	{
+		// Eval-equivalence: marker stays, but the local's TEXT
+		// changes from `"1.34"` to `var.upgrade ? "1.35" : "1.34"`
+		// with var.upgrade defaulting to false → both sides evaluate
+		// to "1.34". The new variable IS surfaced as a "now
+		// references" supporting detail, but the change is NOT
+		// Breaking because the effective value didn't move.
+		Name:     "tracked_eval_equivalent_conditional_false",
+		Subject:  "local.cluster_version.value",
+		WantKind: diff.Informational,
+		DetailContains: []string{
+			"now references variable.upgrade", "false",
+		},
+	},
+	{
+		// Same shape as above but var.upgrade defaults to true →
+		// the conditional resolves to "1.35", a real change. Should
+		// be Breaking with the value diff surfaced.
+		Name:     "tracked_eval_real_change_true",
+		Subject:  "local.cluster_version.value",
+		WantKind: diff.Breaking,
+		DetailContains: []string{
+			`"1.34"`, `var.upgrade ? "1.35" : "1.34"`,
+			"now references variable.upgrade", "true",
+		},
+	},
+	{
+		// Eval graceful-degradation: the local references a data
+		// source (data.aws_caller_identity.current.account_id) that
+		// can't be statically evaluated — `data.X` isn't bound in
+		// our EvalContext. equivalentByEval returns false on both
+		// sides, so we fall back to literal text comparison. The
+		// suffix changed from "-prod" to "-staging" so the texts
+		// differ → reported as Breaking, conservatively. (We can't
+		// PROVE the value didn't change without resolving the data
+		// lookup, so we err on the side of flagging.)
+		Name:     "tracked_eval_data_ref_unevaluable",
+		Subject:  "local.cluster_name.value",
+		WantKind: diff.Breaking,
+		DetailContains: []string{
+			`-prod`, `-staging`,
+		},
+	},
+	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
 		// Only local.suffix changes between revisions; the literal text of
 		// the attribute is unchanged. The tracked-attribute pass must
