@@ -151,6 +151,19 @@ Classifications used for registry/git children:
 - **NonBreaking** — safe to upgrade through
 - **Informational** — operational or cosmetic, but worth surfacing
 
+### Fix hints
+
+Most breaking changes carry a one-line `hint:` with the conventional fix. Example:
+
+```
+Module "vpc": (content changed)
+  Breaking (1):
+    variable.region: required variable added (no default)
+      hint: add `default = ...` to make it optional, or document that callers must set it
+```
+
+Hints cover the common cases: required-variable-added (suggest `default`), required-object-field-added (suggest `optional()`), resource removed/renamed (suggest `removed {}` / `moved {}` blocks with the exact entity IDs filled in), backend changes (`terraform init -migrate-state`), `count`↔`for_each` transitions, sensitive-leak removals on outputs, and the four cross-validate consumption errors. The JSON output emits the same string under a `"hint"` key (omitted when empty).
+
 ### What it catches
 
 **Variables:**

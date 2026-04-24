@@ -198,7 +198,7 @@ func printOneWhatifCall(path string, r whatifCallResult) {
 		}
 		fmt.Printf("    %s (%d):\n", title, len(list))
 		for _, c := range list {
-			fmt.Printf("      %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("      ", c)
 		}
 	}
 	section("Breaking", breaking)

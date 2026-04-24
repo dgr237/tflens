@@ -45,6 +45,7 @@ type Change struct {
 	Kind    ChangeKind
 	Subject string         // entity id (or "old-id → new-id" for renames)
 	Detail  string         // human-readable description
+	Hint    string         // optional one-line "how to fix this" guidance
 	OldPos  token.Position // zero value for pure additions
 	NewPos  token.Position // zero value for pure removals
 }
@@ -84,6 +85,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "variable removed",
+				Hint:    "callers passing this variable will fail; document the migration or restore the variable",
 				OldPos:  oe.Pos,
 			})
 			continue
@@ -93,6 +95,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "default removed (variable became required)",
+				Hint:    "keep the default; only remove it if every caller already passes the input explicitly",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -111,6 +114,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "`nullable = false` added (null inputs now rejected)",
+				Hint:    "remove the nullable line, or document — callers passing null are now rejected",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -129,6 +133,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "`sensitive = true` added (downstream non-sensitive uses will break)",
+				Hint:    "every output / local that consumes this value must also be marked sensitive = true",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -147,6 +152,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "`ephemeral = true` added (callers must now pass an ephemeral value)",
+				Hint:    "callers must pass a value that's also ephemeral (Terraform 1.10+); revert if not intentional",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -186,6 +192,7 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 			}
 			kind := Breaking
 			label := "type changed"
+			hint := ""
 			switch compareTypes(oe.DeclaredType, ne.DeclaredType) {
 			case typeRelWidened:
 				kind = NonBreaking
@@ -193,18 +200,22 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 			case typeRelNarrowed:
 				kind = Breaking
 				label = "type narrowed"
+				hint = "keep the wider type and add a validation block instead, or document the migration"
 			case typeRelEqual:
 				// Reachable when typeEqual is structurally false but cty
 				// considers the types equivalent (e.g. tuple shapes that
 				// happen to match list element types).
 				kind = NonBreaking
 				label = "type equivalent"
+			default:
+				hint = "this is an incompatible type change; revert or document the migration"
 			}
 			*changes = append(*changes, Change{
 				Kind:    kind,
 				Subject: oe.ID(),
 				Detail: fmt.Sprintf("%s: %s → %s",
 					label, typeStr(oe.DeclaredType), typeStr(ne.DeclaredType)),
+				Hint:   hint,
 				OldPos: oe.Pos,
 				NewPos: ne.Pos,
 			})
@@ -218,14 +229,17 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 		}
 		kind := NonBreaking
 		detail := "variable added (optional)"
+		hint := ""
 		if !ne.HasDefault {
 			kind = Breaking
 			detail = "required variable added (no default)"
+			hint = "add `default = ...` to make it optional, or document that callers must set it"
 		}
 		*changes = append(*changes, Change{
 			Kind:    kind,
 			Subject: ne.ID(),
 			Detail:  detail,
+			Hint:    hint,
 			NewPos:  ne.Pos,
 		})
 	}
@@ -244,6 +258,7 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "output removed",
+				Hint:    "callers using `module.X." + oe.Name + "` will fail; restore the output, rename via alias, or document the migration",
 				OldPos:  oe.Pos,
 			})
 			continue
@@ -262,6 +277,7 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "output sensitive flag dropped (sensitive leak — value previously masked is now exposed in logs and downstream consumers)",
+				Hint:    "if accidental, restore `sensitive = true`; if intentional, audit downstream uses for log exposure",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -272,6 +288,7 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Kind:    Breaking,
 				Subject: oe.ID(),
 				Detail:  "output became ephemeral (consumers expecting a persisted value will fail)",
+				Hint:    "consumers will no longer find this value in state; revert if not intentional",
 				OldPos:  oe.Pos,
 				NewPos:  ne.Pos,
 			})
@@ -381,6 +398,7 @@ func diffTerraformBlock(oldMod, newMod *analysis.Module, changes *[]Change) {
 // classified as Breaking.
 func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 	const subject = "terraform.backend"
+	const initMigrateHint = "run `terraform init -migrate-state` to relocate the existing state"
 	switch {
 	case oldB == nil && newB == nil:
 		return
@@ -390,6 +408,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 			Subject: subject,
 			Detail: fmt.Sprintf("backend %q added (state migrates from local to remote — run `terraform init -migrate-state`)",
 				newB.Type),
+			Hint:   initMigrateHint,
 			NewPos: newB.Pos,
 		})
 		return
@@ -399,6 +418,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 			Subject: subject,
 			Detail: fmt.Sprintf("backend %q removed (state migrates back to local — run `terraform init -migrate-state`)",
 				oldB.Type),
+			Hint:   initMigrateHint,
 			OldPos: oldB.Pos,
 		})
 		return
@@ -409,6 +429,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 			Subject: subject,
 			Detail: fmt.Sprintf("backend type changed: %q → %q (state moves between providers — run `terraform init -migrate-state`)",
 				oldB.Type, newB.Type),
+			Hint:   initMigrateHint,
 			OldPos: oldB.Pos,
 			NewPos: newB.Pos,
 		})
@@ -433,6 +454,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 				Subject: subject,
 				Detail: fmt.Sprintf("backend %q config: attribute %q removed (was %s) — may relocate state",
 					oldB.Type, k, oldV),
+				Hint:   initMigrateHint,
 				OldPos: oldB.Pos,
 				NewPos: newB.Pos,
 			})
@@ -442,6 +464,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 				Subject: subject,
 				Detail: fmt.Sprintf("backend %q config: attribute %q added (now %s) — may relocate state",
 					newB.Type, k, newV),
+				Hint:   initMigrateHint,
 				OldPos: oldB.Pos,
 				NewPos: newB.Pos,
 			})
@@ -451,6 +474,7 @@ func diffBackend(oldB, newB *analysis.Backend, changes *[]Change) {
 				Subject: subject,
 				Detail: fmt.Sprintf("backend %q config: %q changed: %s → %s (run `terraform init -migrate-state` if the location moved)",
 					oldB.Type, k, oldV, newV),
+				Hint:   initMigrateHint,
 				OldPos: oldB.Pos,
 				NewPos: newB.Pos,
 			})
@@ -481,6 +505,7 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 				Subject: id,
 				Detail: fmt.Sprintf("instance addressing changed: %s → %s (use `moved` blocks to migrate state)",
 					addressMode(oe), addressMode(ne)),
+				Hint:   "add `moved {}` blocks per instance (e.g. moved { from = " + id + "[0], to = " + id + "[\"key\"] }) to migrate state without recreate",
 				OldPos: oe.Pos,
 				NewPos: ne.Pos,
 			})
@@ -506,6 +531,7 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 					Subject: id,
 					Detail: fmt.Sprintf("provider changed: %s → %s (resource will be recreated under the new provider configuration)",
 						displayProvider(oldProv), displayProvider(newProv)),
+					Hint:   "Terraform recreates the resource on the new provider; use `terraform state mv` if the existing instance must be retained",
 					OldPos: oe.Pos,
 					NewPos: ne.Pos,
 				})
@@ -585,6 +611,7 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 			Kind:    Breaking,
 			Subject: p.old.ID() + " → " + p.new.ID(),
 			Detail:  "possible rename (add `moved` block to preserve state; otherwise destroy + create)",
+			Hint:    "add `moved { from = " + p.old.ID() + ", to = " + p.new.ID() + " }` so Terraform migrates state in place",
 			OldPos:  p.old.Pos,
 			NewPos:  p.new.Pos,
 		})
@@ -605,6 +632,7 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 			Kind:    Breaking,
 			Subject: oe.ID(),
 			Detail:  "removed (state will be destroyed; use `removed` block to keep existing infrastructure)",
+			Hint:    "if intentional, add `removed { from = " + oe.ID() + " }` to keep the existing infrastructure without recreating",
 			OldPos:  oe.Pos,
 		})
 	}
@@ -710,6 +738,7 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 				Subject: id,
 				Detail: fmt.Sprintf("`ignore_changes` narrowed: all → %s (drift detection now fires on attributes that were previously ignored)",
 					displayIgnoreList(ne.IgnoreChangesExpr.Text())),
+				Hint:   "drift detection will fire on attributes that were previously suppressed; revert to `all` if not intentional",
 				OldPos: oe.Pos,
 				NewPos: ne.Pos,
 			})
@@ -1123,6 +1152,7 @@ func emitOutputValueChange(oldMod, newMod *analysis.Module, oe, ne analysis.Enti
 				Subject: oe.ID(),
 				Detail: fmt.Sprintf("output type changed: %s → %s (downstream consumers expecting %s will fail)",
 					typeStr(oldType), typeStr(newType), typeStr(oldType)),
+				Hint:   fmt.Sprintf("restore the wider %s type, or document that consumers must adjust", typeStr(oldType)),
 				OldPos: oe.Pos,
 				NewPos: ne.Pos,
 			})
@@ -1162,6 +1192,7 @@ func emitForEachChange(oldMod, newMod *analysis.Module, id string, oe, ne analys
 				Subject: id,
 				Detail: fmt.Sprintf("for_each key type changed: %s → %s (every instance will be recreated under new keys)",
 					typeStr(oldKey), typeStr(newKey)),
+				Hint:   "add `moved {}` blocks per instance to migrate state without recreate, or revert the key-type change",
 				OldPos: oe.Pos,
 				NewPos: ne.Pos,
 			})
@@ -1288,15 +1319,19 @@ func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPo
 		if !present {
 			kind := Breaking
 			detail := fmt.Sprintf("object field %q removed", name)
+			hint := ""
 			if oldField != nil && oldField.Optional {
 				// Callers may not have been passing it anyway.
 				kind = NonBreaking
 				detail = fmt.Sprintf("optional object field %q removed", name)
+			} else {
+				hint = fmt.Sprintf("deprecate first via optional(%s) before removing in a major release", typeStr(oldField))
 			}
 			*changes = append(*changes, Change{
 				Kind:    kind,
 				Subject: subject,
 				Detail:  detail,
+				Hint:    hint,
 				OldPos:  oldPos,
 				NewPos:  newPos,
 			})
@@ -1309,6 +1344,7 @@ func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPo
 				Kind:    Breaking,
 				Subject: subject,
 				Detail:  fmt.Sprintf("object field %q became required", name),
+				Hint:    fmt.Sprintf("keep `optional(%s)`; only remove the wrapper if every caller already sets the field", typeStr(newField)),
 				OldPos:  oldPos,
 				NewPos:  newPos,
 			})
@@ -1357,14 +1393,18 @@ func diffObjectFields(subject string, oldT, newT *analysis.TFType, oldPos, newPo
 		}
 		kind := Breaking
 		detail := fmt.Sprintf("required object field %q added", name)
+		hint := ""
 		if newField != nil && newField.Optional {
 			kind = NonBreaking
 			detail = fmt.Sprintf("optional object field %q added", name)
+		} else {
+			hint = fmt.Sprintf("wrap with `optional(%s)` (Terraform 1.3+) so existing callers don't have to update their object literals", typeStr(newField))
 		}
 		*changes = append(*changes, Change{
 			Kind:    kind,
 			Subject: subject,
 			Detail:  detail,
+			Hint:    hint,
 			OldPos:  oldPos,
 			NewPos:  newPos,
 		})

@@ -89,6 +89,7 @@ type jsonChange struct {
 	Kind    string        `json:"kind"` // breaking | non-breaking | info
 	Subject string        `json:"subject"`
 	Detail  string        `json:"detail"`
+	Hint    string        `json:"hint,omitempty"`
 	OldPos  *jsonPosition `json:"old_pos,omitempty"`
 	NewPos  *jsonPosition `json:"new_pos,omitempty"`
 }
@@ -98,6 +99,7 @@ func toJSONChange(c diff.Change) jsonChange {
 		Kind:    c.Kind.String(),
 		Subject: c.Subject,
 		Detail:  c.Detail,
+		Hint:    c.Hint,
 		OldPos:  posPtr(c.OldPos),
 		NewPos:  posPtr(c.NewPos),
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -128,10 +129,28 @@ func consumptionChangesForLocal(p modulePair) []diff.Change {
 			Kind:    diff.Breaking,
 			Subject: e.EntityID,
 			Detail:  e.Msg,
+			Hint:    hintForCrossValidateMsg(e.Msg),
 			NewPos:  e.Pos,
 		})
 	}
 	return out
+}
+
+// hintForCrossValidateMsg returns a one-line "how to fix this" hint
+// based on the shape of the cross_validate error message. Recognises
+// the four error templates emitted by loader/cross_validate.go.
+func hintForCrossValidateMsg(msg string) string {
+	switch {
+	case strings.Contains(msg, "unknown argument"):
+		return "remove the argument from the module block, or restore the matching variable in the child"
+	case strings.Contains(msg, "required input"):
+		return "add the input to the module block, or give the child variable a default"
+	case strings.Contains(msg, "but child variable expects"):
+		return "convert the value to the expected type (tostring/tolist/...) or change the parent's expression"
+	case strings.Contains(msg, "no such output"):
+		return "restore the output in the child, or remove the parent's reference"
+	}
+	return ""
 }
 
 // refModuleResult is the per-module-call result of a branch diff.
@@ -235,20 +254,29 @@ func printOneRefResult(r refModuleResult) {
 	if len(breaking) > 0 {
 		fmt.Printf("  Breaking (%d):\n", len(breaking))
 		for _, c := range breaking {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
 	}
 	if len(nonBreaking) > 0 {
 		fmt.Printf("  Non-breaking (%d):\n", len(nonBreaking))
 		for _, c := range nonBreaking {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
 	}
 	if len(info) > 0 {
 		fmt.Printf("  Informational (%d):\n", len(info))
 		for _, c := range info {
-			fmt.Printf("    %s: %s\n", c.Subject, c.Detail)
+			printChangeLine("    ", c)
 		}
+	}
+}
+
+// printChangeLine prints "<indent><subject>: <detail>" plus, when the
+// change has a Hint, an aligned "<indent>  hint: <hint>" follow-up.
+func printChangeLine(indent string, c diff.Change) {
+	fmt.Printf("%s%s: %s\n", indent, c.Subject, c.Detail)
+	if c.Hint != "" {
+		fmt.Printf("%s  hint: %s\n", indent, c.Hint)
 	}
 }
 
