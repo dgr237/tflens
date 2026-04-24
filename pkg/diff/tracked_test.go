@@ -368,6 +368,23 @@ var trackedCases = []trackedCase{
 		},
 	},
 	{
+		// Eval graceful-degradation: the local references a data
+		// source (data.aws_caller_identity.current.account_id) that
+		// can't be statically evaluated — `data.X` isn't bound in
+		// our EvalContext. equivalentByEval returns false on both
+		// sides, so we fall back to literal text comparison. The
+		// suffix changed from "-prod" to "-staging" so the texts
+		// differ → reported as Breaking, conservatively. (We can't
+		// PROVE the value didn't change without resolving the data
+		// lookup, so we err on the side of flagging.)
+		Name:     "tracked_eval_data_ref_unevaluable",
+		Subject:  "local.cluster_name.value",
+		WantKind: diff.Breaking,
+		DetailContains: []string{
+			`-prod`, `-staging`,
+		},
+	},
+	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
 		// Only local.suffix changes between revisions; the literal text of
 		// the attribute is unchanged. The tracked-attribute pass must
