@@ -15,9 +15,12 @@ import (
 // filesystem. There is intentionally no default path — the format is
 // not a Terraform standard, just a per-org convention, so we don't want
 // to silently pick up an unrelated file that happens to live there.
-const TfeTokensFileEnv = "TFE_TOKENS_FILE"
+//
+// Namespaced to TFLENS_ to make the source unambiguous in environments
+// where multiple tools may share TFE-style tokens.
+const TfeTokensFileEnv = "TFLENS_TFE_TOKENS_FILE"
 
-// LoadTfeTokens reads the TFE tokens file pointed at by $TFE_TOKENS_FILE
+// LoadTfeTokens reads the TFE tokens file pointed at by $TFLENS_TFE_TOKENS_FILE
 // and returns the credentials it declares. The file format is the YAML
 // convention used by some Terraform Enterprise deployments to ship
 // per-organisation tokens out-of-band from the standard ~/.terraformrc
@@ -31,7 +34,7 @@ const TfeTokensFileEnv = "TFE_TOKENS_FILE"
 //
 // `address` may be a bare host, a `host:port` pair, or a full URL — only
 // the host (with port if non-default) is used for matching against the
-// outgoing request's URL host. With $TFE_TOKENS_FILE unset, returns an
+// outgoing request's URL host. With $TFLENS_TFE_TOKENS_FILE unset, returns an
 // empty, non-nil source with no error so callers can chain unconditionally.
 func LoadTfeTokens() (CredentialsSource, error) {
 	path := os.Getenv(TfeTokensFileEnv)

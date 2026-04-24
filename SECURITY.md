@@ -17,7 +17,7 @@ tflens is a **static analyser**: it parses `.tf` files, builds an entity graph, 
 
 - Arbitrary code execution triggered by parsing a malicious `.tf` file
 - Path traversal / arbitrary file read via crafted `source = "..."` values, git refs, or module names
-- Token leakage (private-registry credentials from `~/.terraformrc`, `$TFE_TOKENS_FILE`, or `.terraform/modules/modules.json`) — e.g. tokens sent to an unintended host via a redirect or misconfigured resolver
+- Token leakage (private-registry credentials from `~/.terraformrc`, `$TFLENS_TFE_TOKENS_FILE`, or `.terraform/modules/modules.json`) — e.g. tokens sent to an unintended host via a redirect or misconfigured resolver
 - Denial of service (unbounded memory / CPU) triggered by crafted input
 - Command injection in the `git worktree` / `git rev-parse` call sites used by `diff`, `whatif`, and `statediff`
 

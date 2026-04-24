@@ -486,7 +486,7 @@ Downloaded modules are stored under the OS user cache directory (e.g. `~/.cache/
 
 Credentials are read from two sources, in this order:
 
-1. **TFE tokens YAML file**, opt-in via `$TFE_TOKENS_FILE`. Some Terraform Enterprise org-management tooling ships per-organisation tokens in this format:
+1. **TFE tokens YAML file**, opt-in via `$TFLENS_TFE_TOKENS_FILE`. Some Terraform Enterprise org-management tooling ships per-organisation tokens in this format:
 
    ```yaml
    tokens:
@@ -496,7 +496,7 @@ Credentials are read from two sources, in this order:
        token: another-tfe-token
    ```
 
-   `address` may be a bare host, a `host:port` pair, or a full URL — only the host (with port if non-default) is matched against the outgoing request. Loading is strictly opt-in: with `$TFE_TOKENS_FILE` unset, tflens never reads from any conventional path. Set the variable to enable the source.
+   `address` may be a bare host, a `host:port` pair, or a full URL — only the host (with port if non-default) is matched against the outgoing request. Loading is strictly opt-in: with `$TFLENS_TFE_TOKENS_FILE` unset, tflens never reads from any conventional path. Set the variable to enable the source.
 
 2. **Terraform CLI config file** (`$TF_CLI_CONFIG_FILE`, or `%APPDATA%\terraform.rc` on Windows, or `~/.terraformrc` elsewhere) — the standard Terraform format:
 
