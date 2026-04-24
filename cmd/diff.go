@@ -89,8 +89,15 @@ func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
 			// Tracked-attribute changes apply regardless of source type:
 			// authors opt in to surface specific attributes (engine
 			// versions, instance classes, …) the API diff intentionally
-			// ignores.
-			r.changes = append(r.changes, diff.DiffTracked(p.oldNode.Module, p.newNode.Module)...)
+			// ignores. Pass the parent's call context so a marker in
+			// the child catches changes flowing through the parent
+			// (parent-side conditional, flipped variable default,
+			// different local).
+			r.changes = append(r.changes, diff.DiffTrackedCtx(p.oldNode.Module, p.newNode.Module, diff.TrackedContext{
+				OldParent: parentModule(p.oldParent),
+				NewParent: parentModule(p.newParent),
+				CallName:  p.localName,
+			})...)
 			for _, c := range r.changes {
 				if c.Kind == diff.Breaking {
 					totalBreaking++
@@ -140,6 +147,16 @@ func rootModule(p *loader.Project) *analysis.Module {
 		return nil
 	}
 	return p.Root.Module
+}
+
+// parentModule returns n.Module if non-nil, else nil. The diff's
+// TrackedContext is nil-safe so this just spares the call sites a nil
+// check on the parent ModuleNode.
+func parentModule(n *loader.ModuleNode) *analysis.Module {
+	if n == nil {
+		return nil
+	}
+	return n.Module
 }
 
 // consumptionChangesForLocal turns cross_validate findings against the

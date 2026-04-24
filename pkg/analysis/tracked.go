@@ -332,15 +332,18 @@ func textOrEmpty(e *Expr) string {
 }
 
 // LookupAttrText returns the canonical text of the attribute named
-// attrName on the entity entityID, if it can be located on the entity's
-// recorded fields. Returns ("", false) when the attribute isn't one of
-// the named fields (e.g. an arbitrary attribute on a resource block —
-// those aren't cached on Entity).
+// attrName on the entity entityID. The bool reports whether the entity
+// EXISTS and the attribute name is something we know how to look up
+// for that kind — NOT whether the attribute has a value. A variable
+// that exists but declares no default returns ("", true), distinct
+// from a variable that doesn't exist at all (which returns ("", false)).
+// This distinction matters for the diff's "marker added" path, where
+// a now-referenced var/local that already existed in the old module
+// (just without a default) must not be misreported as "now references".
 //
-// Used by the diff to compare the OLD value of a now-tracked attribute
-// when the marker was added in this same PR — so a "marker added" case
-// where the underlying value also changed gets promoted from
-// Informational to Breaking.
+// Returns ("", false) when the entity doesn't exist OR the attribute
+// isn't one of the named fields for that kind (e.g. an arbitrary
+// attribute on a resource block — those aren't cached on Entity).
 func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
 	e, ok := m.byID[entityID]
 	if !ok {
@@ -349,36 +352,67 @@ func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
 	switch e.Kind {
 	case KindLocal:
 		if attrName == "value" || attrName == e.Name {
-			return textOrEmpty(e.LocalExpr), e.LocalExpr != nil
+			return textOrEmpty(e.LocalExpr), true
 		}
 	case KindOutput:
 		if attrName == "value" {
-			return textOrEmpty(e.ValueExpr), e.ValueExpr != nil
+			return textOrEmpty(e.ValueExpr), true
 		}
 	case KindVariable:
 		if attrName == "default" {
-			return textOrEmpty(e.DefaultExpr), e.DefaultExpr != nil
+			return textOrEmpty(e.DefaultExpr), true
 		}
 	case KindModule:
+		// Module args are only present when actually passed — an
+		// unpassed arg legitimately doesn't exist at this entity, so
+		// (false) is the right answer here.
 		if x, ok := e.ModuleArgs[attrName]; ok {
 			return textOrEmpty(x), true
 		}
 	}
 	switch attrName {
 	case "for_each":
-		return textOrEmpty(e.ForEachExpr), e.ForEachExpr != nil
+		if e.ForEachExpr != nil {
+			return textOrEmpty(e.ForEachExpr), true
+		}
 	case "count":
-		return textOrEmpty(e.CountExpr), e.CountExpr != nil
+		if e.CountExpr != nil {
+			return textOrEmpty(e.CountExpr), true
+		}
 	case "depends_on":
-		return textOrEmpty(e.DependsOnExpr), e.DependsOnExpr != nil
+		if e.DependsOnExpr != nil {
+			return textOrEmpty(e.DependsOnExpr), true
+		}
 	case "provider":
-		return textOrEmpty(e.ProviderExpr), e.ProviderExpr != nil
+		if e.ProviderExpr != nil {
+			return textOrEmpty(e.ProviderExpr), true
+		}
 	case "ignore_changes":
-		return textOrEmpty(e.IgnoreChangesExpr), e.IgnoreChangesExpr != nil
+		if e.IgnoreChangesExpr != nil {
+			return textOrEmpty(e.IgnoreChangesExpr), true
+		}
 	case "replace_triggered_by":
-		return textOrEmpty(e.ReplaceTriggeredByExpr), e.ReplaceTriggeredByExpr != nil
+		if e.ReplaceTriggeredByExpr != nil {
+			return textOrEmpty(e.ReplaceTriggeredByExpr), true
+		}
 	}
 	return "", false
+}
+
+// GatherRefsFromExpr walks expr's variable references and returns a
+// map of canonical id → value text (variable defaults, local values),
+// recursing through locals with cycle protection. Public version of
+// the unexported gatherRefs used at TrackedAttribute build time —
+// pkg/diff calls this to resolve a child variable's effective value
+// through a parent module's call argument.
+func (m *Module) GatherRefsFromExpr(expr *Expr) map[string]string {
+	refs := map[string]string{}
+	if m == nil || expr == nil || expr.E == nil {
+		return refs
+	}
+	visited := map[string]bool{}
+	m.gatherRefs(expr.E, refs, visited, 0)
+	return refs
 }
 
 // SortedRefIDs returns t.Refs's keys in deterministic order, for use by

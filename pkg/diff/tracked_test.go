@@ -4,8 +4,161 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 )
+
+// TestDiffTrackedCrossModuleParentChange exercises the cross-module
+// resolution path: a marker on a child resource attribute that
+// references a parent-supplied variable. The change is entirely on
+// the parent side (new optional variable + a now-conditional local
+// passed down to the child). Without parent context, the child's
+// view shows nothing changed; with TrackedContext, the diff climbs
+// through the parent's call argument and surfaces the local + new
+// variable as parent-prefixed refs.
+func TestDiffTrackedCrossModuleParentChange(t *testing.T) {
+	const childOldSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  name            = "prod"
+  cluster_version = var.cluster_version
+}
+`
+	const childNewSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  name            = "prod"
+  cluster_version = var.cluster_version # tflens:track: EKS minor — bump only after add-on compat
+}
+`
+	const parentOldSrc = `
+locals { cluster_version = "1.34" }
+module "eks" {
+  source          = "./modules/eks"
+  cluster_version = local.cluster_version
+}
+`
+	const parentNewSrc = `
+variable "upgrade" {
+  type    = bool
+  default = true
+}
+locals { cluster_version = var.upgrade ? "1.35" : "1.34" }
+module "eks" {
+  source          = "./modules/eks"
+  cluster_version = local.cluster_version
+}
+`
+	oldChild := analyseFromTestdata(t, "old/child/main.tf", childOldSrc)
+	newChild := analyseFromTestdata(t, "new/child/main.tf", childNewSrc)
+	oldParent := analyseFromTestdata(t, "old/main.tf", parentOldSrc)
+	newParent := analyseFromTestdata(t, "new/main.tf", parentNewSrc)
+
+	// Without parent context: the marker addition produces an
+	// Informational-only result, since the child's view shows nothing
+	// changed (variable still has no default; resource attr text
+	// unchanged).
+	bare := diff.DiffTracked(oldChild, newChild)
+	if len(bare) != 1 || bare[0].Kind != diff.Informational {
+		t.Errorf("DiffTracked without parent ctx: want 1 Informational, got %v", bare)
+	}
+
+	// With parent context: parent.local.cluster_version differs and
+	// parent.variable.upgrade is newly referenced, so the change is
+	// promoted to Breaking with both parent-side facts in the detail.
+	got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
+		OldParent: oldParent, NewParent: newParent, CallName: "eks",
+	})
+	if len(got) != 1 {
+		t.Fatalf("want 1 change, got %d: %v", len(got), got)
+	}
+	c := got[0]
+	if c.Kind != diff.Breaking {
+		t.Errorf("Kind = %v, want Breaking", c.Kind)
+	}
+	wantSubstrings := []string{
+		"marker added",
+		"parent.local.cluster_version", `"1.34"`, `var.upgrade ? "1.35" : "1.34"`,
+		"parent.variable.upgrade", "true",
+	}
+	for _, s := range wantSubstrings {
+		if !strings.Contains(c.Detail, s) {
+			t.Errorf("detail missing %q: %s", s, c.Detail)
+		}
+	}
+	if !strings.Contains(c.Hint, "add-on compat") {
+		t.Errorf("hint missing 'add-on compat': %s", c.Hint)
+	}
+}
+
+// TestDiffTrackedCrossModuleNoChangeStaysQuiet confirms cross-module
+// resolution doesn't introduce false positives: marker added in the
+// child, NOTHING changed in the parent → still Informational only.
+func TestDiffTrackedCrossModuleNoChangeStaysQuiet(t *testing.T) {
+	const childOldSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  cluster_version = var.cluster_version
+}
+`
+	const childNewSrc = `
+variable "cluster_version" { type = string }
+resource "aws_eks_cluster" "this" {
+  cluster_version = var.cluster_version # tflens:track
+}
+`
+	const parentSrc = `
+locals { cluster_version = "1.34" }
+module "eks" {
+  source          = "./modules/eks"
+  cluster_version = local.cluster_version
+}
+`
+	oldChild := analyseFromTestdata(t, "old/child/main.tf", childOldSrc)
+	newChild := analyseFromTestdata(t, "new/child/main.tf", childNewSrc)
+	parent := analyseFromTestdata(t, "main.tf", parentSrc)
+
+	got := diff.DiffTrackedCtx(oldChild, newChild, diff.TrackedContext{
+		OldParent: parent, NewParent: parent, CallName: "eks",
+	})
+	if len(got) != 1 || got[0].Kind != diff.Informational {
+		t.Errorf("want 1 Informational (marker added, nothing else changed), got %v", got)
+	}
+}
+
+// TestDiffTrackedCrossModuleEmptyContextEqualsBare proves that
+// passing nil parent modules (or omitting the call name) yields the
+// exact same result as DiffTracked — i.e. the cross-module support
+// is strictly additive when context isn't supplied.
+func TestDiffTrackedCrossModuleEmptyContextEqualsBare(t *testing.T) {
+	const oldSrc = `
+locals {
+  cluster_version = "1.34" # tflens:track
+}
+`
+	const newSrc = `
+locals {
+  cluster_version = "1.35" # tflens:track
+}
+`
+	old := analyseFromTestdata(t, "old/main.tf", oldSrc)
+	new := analyseFromTestdata(t, "new/main.tf", newSrc)
+
+	bare := diff.DiffTracked(old, new)
+	withCtx := diff.DiffTrackedCtx(old, new, diff.TrackedContext{})
+	if len(bare) != len(withCtx) {
+		t.Fatalf("len differ: bare=%d ctx=%d", len(bare), len(withCtx))
+	}
+	for i := range bare {
+		if bare[i].Kind != withCtx[i].Kind || bare[i].Detail != withCtx[i].Detail {
+			t.Errorf("change[%d] differs: bare=%+v ctx=%+v", i, bare[i], withCtx[i])
+		}
+	}
+}
+
+// Silence unused-import warning if analyseFromTestdata stops needing
+// the analysis package directly.
+var _ = analysis.KindLocal
 
 // trackedCase mirrors diffCase but drives diff.DiffTracked instead of
 // diff.Diff. Reads testdata/<name>/{old.tf,new.tf}.
@@ -172,6 +325,21 @@ var trackedCases = []trackedCase{
 			"variable.upgrade", "true",
 		},
 		HintContains: []string{"add-on compat"},
+	},
+	{
+		// Regression: marker added in a submodule whose resource
+		// attribute references a variable with no default. The
+		// variable EXISTED in the old version (just without a
+		// default), and nothing changed underneath. Used to be
+		// reported as Breaking with "now references variable.X =
+		// <unset>" because LookupAttrText couldn't tell "entity
+		// exists with no default" from "entity doesn't exist".
+		// Should now correctly emit Informational only.
+		Name:           "tracked_marker_added_no_default_unchanged",
+		Subject:        "resource.aws_eks_cluster.this.cluster_version",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"marker added"},
+		HintContains:   []string{"register baseline"},
 	},
 	{
 		// Force-new attribute case: cluster_name = "${var.env}-${local.suffix}".
