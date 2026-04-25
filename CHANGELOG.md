@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-04-25
+
 ### Added
 
 - **`tflens export` — unified `{text, value?, ast?}` shape across every expression-bearing field (schema 0.2.0-prototype).** Previously only resource/data attributes carried the structured triple; meta-args like `count`, `for_each`, `depends_on`, `provider`, lifecycle's `ignore_changes` / `replace_triggered_by`, module-call arguments, locals, outputs, and variable defaults were emitted as plain `*_text` strings. They all now use the same nested object so consumers see one shape wherever an HCL expression appears. Field renames (count_text → count, default_text + default_value → default, value_text + evaluated_value → value, etc.) — `schema_version` bumped from `0.1.0-prototype` to `0.2.0-prototype` to signal the breaking restructure. ExportAttribute renamed to ExportExpression with the broader scope. New universal `exprToExport` builder centralises the (text, value, ast) construction. Tracked-attribute records still emit `expression_text` only because the underlying `*Expr` is unexported in `pkg/analysis.TrackedAttribute` — promoting them is a small follow-up.
@@ -159,7 +161,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dgr237/tflens/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dgr237/tflens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dgr237/tflens/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dgr237/tflens/compare/v0.4.0...v0.4.1
