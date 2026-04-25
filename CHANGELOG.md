@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-25
+
 ### Changed
 
 - **Terraform stdlib functions: completion batch (encoders, set algebra, list/numeric pickups).** Wires 12 more Terraform built-ins into `Module.EvalContext`, bringing the curated set to 60. Encoders/decoders (5): `jsonencode`, `jsondecode`, `csvdecode`, `base64encode`, `base64decode` — `base64*` need Terraform-side wrappers in `pkg/analysis/stdlib/base64.go` because cty doesn't expose them; the JSON and CSV variants come straight from cty. Set algebra (5): `setunion`, `setintersection`, `setsubtract`, `setsymmetricdifference`, `setproduct` — direct cty wraps, common in `for_each` composition. Pickups (2): `index` (find position of value in list — needs a Terraform-side wrapper in `pkg/analysis/stdlib/index.go` because cty's `IndexFunc` is a different function entirely, returning the element AT a given key rather than searching for a value's position) and `parseint` (string → number in arbitrary base, direct cty wrap). The same effective-value-collapse machinery now suppresses encoder-based refactors — the most common real-world case being IAM policies switching between a raw JSON string and an HCL object + `jsonencode()`. New per-function table tests under `pkg/analysis/stdlib/testdata/<func>/main.tf` (12 fixtures), 4 negative-path cases (`base64decode_invalid`, `base64decode_non_utf8`, `jsondecode_invalid`, `index_*`), 1 partially-unknown coverage case for the `index` short-circuit, and an end-to-end tracked-attribute case under `pkg/diff/testdata/tracked_eval_jsonencode_collapses/`. `pkg/analysis/stdlib` package coverage at 100%. README's "Static evaluation surface" table updated; the previously-listed "plausible for future batches" items are reorganised — high-value ones (json, base64, set ops, index, parseint) are now wired; low-value ones (`formatdate`, `timeadd`, `signum`, `log`) move to "Deliberately excluded" with rationale.
@@ -149,7 +151,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dgr237/tflens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dgr237/tflens/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/dgr237/tflens/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dgr237/tflens/compare/v0.3.0...v0.4.0
