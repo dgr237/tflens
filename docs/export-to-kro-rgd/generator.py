@@ -342,92 +342,116 @@ def emit_block(block, mapping):
 
 
 def emit_dynamic(d, block_label, mapping):
-    """Translate one dynamic-block instance into a kro for-each
-    expression. The shape is a CEL list comprehension that maps the
-    for_each source through a content template — rendering each
-    iteration's content body with the iterator-variable references
-    rewritten to CEL list-element refs.
+    """Translate one dynamic-block instance into the value-side CEL
+    expression that kro RGDs use for list construction:
 
-    A real kro emitter would use a richer for-each primitive; this POC
-    produces a CEL .map() expression that's at least syntactically
-    well-formed and shape-correct."""
+        ${ <for_each_source>.map(item, { "k": item.x, ... }) }
+
+    The .map() variant is what real kro examples use for list
+    transformations (see examples/aws/aws-accounts-factory/01-network-stack.yaml
+    in the kro repo: `publicSubnetIds: ${publicSubnets.map(s, s.status.subnetID)}`).
+    We rename the iterator to `item` for readability — the original
+    Terraform iterator name (block label or explicit) is shadowed by
+    the .map() binding.
+    """
     iterator = d.get("iterator") or block_label
-    for_each_cel = expr_to_cel(d["for_each"]["ast"]) if d.get("for_each", {}).get("ast") \
-        else expr_to_emit(d.get("for_each"))
-    content_template = render_content_with_iterator(d.get("content", {}), iterator, mapping)
-    # Result: a placeholder showing the iterator variable + template.
-    # In production: emit a kro for-each block (kro.run/v1alpha1
-    # supports `forEach` per-resource) instead of folding into CEL.
-    return {
-        "_kro_for_each": "${" + for_each_cel + "}",
-        "_kro_iterator_alias": iterator,
-        "_template": content_template,
-    }
+    # for_each source as CEL — even if statically resolvable, we want
+    # the schema-spec ref so RGD instances can override at apply time.
+    for_each = d.get("for_each") or {}
+    if for_each.get("ast") and ast_has_traversal(for_each["ast"]):
+        source_cel = expr_to_cel(for_each["ast"])
+    elif "value" in for_each:
+        # Fully static for_each — emit the literal as a CEL list literal.
+        source_cel = json.dumps(for_each["value"]["value"])
+    elif for_each.get("ast"):
+        source_cel = expr_to_cel(for_each["ast"])
+    else:
+        source_cel = '""'
+
+    # Build the per-iteration object expression from the content body.
+    item_expr = content_to_cel_object(d.get("content", {}), iterator, mapping)
+
+    return "${" + f"{source_cel}.map(item, {item_expr})" + "}"
 
 
-def render_content_with_iterator(content, iterator, mapping):
-    """Render a dynamic-block content template, knowing that any
-    scope_traversal whose root matches `iterator` is an iteration
-    variable (not a stale reference). Falls back to standard block
-    rendering for everything else."""
-    out = {}
-    for name, expr in (content.get("attributes") or {}).items():
-        out[to_camel(name)] = expr_to_emit_with_iterator(expr, iterator)
+def content_to_cel_object(content, iterator, mapping):
+    """Render a dynamic-block content body as a CEL object-literal
+    expression `{"k": v, ...}`. Attributes use the camelCased name as
+    the key. Iterator references inside expressions are rewritten via
+    ast_to_cel_with_iterator so `<iterator>.value.field` becomes
+    `item.field`. Static (non-iterator) sub-expressions go through
+    expr_to_cel verbatim."""
+    parts = []
+    for name, expr in sorted((content.get("attributes") or {}).items()):
+        cel_value = expr_to_cel_with_iterator(expr, iterator)
+        parts.append(f'"{to_camel(name)}": {cel_value}')
+    # Nested static blocks inside content — emit as a nested CEL object
+    # under the camelCased block name. (Repeated nested blocks inside
+    # content are uncommon for dynamic; production converters might
+    # need to extend this.)
     block_renames = (mapping or {}).get("block_renames", {})
     for name, instances in (content.get("blocks") or {}).items():
         renamed = block_renames.get(name, to_camel(name))
         if len(instances) == 1:
-            out[renamed] = render_content_with_iterator(instances[0], iterator, mapping)
+            inner = content_to_cel_object(instances[0], iterator, mapping)
+            parts.append(f'"{renamed}": {inner}')
         else:
-            out[renamed] = [render_content_with_iterator(b, iterator, mapping) for b in instances]
-    return out
+            inner = "[" + ", ".join(
+                content_to_cel_object(b, iterator, mapping) for b in instances
+            ) + "]"
+            parts.append(f'"{renamed}": {inner}')
+    return "{" + ", ".join(parts) + "}"
 
 
-def expr_to_emit_with_iterator(expr, iterator):
-    """Like expr_to_emit but rewrites references through the iterator
-    variable into CEL list-element refs. `<iterator>.value.field`
-    becomes `item.field` (using `item` as the canonical CEL iteration
-    variable for readability)."""
+def expr_to_cel_with_iterator(expr, iterator):
+    """Render an expression as a CEL string suitable for use inside
+    the .map() body. References through the iterator variable become
+    `item.X` refs; everything else uses the standard expr_to_cel."""
     if expr is None:
-        return None
-    if "ast" in expr and ast_has_iterator_ref(expr["ast"], iterator):
-        return "${" + ast_to_cel_with_iterator(expr["ast"], iterator) + "}"
-    return expr_to_emit(expr)
-
-
-def ast_has_iterator_ref(ast, iterator):
-    if not isinstance(ast, dict):
-        return False
-    if ast.get("node") == "scope_traversal":
-        steps = ast.get("traversal") or []
-        if steps and steps[0].get("step") == "root" and steps[0].get("name") == iterator:
-            return True
-    for v in ast.values():
-        if isinstance(v, dict) and ast_has_iterator_ref(v, iterator):
-            return True
-        if isinstance(v, list):
-            for item in v:
-                if isinstance(item, dict) and ast_has_iterator_ref(item, iterator):
-                    return True
-    return False
+        return '""'
+    if "ast" in expr:
+        return ast_to_cel_with_iterator(expr["ast"], iterator)
+    if "value" in expr:
+        v = expr["value"]
+        return json.dumps(v["value"]) if isinstance(v.get("value"), (str, int, float, bool)) \
+            else json.dumps(v.get("value"))
+    return json.dumps(expr.get("text", ""))
 
 
 def ast_to_cel_with_iterator(ast, iterator):
     """Custom CEL emit that rewrites <iterator>.value.X → item.X
     (and <iterator>.key → item_key). Falls through to expr_to_cel for
-    everything else."""
+    everything else, walking nested expressions recursively so an
+    iterator ref buried inside a function call or template is still
+    rewritten correctly."""
     if isinstance(ast, dict) and ast.get("node") == "scope_traversal":
         steps = ast.get("traversal") or []
         if steps and steps[0].get("step") == "root" and steps[0].get("name") == iterator:
             rest = steps[1:]
-            # iterator.value.X.Y... → item.X.Y...
             if rest and rest[0].get("step") == "attr" and rest[0].get("name") == "value":
                 tail = ".".join(s["name"] for s in rest[1:] if s["step"] == "attr")
                 return "item" + (("." + tail) if tail else "")
-            # iterator.key → item_key
             if rest and rest[0].get("step") == "attr" and rest[0].get("name") == "key":
                 return "item_key"
             return "item"
+    # Recurse into compound nodes so iterator refs deep inside a
+    # function call or binary op also get rewritten.
+    if isinstance(ast, dict):
+        node = ast.get("node")
+        if node == "function_call":
+            args = ", ".join(ast_to_cel_with_iterator(a, iterator) for a in ast["args"])
+            return f"{ast['name']}({args})"
+        if node == "binary_op":
+            return (f"({ast_to_cel_with_iterator(ast['lhs'], iterator)} "
+                    f"{ast['op']} "
+                    f"{ast_to_cel_with_iterator(ast['rhs'], iterator)})")
+        if node == "conditional":
+            return (f"({ast_to_cel_with_iterator(ast['condition'], iterator)} ? "
+                    f"{ast_to_cel_with_iterator(ast['true'], iterator)} : "
+                    f"{ast_to_cel_with_iterator(ast['false'], iterator)})")
+        if node == "template":
+            return " + ".join(ast_to_cel_with_iterator(p, iterator) for p in ast["parts"])
+    # Falls through to standard CEL emission for everything else.
     return expr_to_cel(ast)
 
 

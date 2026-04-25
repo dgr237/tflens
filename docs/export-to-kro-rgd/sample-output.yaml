@@ -56,11 +56,4 @@ spec:
             fromPort: 0
             protocol: -1
             toPort: 0
-          ingressRules:
-            _kro_for_each: "${schema.spec.ingress_rules}"
-            _kro_iterator_alias: ingress
-            _template:
-              cidrBlocks: "${item.cidrs}"
-              fromPort: "${item.from_port}"
-              protocol: tcp
-              toPort: "${item.to_port}"
+          ingressRules: "${schema.spec.ingress_rules.map(item, {\"cidrBlocks\": item.cidrs, \"fromPort\": item.from_port, \"protocol\": \"tcp\", \"toPort\": item.to_port})}"
