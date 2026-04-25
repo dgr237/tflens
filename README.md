@@ -40,10 +40,12 @@ Shell completion scripts (bash / zsh / fish / PowerShell) are available via
 Global flags accepted on every subcommand:
 
 - `--format json` — emit structured output on stdout; warnings stay on stderr as plain text, so stdout stays pipeable.
+- `--format markdown` — emit GitHub-flavoured markdown on stdout (severity badges 🔴🟡🔵, collapsible `<details>` per module with the most-severe sections opened by default, code-fenced fix hints inline, file:line as inline backticks). Designed for sticky-commenting on PRs and GitHub Actions step summaries (`>> $GITHUB_STEP_SUMMARY`). Like `--format json`, the whole document is a single stream — warnings stay on stdout — so it can be piped directly into `gh pr comment`. Currently rich for `diff`/`whatif`/`statediff`/`validate`; other subcommands get a terse markdown rendering.
 - `--offline` — disable registry and git fetches; only local paths and `.terraform/modules/modules.json` entries are resolved.
 
 ```
 tflens --format json validate ./my-tf | jq '.cross_module_issues[]'
+tflens --format markdown diff --ref main ./my-tf | gh pr comment $PR --body-file -
 tflens --offline diff --ref main ./my-tf
 ```
 

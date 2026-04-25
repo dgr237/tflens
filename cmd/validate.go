@@ -42,10 +42,11 @@ func runValidate(s config.Settings) {
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
-	// Errors go to stderr so they don't pollute pipes; the success
-	// message (and the JSON envelope) stay on stdout. Mutate the
-	// local Settings copy so render.New picks up the right writer.
-	if total > 0 && !s.JSON {
+	// Errors go to stderr so they don't pollute pipes; the JSON and
+	// markdown outputs stay on stdout (single pipeable stream).
+	// Mutate the local Settings copy so render.New picks up the right
+	// writer.
+	if total > 0 && !s.JSON && !s.Markdown {
 		s.Out = s.Err
 	}
 	render.New(s).Validate(refErrs, crossErrs, typeErrs)

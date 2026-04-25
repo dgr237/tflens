@@ -18,6 +18,7 @@ func FromCommand(cmd *cobra.Command, opts ...Option) Settings {
 		Err:       cmd.ErrOrStderr(),
 		Offline:   getBool(cmd, "offline"),
 		JSON:      getString(cmd, "format") == "json",
+		Markdown:  getString(cmd, "format") == "markdown",
 		BaseRef:   getString(cmd, "ref"),
 		StatePath: getString(cmd, "state"),
 		Write:     getBool(cmd, "write"),
