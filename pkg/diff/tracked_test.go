@@ -227,6 +227,35 @@ func TestDiffTrackedCases(t *testing.T) {
 
 var trackedCases = []trackedCase{
 	{
+		// Stdlib batch 1 (toset): old + new produce the same effective
+		// set via different toset() input shapes. Texts differ but the
+		// evaluated values match → Informational, not Breaking.
+		Name:           "tracked_eval_toset_reorder",
+		Subject:        "local.ids.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
+		// Stdlib batch 1 (merge): the new side restructures the same
+		// key/value pairs across two merge() arguments. Effective
+		// object identical → Informational.
+		Name:           "tracked_eval_merge_restructured",
+		Subject:        "local.tags.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
+		// Stdlib batch 1 (concat true positive): both sides go through
+		// concat() but the new side adds an element. The evaluated
+		// values legitimately differ → still Breaking. Pin so the new
+		// value-equivalent short-circuit doesn't over-suppress real
+		// changes.
+		Name:           "tracked_eval_length_change_breaking",
+		Subject:        "local.ids.value",
+		WantKind:       diff.Breaking,
+		DetailContains: []string{"value"},
+	},
+	{
 		Name:           "tracked_literal_value_changed",
 		Subject:        "resource.aws_eks_cluster.this.cluster_version",
 		WantKind:       diff.Breaking,

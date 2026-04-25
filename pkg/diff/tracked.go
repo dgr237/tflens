@@ -445,7 +445,12 @@ func equivalentByEval(oldText, newText string, oldCtx, newCtx *hcl.EvalContext) 
 	if !ok {
 		return false
 	}
-	return oldVal.RawEquals(newVal)
+	// ValueEquivalent (rather than RawEquals) so the new stdlib-
+	// function evaluation path doesn't trigger false positives when
+	// it produces a List on one side and a Tuple on the other —
+	// e.g. distinct(["a","b"]) vs ["a","b"]. Both are equivalent for
+	// downstream Terraform behaviour.
+	return analysis.ValueEquivalent(oldVal, newVal)
 }
 
 // tryEvalText parses text as an hcl expression and evaluates it in

@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/dgr237/tflens/pkg/analysis/stdlib"
 	"github.com/dgr237/tflens/pkg/token"
 )
 
@@ -404,20 +405,28 @@ func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
 }
 
 // EvalContext returns an hcl.EvalContext populated with this module's
-// statically-evaluable variable defaults and local values, suitable
+// statically-evaluable variable defaults and local values, plus the
+// curated Terraform-stdlib function set from tfStdlib(). Suitable
 // for hclsyntax expression evaluation. Variables and locals whose
 // values can't be evaluated cleanly (no default, references a
-// Terraform-specific function we don't wire in, etc.) are simply
+// Terraform function not in the curated set, etc.) are simply
 // omitted — callers that try to evaluate an expression touching them
 // get a diagnostic and can fall back to text comparison.
 //
-// No Terraform stdlib functions (length, contains, keys, merge, …)
-// are wired in; only the cty stdlib is available. This is deliberate:
-// the use case is "did the effective value change?" and getting that
+// The Terraform-stdlib functions wired in cover type conversion
+// (toset/tolist/tomap/tostring/tonumber/tobool) and core collection
+// operations (length/concat/merge/keys/values/lookup/contains/element/
+// flatten/distinct). Filesystem (file, templatefile), non-deterministic
+// (timestamp, uuid), and complex-semantics (can, try) functions stay
+// out by design — see tfStdlib's comment for the rationale. The use
+// case is "did the effective value change?" and getting that
 // answer right for ternaries / arithmetic / string interpolation is
 // enough to suppress the most common class of false positive.
 func (m *Module) EvalContext() *hcl.EvalContext {
-	ctx := &hcl.EvalContext{Variables: map[string]cty.Value{}}
+	ctx := &hcl.EvalContext{
+		Variables: map[string]cty.Value{},
+		Functions: stdlib.Functions(),
+	}
 	if m == nil {
 		return ctx
 	}
