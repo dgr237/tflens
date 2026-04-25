@@ -126,3 +126,54 @@ func TestExtractTarGzRejectsCorruptGzip(t *testing.T) {
 		t.Error("expected error for non-gzip input")
 	}
 }
+
+// TestExtractTarGzRejectsOversizeEntry pins the per-file size cap.
+// A tar entry whose body exceeds maxArchiveFileSize must surface as
+// an error rather than silently writing the full contents — defends
+// against a malicious or corrupt tarball declaring an absurd Size in
+// its header that would otherwise fill the cache disk.
+//
+// Shrinks the cap to 64 bytes for the test to avoid allocating the
+// production 100 MiB of fixture data.
+func TestExtractTarGzRejectsOversizeEntry(t *testing.T) {
+	prev := maxArchiveFileSize
+	maxArchiveFileSize = 64
+	t.Cleanup(func() { maxArchiveFileSize = prev })
+
+	body := strings.Repeat("x", 65) // one byte over cap
+	data := buildTarGz(t, []tarEntry{
+		{name: "huge.tf", body: body, typeflag: tar.TypeReg},
+	})
+	err := extractTarGz(bytes.NewReader(data), t.TempDir())
+	if err == nil {
+		t.Fatal("expected error for oversize entry")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %q, want one mentioning the size cap", err.Error())
+	}
+}
+
+// TestExtractTarGzAcceptsExactlyAtCap: an entry whose body equals
+// the cap (not over) is fine. Pins the boundary so a future off-by-
+// one in the comparison doesn't quietly break legitimate archives.
+func TestExtractTarGzAcceptsExactlyAtCap(t *testing.T) {
+	prev := maxArchiveFileSize
+	maxArchiveFileSize = 64
+	t.Cleanup(func() { maxArchiveFileSize = prev })
+
+	body := strings.Repeat("x", 64) // exactly the cap
+	data := buildTarGz(t, []tarEntry{
+		{name: "ok.tf", body: body, typeflag: tar.TypeReg},
+	})
+	dest := t.TempDir()
+	if err := extractTarGz(bytes.NewReader(data), dest); err != nil {
+		t.Fatalf("extractTarGz at-cap: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "ok.tf"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if len(got) != 64 {
+		t.Errorf("extracted size = %d, want 64", len(got))
+	}
+}

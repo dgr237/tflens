@@ -6,6 +6,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ### Fixed
 
+- **`writeFile` in tarball extraction silently swallowed `Close()` errors.** A deferred `f.Close()` after `io.Copy` ignored the close-flush error, so an OS-level buffered-write failure (out of disk during cache populate, network filesystem hiccup) could leave a truncated module file in the cache that subsequent `tflens` runs would parse as valid HCL. Now closes explicitly and surfaces both copy + close errors.
+- **Per-file size cap added to `extractTarGz` (defence in depth).** A registry tarball declaring an absurd `Size` in its tar header could induce an unbounded write into the cache. New `maxArchiveFileSize` (100 MiB) wraps each entry's body in an `io.LimitedReader`; overshoot returns an error rather than writing through. Two new tests (`TestExtractTarGzRejectsOversizeEntry`, `TestExtractTarGzAcceptsExactlyAtCap`) pin the boundary; the cap is `var` not `const` so the tests can shrink it without allocating fixture data at the production limit.
 - **Worktree leak on the CI-gating exit path of `diff` / `whatif` / `statediff`.** Each subcommand had `defer cleanup()` followed by `os.Exit(1)` on the breaking-changes / direct-impact / flagged-resource path. Because `os.Exit` skips deferred funcs, every CI invocation that found something would orphan a multi-MB temporary git worktree under `/tmp/tflens-ref-*`. Run `cleanup()` explicitly before `os.Exit` so the success path's defer remains the cleanup hook for early-error returns while the exit-1 path drains it directly.
 
 ### Changed (internal)

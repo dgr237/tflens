@@ -31,12 +31,12 @@ tokens:
 		t.Fatalf("LoadTfeTokensFrom: %v", err)
 	}
 	cases := map[string]string{
-		"tfe.example.com":            "tok1",
-		"other.tfe.example.com":      "tok2",
-		"bare.example.com:8443":      "tok3",
-		"defaultport.example.com":    "tok4", // :443 stripped because scheme is https
-		"insecure.example.com":       "tok5", // :80 stripped because scheme is http
-		"unknown.example.com":        "",
+		"tfe.example.com":         "tok1",
+		"other.tfe.example.com":   "tok2",
+		"bare.example.com:8443":   "tok3",
+		"defaultport.example.com": "tok4", // :443 stripped because scheme is https
+		"insecure.example.com":    "tok5", // :80 stripped because scheme is http
+		"unknown.example.com":     "",
 	}
 	for host, want := range cases {
 		if got := c.Token(host); got != want {
