@@ -61,7 +61,7 @@ tflens --offline diff --ref main ./my-tf
 | `graph <path>` | Emit the dependency graph in Graphviz DOT format |
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `validate <path>` | Report undefined references, type errors, `for_each`/`count` misuse, and sensitive-value leaks |
-| `diff [path]` | What changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Behaviour depends on the child's `source`: **local children** (`./…`, `../…`) are evaluated against your parent's actual usage (only consumption errors surface as Breaking — no API noise); **registry/git children** report the full API diff (publisher's release contract). Authors can also opt specific resource attributes into the diff with `# tflens:track` markers (engine versions, instance classes, …). |
+| `diff [path]` | What changed in module APIs in `path` (default cwd) vs `--ref` (default `auto`)? Behaviour depends on the child's `source`: **local children** (`./…`, `../…`) are evaluated against your parent's actual usage (only consumption errors surface as Breaking — no API noise); **registry/git children** report the full API diff (publisher's release contract). Authors can also opt specific resource attributes into the diff with `# tflens:track` markers (engine versions, instance classes, …). With `--enrich-with-plan plan.json`, `terraform show -json` output is folded in so resource attribute changes (e.g. `cidr_block` modifications, force-new attributes) become visible alongside the static-analysis findings. |
 | `whatif [path] [name]` | Like `diff` but **always** consumer-view, regardless of source type. Cross-validates the parent's argument set and output references against the candidate child; only flags changes that actually affect this caller. Use this to gate any external-module upgrade. Optional `name` scopes to one module call. |
 | `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
@@ -168,6 +168,34 @@ Module "vpc": (content changed)
 ```
 
 Hints cover the common cases: required-variable-added (suggest `default`), required-object-field-added (suggest `optional()`), resource removed/renamed (suggest `removed {}` / `moved {}` blocks with the exact entity IDs filled in), backend changes (`terraform init -migrate-state`), `count`↔`for_each` transitions, sensitive-leak removals on outputs, and the four cross-validate consumption errors. The JSON output emits the same string under a `"hint"` key (omitted when empty).
+
+### Plan enrichment (`--enrich-with-plan plan.json`)
+
+`tflens diff` is fundamentally a static analyser — it doesn't embed provider schemas, so changes to resource attributes (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`, `instance_type` modifications, force-new attribute changes) are normally invisible. The `--enrich-with-plan` flag bridges that gap by reading the JSON output of `terraform show -json <plan>` and folding plan-derived attribute deltas into the diff result alongside the static-analysis findings.
+
+```bash
+terraform plan -out=tfplan && terraform show -json tfplan > plan.json
+tflens diff --ref main --enrich-with-plan plan.json
+```
+
+**Classification:** force-new attributes (those Terraform marks in the plan's `replace_paths`) become Breaking; other attribute changes become Informational; resource creates become Informational; resource deletes and explicit replaces (destroy + recreate) become Breaking. The CI exit code refreshes to include plan-derived Breaking findings — so a plan-only force-new change still gates the merge even when the source-side text doesn't differ.
+
+**Provenance:** plan-derived rows are tagged with a `[plan]` prefix in the console renderer and a 📋 marker in the markdown renderer, so reviewers can tell at a glance which findings came from static analysis vs the plan output.
+
+```
+Root module:
+  Breaking (2):
+    [plan] aws_vpc.main: plan replaces `aws_vpc.main` (destroy + recreate)
+    [plan] aws_vpc.main:cidr_block: plan attribute change: "10.0.0.0/16" → "10.1.0.0/16"
+      hint: this attribute forces a destroy + recreate; coordinate with the operator
+```
+
+**First-cut limitations** (worth knowing before you wire this into CI):
+
+- **Resource matching is by exact address only.** A resource renamed via a `moved {}` block surfaces as a delete + create pair on the plan side rather than a single rename — the static-side diff already detects rename pairs from the source, so the plan-derived noise is harmless but worth understanding.
+- **`count`/`for_each` indices are not yet matched per-instance.** Plan addresses like `aws_subnet.foo[0]` / `aws_subnet.foo["us-east-1"]` resolve to the source-side entity `resource.aws_subnet.foo` regardless of index. Each indexed instance still gets its own Change row, just with the index visible in the Subject.
+- **Plan format versions.** Supports format_version 1.x (Terraform 1.0+). Older plans are rejected with a clear error.
+- **`whatif` and `statediff` don't yet take `--enrich-with-plan`** — only `diff` does. Same machinery would slot in cleanly if useful.
 
 ### What it catches
 

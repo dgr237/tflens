@@ -1,0 +1,47 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "aws_vpc.main",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "cidr_block": "10.0.0.0/16",
+          "tags": {"Name": "main"}
+        },
+        "after": {
+          "cidr_block": "10.0.0.0/16",
+          "tags": {"Name": "main", "Env": "prod"}
+        },
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "aws_subnet.public",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {"availability_zone": "us-east-1a"},
+        "after":  {"availability_zone": "us-east-1b"},
+        "replace_paths": [["availability_zone"]]
+      }
+    },
+    {
+      "address": "aws_security_group.unchanged",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "unchanged",
+      "change": {
+        "actions": ["no-op"],
+        "before": {},
+        "after": {}
+      }
+    }
+  ]
+}

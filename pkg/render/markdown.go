@@ -519,7 +519,16 @@ func (m *MarkdownRenderer) writeChangeList(changes []diff.Change) {
 		return sorted[i].Kind < sorted[j].Kind
 	})
 	for _, ch := range sorted {
-		fmt.Fprintf(m.W, "- %s &mdash; `%s`: %s\n", badgeForKind(ch.Kind), ch.Subject, ch.Detail)
+		// 📋 prefix on plan-derived rows so reviewers can tell at a
+		// glance which findings came from the static analyser (no
+		// prefix) vs the terraform plan (📋 prefix). Source==""
+		// is treated as static — historical Changes don't carry the
+		// field.
+		provenance := ""
+		if ch.Source == diff.SourcePlan {
+			provenance = "📋 "
+		}
+		fmt.Fprintf(m.W, "- %s%s &mdash; `%s`: %s\n", provenance, badgeForKind(ch.Kind), ch.Subject, ch.Detail)
 		if ch.Hint != "" {
 			fmt.Fprintf(m.W, "  > **Fix:** %s\n", ch.Hint)
 		}

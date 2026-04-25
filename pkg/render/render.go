@@ -23,7 +23,15 @@ import (
 // The two-space hint indent is hard-coded — keeping it constant
 // across the codebase is the whole point of this helper.
 func writeChange(w io.Writer, indent string, c diff.Change) {
-	fmt.Fprintf(w, "%s%s: %s\n", indent, c.Subject, c.Detail)
+	// Plan-derived findings get a "[plan]" prefix so reviewers can
+	// tell at a glance which findings came from the static analyser
+	// vs the terraform plan. Source==SourceStatic / "" → no prefix
+	// (the historical default; existing emitters don't set the field).
+	prefix := ""
+	if c.Source == diff.SourcePlan {
+		prefix = "[plan] "
+	}
+	fmt.Fprintf(w, "%s%s%s: %s\n", indent, prefix, c.Subject, c.Detail)
 	if c.Hint != "" {
 		fmt.Fprintf(w, "%s  hint: %s\n", indent, c.Hint)
 	}

@@ -48,6 +48,12 @@ type Change struct {
 	Hint    string         // optional one-line "how to fix this" guidance
 	OldPos  token.Position // zero value for pure additions
 	NewPos  token.Position // zero value for pure removals
+	// Source records the change's provenance. Empty / "static" = the
+	// source-side text-diff machinery; "plan" = derived from a
+	// terraform plan JSON via diff.EnrichFromPlan. Renderers use this
+	// to decorate plan-derived rows with a 📋 marker so reviewers
+	// know which findings came from which path.
+	Source string
 }
 
 func (c Change) String() string {

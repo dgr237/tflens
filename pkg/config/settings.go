@@ -59,6 +59,13 @@ type Settings struct {
 	// StatePath is an optional Terraform state v4 JSON path
 	// (statediff). Empty means "no state file supplied".
 	StatePath string
+	// PlanPath is an optional terraform `show -json` plan output file
+	// (diff --enrich-with-plan). When set, plan-derived attribute
+	// deltas get folded into the diff result so resource attribute
+	// changes (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) become
+	// visible alongside the static-analysis findings. Empty means
+	// "no plan supplied".
+	PlanPath string
 	// Write makes fmt rewrite the input file in place.
 	Write bool
 	// Check makes fmt exit non-zero when the input is not already
