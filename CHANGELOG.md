@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Changed
+
+- **Terraform stdlib functions: regex mini-batch (`regex`, `regexall`).** Wired into `Module.EvalContext` via `pkg/analysis/stdlib/stdlib.go`, bringing the curated set to 48. Both come straight from `cty/function/stdlib` — cty uses Go's `regexp` (RE2), the same engine Terraform uses, so behaviour matches without a wrapper. Capture-group return-type shape is dispatched on the pattern at evaluation time: no groups → `string`, unnamed groups → tuple of captures, named groups → object keyed by group name. The same effective-value-collapse machinery now suppresses regex-based refactors — e.g. `local.major = "1"` ↔ `local.major = regex("^[0-9]+", "1.34.2")` no longer flags as a change. cty's `RegexReplaceFunc` is deliberately NOT exposed: Terraform doesn't have a `regexreplace` function — regex replacement is the `/pattern/` form of `replace`, which the existing `replace` wrapper already dispatches. New per-function fixtures pin all three capture-group return shapes (`regex_no_groups`, `regex_unnamed_groups`, `regex_named_groups`) plus `regexall`, plus negative-path coverage for unmatched-pattern and invalid-pattern errors. End-to-end tracked-attribute suppression case under `pkg/diff/testdata/tracked_eval_regex_collapses/`.
+
 ## [0.4.1] — 2026-04-25
 
 ### Documentation

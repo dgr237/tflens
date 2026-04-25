@@ -539,9 +539,10 @@ The curated function set is intentionally a subset of Terraform's built-ins, not
 | Type conversion | `toset`, `tolist`, `tomap`, `tostring`, `tonumber`, `tobool` |
 | Collections | `length`, `concat`, `merge`, `keys`, `values`, `lookup`, `contains`, `element`, `flatten`, `distinct`, `sort`, `reverse`, `slice`, `chunklist`, `compact`, `coalesce`, `coalescelist`, `zipmap`, `range` |
 | String | `upper`, `lower`, `title`, `join`, `split`, `format`, `formatlist`, `replace` (literal + `/regex/` dispatch), `trim`, `trimspace`, `trimprefix`, `trimsuffix`, `chomp`, `indent`, `substr` |
+| Regex | `regex` (string / tuple / object return depending on capture groups), `regexall` |
 | Numeric | `abs`, `min`, `max`, `floor`, `ceil`, `pow` |
 
-**Deliberately excluded** (and unlikely to be added): filesystem (`file`, `fileset`, `templatefile`) — needs filesystem context that isn't valid for static analysis; non-deterministic (`timestamp`, `uuid`, `bcrypt`) — must always return unknown; complex semantics (`can`, `try`) — needs full Terraform evaluator catch-and-retry. **Not yet wired but plausible** for future batches: `regex`/`regexall`/`regexreplace`, `jsondecode`/`jsonencode`, `formatdate`, `parseint`, `signum`, `log`.
+**Deliberately excluded** (and unlikely to be added): filesystem (`file`, `fileset`, `templatefile`) — needs filesystem context that isn't valid for static analysis; non-deterministic (`timestamp`, `uuid`, `bcrypt`) — must always return unknown; complex semantics (`can`, `try`) — needs full Terraform evaluator catch-and-retry; `regexreplace` — Terraform exposes regex replacement only through the `/pattern/` form of `replace`, which the curated `replace` already dispatches. **Not yet wired but plausible** for future batches: `jsondecode`/`jsonencode`, `formatdate`, `parseint`, `signum`, `log`.
 
 ## Editor integration
 

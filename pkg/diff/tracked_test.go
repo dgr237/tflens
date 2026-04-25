@@ -274,6 +274,16 @@ var trackedCases = []trackedCase{
 		DetailContains: []string{"no effective value change"},
 	},
 	{
+		// Stdlib batch 2.5 (regex): refactor pulls a substring via
+		// regex() rather than inlining the literal. Effective value
+		// identical → Informational. Pins regex(pattern, string)
+		// no-capture-group return shape (string, not tuple/object).
+		Name:           "tracked_eval_regex_collapses",
+		Subject:        "local.major.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
 		Name:           "tracked_literal_value_changed",
 		Subject:        "resource.aws_eks_cluster.this.cluster_version",
 		WantKind:       diff.Breaking,
