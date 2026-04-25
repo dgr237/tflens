@@ -4,6 +4,18 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Changed (internal)
+
+- **`analysis.Module` getters are now nil-safe.** `Backend`, `RequiredVersion`, `RequiredProviders`, `Moved`, `RemovedDeclared`, `Validate`, `ModuleSource`, `ModuleVersion`, `ModuleOutputReferences`, `Entities`, `Filter`, `HasEntity`, `EntityByID`, `TrackedAttributes`, `EvalContext`, and `GatherRefsFromExpr` now return their zero value (or an empty map / nil slice) when called on a nil receiver instead of panicking. Lets `pkg/diff.Diff(nil, nil)` and `AnalyzeProjects(nil, nil)` work as no-ops, which the cmd layer relies on when one side of a comparison has no root module.
+
+### Added
+
+- **`CLAUDE.md`** at the repo root documenting architecture invariants for AI-assisted development sessions: three-pass analysis ordering, resolver chain composition, source-type-driven diff classification, the cty-stdlib-only `EvalContext`, the nil-safe getter convention, the slim run* convention in `cmd/`, and the testdata + table-driven test pattern.
+
+### Tests
+
+- New table-driven coverage for `pkg/diff/AnalyzeProjects`, `AnalyzeWhatif`, `analysis.Module` `LookupAttrText` / `EvalContext` / `GatherRefsFromExpr`, the terraform / moved / removed / module-call getters, and `Expr.Range` / `Expr.Pos`. Fixtures live under `pkg/analysis/testdata/{tracked,module_getters}/` and `pkg/loader/testdata/loader/`. `pkg/loader/loader_test.go`'s 13 individual `TestLoadXxx` functions collapsed into `TestLoadDirCases` + `TestLoadProjectCases` table tests with discoverable subtests.
+
 ## [0.2.1] — 2026-04-24
 
 ### Changed (internal)
