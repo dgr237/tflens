@@ -7,12 +7,12 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
-// WriteValidate emits the validate subcommand's text result. With
+// writeValidate emits the validate subcommand's text result. With
 // no errors of any kind, writes the "no errors" baseline; otherwise
 // emits up to three sections (undefined references, cross-module
 // issues, type errors) separated by blank lines. Cmd-side picks
 // stdout vs stderr depending on whether anything was flagged.
-func WriteValidate(
+func writeValidate(
 	w io.Writer,
 	refErrs, crossErrs []analysis.ValidationError,
 	typeErrs []analysis.TypeCheckError,

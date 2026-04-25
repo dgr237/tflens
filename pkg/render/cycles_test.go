@@ -3,21 +3,19 @@ package render_test
 import (
 	"bytes"
 	"testing"
-
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestWriteCyclesEmpty(t *testing.T) {
+func TestRendererCyclesEmpty(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteCycles(&b, nil)
+	consoleRenderer(&b).Cycles(nil)
 	if got := b.String(); got != "No cycles detected.\n" {
 		t.Errorf("empty cycles = %q", got)
 	}
 }
 
-func TestWriteCyclesNumberedList(t *testing.T) {
+func TestRendererCyclesNumberedList(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteCycles(&b, [][]string{
+	consoleRenderer(&b).Cycles([][]string{
 		{"resource.a", "resource.b", "resource.a"},
 		{"local.x", "local.y", "local.x"},
 	})

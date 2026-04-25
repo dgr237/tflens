@@ -65,7 +65,7 @@ func (j *JSONRenderer) Impact(id string, affected []string) {
 func (j *JSONRenderer) Inventory(m *analysis.Module) {
 	entities := make([]JSONEntity, 0, len(m.Entities()))
 	for _, e := range m.Entities() {
-		entities = append(entities, JSONEnt(e))
+		entities = append(entities, jsonEnt(e))
 	}
 	j.emit(struct {
 		Total    int          `json:"total"`
@@ -76,7 +76,7 @@ func (j *JSONRenderer) Inventory(m *analysis.Module) {
 func (j *JSONRenderer) Unused(unused []analysis.Entity) {
 	entities := make([]JSONEntity, 0, len(unused))
 	for _, e := range unused {
-		entities = append(entities, JSONEnt(e))
+		entities = append(entities, jsonEnt(e))
 	}
 	j.emit(struct {
 		Unreferenced []JSONEntity `json:"unreferenced"`
@@ -91,15 +91,15 @@ func (j *JSONRenderer) Validate(
 ) {
 	refJSON := make([]JSONValidationError, 0, len(refErrs))
 	for _, e := range refErrs {
-		refJSON = append(refJSON, JSONValErr(e))
+		refJSON = append(refJSON, jsonValErr(e))
 	}
 	crossJSON := make([]JSONValidationError, 0, len(crossErrs))
 	for _, e := range crossErrs {
-		crossJSON = append(crossJSON, JSONValErr(e))
+		crossJSON = append(crossJSON, jsonValErr(e))
 	}
 	typeJSON := make([]JSONTypeError, 0, len(typeErrs))
 	for _, e := range typeErrs {
-		typeJSON = append(typeJSON, JSONTypeErr(e))
+		typeJSON = append(typeJSON, jsonTypeErr(e))
 	}
 	j.emit(struct {
 		UndefinedReferences []JSONValidationError `json:"undefined_references"`
@@ -137,11 +137,11 @@ func (j *JSONRenderer) Diff(
 	results []diff.PairResult,
 	rootChanges []diff.Change,
 ) {
-	j.emit(BuildJSONDiff(baseRef, path, results, rootChanges))
+	j.emit(buildJSONDiff(baseRef, path, results, rootChanges))
 }
 
 func (j *JSONRenderer) Whatif(baseRef, path string, calls []diff.WhatifResult) {
-	j.emit(BuildJSONWhatif(baseRef, path, calls))
+	j.emit(buildJSONWhatif(baseRef, path, calls))
 }
 
 func (j *JSONRenderer) Statediff(result *statediff.Result) {

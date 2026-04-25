@@ -5,12 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/render"
 )
 
 // inventoryFromSrc builds an analysis.Module from inline HCL so the
@@ -27,11 +25,7 @@ func inventoryFromSrc(t *testing.T, src string) *analysis.Module {
 	return analysis.Analyse(&analysis.File{Filename: "test.tf", Source: []byte(src), Body: body})
 }
 
-// _ ensures hcl is referenced so the import isn't pruned by goimports
-// even when the tests below evolve to drop other hcl uses.
-var _ = hcl.Range{}
-
-func TestWriteInventorySectionOrderAndCounts(t *testing.T) {
+func TestRendererInventorySectionOrderAndCounts(t *testing.T) {
 	mod := inventoryFromSrc(t, `
 variable "v" { type = string }
 locals { l = 1 }
@@ -41,7 +35,7 @@ module "m" { source = "./x" }
 output "o" { value = 1 }
 `)
 	var b bytes.Buffer
-	render.WriteInventory(&b, mod)
+	consoleRenderer(&b).Inventory(mod)
 	out := b.String()
 	if !strings.HasPrefix(out, "Entities: 6\n") {
 		t.Errorf("missing total header; got:\n%s", out)
@@ -70,10 +64,10 @@ output "o" { value = 1 }
 	}
 }
 
-func TestWriteInventorySkipsEmptyKinds(t *testing.T) {
+func TestRendererInventorySkipsEmptyKinds(t *testing.T) {
 	mod := inventoryFromSrc(t, `variable "v" { type = string }`)
 	var b bytes.Buffer
-	render.WriteInventory(&b, mod)
+	consoleRenderer(&b).Inventory(mod)
 	out := b.String()
 	for _, absent := range []string{"Locals", "Data sources", "Resources", "Modules", "Outputs"} {
 		if strings.Contains(out, absent) {

@@ -12,7 +12,7 @@ import (
 	"github.com/dgr237/tflens/pkg/diff"
 )
 
-// WriteChange emits a single change line:
+// writeChange emits a single change line:
 //
 //	<indent><Subject>: <Detail>
 //
@@ -22,18 +22,18 @@ import (
 //
 // The two-space hint indent is hard-coded — keeping it constant
 // across the codebase is the whole point of this helper.
-func WriteChange(w io.Writer, indent string, c diff.Change) {
+func writeChange(w io.Writer, indent string, c diff.Change) {
 	fmt.Fprintf(w, "%s%s: %s\n", indent, c.Subject, c.Detail)
 	if c.Hint != "" {
 		fmt.Fprintf(w, "%s  hint: %s\n", indent, c.Hint)
 	}
 }
 
-// BucketByKind partitions changes into Breaking, NonBreaking, and
+// bucketByKind partitions changes into Breaking, NonBreaking, and
 // Informational lists, preserving the input order within each bucket.
 // Changes whose Kind doesn't match any of those three are silently
 // dropped — there are no other kinds today.
-func BucketByKind(changes []diff.Change) (breaking, nonBreaking, info []diff.Change) {
+func bucketByKind(changes []diff.Change) (breaking, nonBreaking, info []diff.Change) {
 	for _, c := range changes {
 		switch c.Kind {
 		case diff.Breaking:
@@ -47,9 +47,9 @@ func BucketByKind(changes []diff.Change) (breaking, nonBreaking, info []diff.Cha
 	return breaking, nonBreaking, info
 }
 
-// WriteChangesByKind emits each non-empty bucket of changes under a
+// writeChangesByKind emits each non-empty bucket of changes under a
 // "<headingIndent><Kind label> (<count>):" heading, with each change
-// rendered at lineIndent via WriteChange.
+// rendered at lineIndent via writeChange.
 //
 // Headings use the canonical labels "Breaking", "Non-breaking",
 // "Informational" — kept consistent across all subcommands so output
@@ -57,8 +57,8 @@ func BucketByKind(changes []diff.Change) (breaking, nonBreaking, info []diff.Cha
 //
 // Empty buckets are skipped entirely (no heading, no spacing). When
 // changes is empty the function writes nothing.
-func WriteChangesByKind(w io.Writer, headingIndent, lineIndent string, changes []diff.Change) {
-	breaking, nonBreaking, info := BucketByKind(changes)
+func writeChangesByKind(w io.Writer, headingIndent, lineIndent string, changes []diff.Change) {
+	breaking, nonBreaking, info := bucketByKind(changes)
 	writeBucket(w, headingIndent, lineIndent, "Breaking", breaking)
 	writeBucket(w, headingIndent, lineIndent, "Non-breaking", nonBreaking)
 	writeBucket(w, headingIndent, lineIndent, "Informational", info)
@@ -70,6 +70,6 @@ func writeBucket(w io.Writer, headingIndent, lineIndent, label string, list []di
 	}
 	fmt.Fprintf(w, "%s%s (%d):\n", headingIndent, label, len(list))
 	for _, c := range list {
-		WriteChange(w, lineIndent, c)
+		writeChange(w, lineIndent, c)
 	}
 }

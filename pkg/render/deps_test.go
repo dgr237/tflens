@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestWriteDepsBothPopulated(t *testing.T) {
+func TestRendererDepsBothPopulated(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteDeps(&b, "resource.aws_vpc.main",
+	consoleRenderer(&b).Deps("resource.aws_vpc.main",
 		[]string{"variable.cidr"},
 		[]string{"resource.aws_subnet.public"})
 	want := "Entity:  resource.aws_vpc.main\n" +
@@ -23,9 +21,9 @@ func TestWriteDepsBothPopulated(t *testing.T) {
 	}
 }
 
-func TestWriteDepsEmptySectionsRenderNone(t *testing.T) {
+func TestRendererDepsEmptySectionsRenderNone(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteDeps(&b, "variable.x", nil, nil)
+	consoleRenderer(&b).Deps("variable.x", nil, nil)
 	out := b.String()
 	if !strings.Contains(out, "Depends on (0):\n  (none)\n") {
 		t.Errorf("missing '(none)' for empty Depends on; got:\n%s", out)

@@ -4,30 +4,28 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestWriteImpactEmpty(t *testing.T) {
+func TestRendererImpactEmpty(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteImpact(&b, "variable.x", nil)
+	consoleRenderer(&b).Impact("variable.x", nil)
 	want := "No entities are affected by changes to variable.x\n"
 	if got := b.String(); got != want {
 		t.Errorf("empty impact = %q", got)
 	}
 }
 
-func TestWriteImpactSingularEntityIsGrammar(t *testing.T) {
+func TestRendererImpactSingularEntityIsGrammar(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteImpact(&b, "variable.x", []string{"local.y"})
+	consoleRenderer(&b).Impact("variable.x", []string{"local.y"})
 	if !strings.Contains(b.String(), "1 entity is affected") {
 		t.Errorf("singular grammar wrong; got:\n%s", b.String())
 	}
 }
 
-func TestWriteImpactPluralEntitiesAreGrammar(t *testing.T) {
+func TestRendererImpactPluralEntitiesAreGrammar(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteImpact(&b, "variable.x", []string{"local.a", "local.b", "local.c"})
+	consoleRenderer(&b).Impact("variable.x", []string{"local.a", "local.b", "local.c"})
 	out := b.String()
 	if !strings.Contains(out, "3 entities are affected") {
 		t.Errorf("plural grammar wrong; got:\n%s", out)

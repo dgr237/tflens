@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// WriteCycles emits the human-readable result of a Module.Cycles()
+// writeCycles emits the human-readable result of a Module.Cycles()
 // call. Empty input writes the "no cycles" baseline; otherwise emits
 // a numbered list with the cycle members joined by " → ".
-func WriteCycles(w io.Writer, cycles [][]string) {
+func writeCycles(w io.Writer, cycles [][]string) {
 	if len(cycles) == 0 {
 		fmt.Fprintln(w, "No cycles detected.")
 		return

@@ -7,11 +7,11 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 )
 
-// WriteUnused emits the unused subcommand's text result: a header
+// writeUnused emits the unused subcommand's text result: a header
 // counting how many entities the module declares but never references,
 // followed by one ID per line. Empty input writes the "no unreferenced
 // entities" baseline.
-func WriteUnused(w io.Writer, unused []analysis.Entity) {
+func writeUnused(w io.Writer, unused []analysis.Entity) {
 	if len(unused) == 0 {
 		fmt.Fprintln(w, "No unreferenced entities found.")
 		return

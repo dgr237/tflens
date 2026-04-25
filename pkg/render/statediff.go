@@ -7,7 +7,7 @@ import (
 	"github.com/dgr237/tflens/pkg/statediff"
 )
 
-// WriteStatediff emits a human-readable text report of a statediff.Result.
+// writeStatediff emits a human-readable text report of a statediff.Result.
 // Sections are separated by a blank line and only emitted when they have
 // content; an empty result (no findings, no orphans) produces a single
 // "No … changes detected vs <ref>." line.
@@ -19,7 +19,7 @@ import (
 // they don't gate CI either.
 //
 // Nil-safe: writes nothing for a nil result.
-func WriteStatediff(w io.Writer, r *statediff.Result) {
+func writeStatediff(w io.Writer, r *statediff.Result) {
 	if r == nil {
 		return
 	}

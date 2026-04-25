@@ -8,7 +8,7 @@ import (
 )
 
 // inventorySections lists the entity kinds in display order plus the
-// human-readable section heading each one gets in WriteInventory.
+// human-readable section heading each one gets in writeInventory.
 // Order matches the legacy cmd output so JSON-vs-text consumers see
 // the same shape.
 var inventorySections = []struct {
@@ -23,11 +23,11 @@ var inventorySections = []struct {
 	{analysis.KindOutput, "Outputs"},
 }
 
-// WriteInventory emits the inventory subcommand's text result: an
+// writeInventory emits the inventory subcommand's text result: an
 // "Entities: N" header followed by one section per entity kind that
 // has any entries. Each entity line shows the canonical ID padded to
 // 40 chars and, when present, a "(file:line)" location suffix.
-func WriteInventory(w io.Writer, m *analysis.Module) {
+func writeInventory(w io.Writer, m *analysis.Module) {
 	fmt.Fprintf(w, "Entities: %d\n", len(m.Entities()))
 	for _, s := range inventorySections {
 		entities := m.Filter(s.kind)

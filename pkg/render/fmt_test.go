@@ -6,11 +6,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2/hclparse"
-
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestWriteFmtParseErrors(t *testing.T) {
+func TestRendererFmtParseErrors(t *testing.T) {
 	// Generate real diagnostics via hclparse so the format mirrors what
 	// `tflens fmt` actually surfaces in production.
 	p := hclparse.NewParser()
@@ -19,7 +17,7 @@ func TestWriteFmtParseErrors(t *testing.T) {
 		t.Fatal("expected diagnostics from broken HCL")
 	}
 	var b bytes.Buffer
-	render.WriteFmtParseErrors(&b, diags)
+	consoleRenderer(&b).FmtParseErrors(diags)
 	out := b.String()
 	if !strings.HasPrefix(out, "parse error: ") {
 		t.Errorf("expected leading 'parse error:'; got %q", out)
@@ -29,9 +27,9 @@ func TestWriteFmtParseErrors(t *testing.T) {
 	}
 }
 
-func TestWriteFmtParseErrorsEmpty(t *testing.T) {
+func TestRendererFmtParseErrorsEmpty(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteFmtParseErrors(&b, nil)
+	consoleRenderer(&b).FmtParseErrors(nil)
 	if got := b.String(); got != "" {
 		t.Errorf("nil diags should produce no output; got %q", got)
 	}

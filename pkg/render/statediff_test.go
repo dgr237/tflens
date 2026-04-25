@@ -5,14 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/statediff"
 )
 
 // TestWriteStatediffNil confirms nil-safety — writes nothing.
 func TestWriteStatediffNil(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, nil)
+	consoleRenderer(&buf).Statediff(nil)
 	if buf.Len() != 0 {
 		t.Errorf("nil result should write nothing, got %q", buf.String())
 	}
@@ -23,7 +22,7 @@ func TestWriteStatediffNil(t *testing.T) {
 // state orphans exist.
 func TestWriteStatediffEmptyResultEmitsBaselineMessage(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{BaseRef: "main"})
+	consoleRenderer(&buf).Statediff(&statediff.Result{BaseRef: "main"})
 	got := buf.String()
 	want := "No resource identity or sensitive-local changes detected vs main.\n"
 	if got != want {
@@ -36,7 +35,7 @@ func TestWriteStatediffEmptyResultEmitsBaselineMessage(t *testing.T) {
 // "Resource identity changes vs <ref>:" heading.
 func TestWriteStatediffAddedAndRemovedResources(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef: "main",
 		AddedResources: []statediff.ResourceRef{
 			{Type: "aws_vpc", Name: "main", Mode: "managed"},
@@ -61,7 +60,7 @@ func TestWriteStatediffAddedAndRemovedResources(t *testing.T) {
 // own labelled section after the identity-changes section.
 func TestWriteStatediffRenamesUnderOwnHeading(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef: "main",
 		RenamedResources: []statediff.RenamePair{
 			{Module: "module.vpc", From: "resource.aws_subnet.old", To: "resource.aws_subnet.new"},
@@ -81,7 +80,7 @@ func TestWriteStatediffRenamesUnderOwnHeading(t *testing.T) {
 // resources but no per-instance lines.
 func TestWriteStatediffSensitiveChangeNoStateInstances(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef: "main",
 		SensitiveChanges: []statediff.SensitiveChange{
 			{
@@ -116,7 +115,7 @@ func TestWriteStatediffSensitiveChangeNoStateInstances(t *testing.T) {
 // addresses attached.
 func TestWriteStatediffSensitiveChangeWithStateInstances(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef: "main",
 		SensitiveChanges: []statediff.SensitiveChange{
 			{
@@ -148,7 +147,7 @@ func TestWriteStatediffSensitiveChangeWithStateInstances(t *testing.T) {
 // "(absent)" — distinguishes "default removed" from "default = ''".
 func TestWriteStatediffOrAbsent(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef: "main",
 		SensitiveChanges: []statediff.SensitiveChange{
 			{Kind: "variable", Name: "n", OldValue: "3", NewValue: ""},
@@ -165,7 +164,7 @@ func TestWriteStatediffOrAbsent(t *testing.T) {
 // "no changes detected" baseline (because there ARE orphans).
 func TestWriteStatediffStateOrphans(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef:      "main",
 		StateOrphans: []string{"aws_eip.unused", `aws_subnet.old["a"]`},
 	})
@@ -188,7 +187,7 @@ func TestWriteStatediffStateOrphans(t *testing.T) {
 // spacing — distinct sections always have a blank line between them.
 func TestWriteStatediffSectionsSeparatedByBlankLine(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteStatediff(&buf, &statediff.Result{
+	consoleRenderer(&buf).Statediff(&statediff.Result{
 		BaseRef:        "main",
 		AddedResources: []statediff.ResourceRef{{Type: "aws_vpc", Name: "main", Mode: "managed"}},
 		RenamedResources: []statediff.RenamePair{

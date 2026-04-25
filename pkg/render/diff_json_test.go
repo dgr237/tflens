@@ -1,6 +1,7 @@
 package render_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -11,18 +12,34 @@ import (
 	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestJSONSummaryAddBucketsByKind(t *testing.T) {
-	var s render.JSONSummary
-	for _, k := range []diff.ChangeKind{diff.Breaking, diff.Breaking, diff.NonBreaking, diff.Informational} {
-		s.Add(diff.Change{Kind: k})
+// renderDiffJSON drives Renderer.Diff in JSON mode and unmarshals the
+// captured envelope. Lets the per-case asserts read the public wire-
+// format type without each test having to assemble a buffer + Settings.
+func renderDiffJSON(t *testing.T, baseRef, path string, results []diff.PairResult, rootChanges []diff.Change) render.JSONDiffOutput {
+	t.Helper()
+	var b bytes.Buffer
+	jsonRenderer(&b).Diff(baseRef, path, results, rootChanges)
+	var out render.JSONDiffOutput
+	if err := json.Unmarshal(b.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, b.String())
 	}
-	if s.Breaking != 2 || s.NonBreaking != 1 || s.Informational != 1 {
-		t.Errorf("got %+v, want {2,1,1}", s)
-	}
+	return out
 }
 
-func TestBuildJSONDiffEmptyResultsHasZeroSummary(t *testing.T) {
-	got := render.BuildJSONDiff("main", ".", nil, nil)
+// renderWhatifJSON is the whatif counterpart to renderDiffJSON.
+func renderWhatifJSON(t *testing.T, baseRef, path string, calls []diff.WhatifResult) render.JSONWhatifOutput {
+	t.Helper()
+	var b bytes.Buffer
+	jsonRenderer(&b).Whatif(baseRef, path, calls)
+	var out render.JSONWhatifOutput
+	if err := json.Unmarshal(b.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v\nraw=%s", err, b.String())
+	}
+	return out
+}
+
+func TestJSONDiffEmptyResultsHasZeroSummary(t *testing.T) {
+	got := renderDiffJSON(t, "main", ".", nil, nil)
 	if got.BaseRef != "main" || got.Path != "." {
 		t.Errorf("envelope fields: %+v", got)
 	}
@@ -34,8 +51,8 @@ func TestBuildJSONDiffEmptyResultsHasZeroSummary(t *testing.T) {
 	}
 }
 
-func TestBuildJSONDiffRootChangesContributeToSummary(t *testing.T) {
-	got := render.BuildJSONDiff("main", ".", nil, []diff.Change{
+func TestJSONDiffRootChangesContributeToSummary(t *testing.T) {
+	got := renderDiffJSON(t, "main", ".", nil, []diff.Change{
 		{Kind: diff.Breaking, Subject: "variable.x", Detail: "removed"},
 		{Kind: diff.NonBreaking, Subject: "variable.y", Detail: "added"},
 		{Kind: diff.Informational, Subject: "out.docs", Detail: "doc"},
@@ -48,7 +65,7 @@ func TestBuildJSONDiffRootChangesContributeToSummary(t *testing.T) {
 	}
 }
 
-func TestBuildJSONDiffSkipsUninterestingPairs(t *testing.T) {
+func TestJSONDiffSkipsUninterestingPairs(t *testing.T) {
 	// A "changed" pair with no content + no attr move is uninteresting.
 	uninteresting := diff.PairResult{Pair: loader.ModuleCallPair{
 		Key: "vpc", Status: loader.StatusChanged,
@@ -57,17 +74,17 @@ func TestBuildJSONDiffSkipsUninterestingPairs(t *testing.T) {
 	interesting := diff.PairResult{
 		Pair: loader.ModuleCallPair{
 			Key: "sg", Status: loader.StatusChanged,
-			OldSource: "x", NewSource: "y", // attr move → interesting
+			OldSource: "x", NewSource: "y",
 		},
 	}
-	got := render.BuildJSONDiff("main", ".", []diff.PairResult{uninteresting, interesting}, nil)
+	got := renderDiffJSON(t, "main", ".", []diff.PairResult{uninteresting, interesting}, nil)
 	if len(got.Modules) != 1 || got.Modules[0].Name != "sg" {
 		t.Errorf("expected only 'sg' to survive filter, got %+v", got.Modules)
 	}
 }
 
-func TestBuildJSONDiffPerModuleAndOverallSummary(t *testing.T) {
-	got := render.BuildJSONDiff("main", ".", []diff.PairResult{{
+func TestJSONDiffPerModuleAndOverallSummary(t *testing.T) {
+	got := renderDiffJSON(t, "main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusChanged,
 			OldSource: "ns/vpc/aws", NewSource: "ns/vpc/aws",
@@ -84,29 +101,26 @@ func TestBuildJSONDiffPerModuleAndOverallSummary(t *testing.T) {
 		t.Fatalf("Modules len = %d, want 1", len(got.Modules))
 	}
 	m := got.Modules[0]
-	// Per-module summary.
 	if m.Summary.Breaking != 1 || m.Summary.NonBreaking != 1 || m.Summary.Informational != 0 {
 		t.Errorf("per-module summary: %+v", m.Summary)
 	}
-	// Overall summary aggregates root + per-module.
 	if got.Summary.Breaking != 1 || got.Summary.NonBreaking != 1 || got.Summary.Informational != 1 {
 		t.Errorf("overall summary: %+v, want {1,1,1}", got.Summary)
 	}
-	// Source/version fields populated.
 	if m.OldVersion != "1.0.0" || m.NewVersion != "2.0.0" {
 		t.Errorf("versions on per-module entry: %+v", m)
 	}
 }
 
-func TestBuildJSONDiffMarshalsToStableShape(t *testing.T) {
-	out := render.BuildJSONDiff("main", ".", nil, []diff.Change{
+// TestJSONDiffMarshalsToStableShape pins the on-the-wire byte form
+// (field names, top-level keys) by inspecting the renderer's actual
+// output, not a re-marshal of the Go struct.
+func TestJSONDiffMarshalsToStableShape(t *testing.T) {
+	var b bytes.Buffer
+	jsonRenderer(&b).Diff("main", ".", nil, []diff.Change{
 		{Kind: diff.Breaking, Subject: "var.x"},
 	})
-	b, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
+	s := b.String()
 	for _, want := range []string{
 		`"base_ref": "main"`,
 		`"path": "."`,
@@ -127,8 +141,8 @@ func TestBuildJSONDiffMarshalsToStableShape(t *testing.T) {
 	}
 }
 
-func TestBuildJSONWhatifEmptyCallsHasZeroSummary(t *testing.T) {
-	got := render.BuildJSONWhatif("main", ".", nil)
+func TestJSONWhatifEmptyCallsHasZeroSummary(t *testing.T) {
+	got := renderWhatifJSON(t, "main", ".", nil)
 	if got.BaseRef != "main" || got.Path != "." {
 		t.Errorf("envelope fields: %+v", got)
 	}
@@ -137,8 +151,8 @@ func TestBuildJSONWhatifEmptyCallsHasZeroSummary(t *testing.T) {
 	}
 }
 
-func TestBuildJSONWhatifAggregatesDirectImpactAndAPIChanges(t *testing.T) {
-	got := render.BuildJSONWhatif("main", ".", []diff.WhatifResult{{
+func TestJSONWhatifAggregatesDirectImpactAndAPIChanges(t *testing.T) {
+	got := renderWhatifJSON(t, "main", ".", []diff.WhatifResult{{
 		Pair: loader.ModuleCallPair{Key: "child", Status: loader.StatusChanged},
 		DirectImpact: []analysis.ValidationError{
 			{EntityID: "module.child", Msg: "missing required input \"x\""},
@@ -168,29 +182,39 @@ func TestBuildJSONWhatifAggregatesDirectImpactAndAPIChanges(t *testing.T) {
 	}
 }
 
+// TestJSONWhatifSummaryEmbedsCleanly: the wire format keeps all four
+// counter fields at the same level — direct_impact, breaking,
+// non_breaking, informational — not nested inside a "summary"
+// sub-object. Drive through the renderer to verify the actual bytes.
 func TestJSONWhatifSummaryEmbedsCleanly(t *testing.T) {
-	// The wire format must keep all four counter fields at the same
-	// level — direct_impact, breaking, non_breaking, informational —
-	// not nested inside a "summary" sub-object inside summary.
-	s := render.JSONWhatifSummary{
-		DirectImpact: 7,
-		JSONSummary: render.JSONSummary{
-			Breaking: 2, NonBreaking: 1, Informational: 5,
+	var b bytes.Buffer
+	jsonRenderer(&b).Whatif("main", ".", []diff.WhatifResult{{
+		Pair: loader.ModuleCallPair{Key: "x", Status: loader.StatusChanged},
+		DirectImpact: []analysis.ValidationError{
+			{EntityID: "x", Msg: "a"}, {EntityID: "x", Msg: "b"},
+			{EntityID: "x", Msg: "c"}, {EntityID: "x", Msg: "d"},
+			{EntityID: "x", Msg: "e"}, {EntityID: "x", Msg: "f"},
+			{EntityID: "x", Msg: "g"},
 		},
-	}
-	b, _ := json.Marshal(s)
-	got := string(b)
+		APIChanges: []diff.Change{
+			{Kind: diff.Breaking}, {Kind: diff.Breaking},
+			{Kind: diff.NonBreaking},
+			{Kind: diff.Informational}, {Kind: diff.Informational},
+			{Kind: diff.Informational}, {Kind: diff.Informational},
+			{Kind: diff.Informational},
+		},
+	}})
+	got := b.String()
 	for _, want := range []string{
-		`"direct_impact":7`,
-		`"breaking":2`,
-		`"non_breaking":1`,
-		`"informational":5`,
+		`"direct_impact": 7`,
+		`"breaking": 2`,
+		`"non_breaking": 1`,
+		`"informational": 5`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in flat JSON %s", want, got)
 		}
 	}
-	// No nested "JSONSummary" key.
 	if strings.Contains(got, "JSONSummary") {
 		t.Errorf("embed should be promoted, not appear as nested object: %s", got)
 	}

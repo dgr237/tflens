@@ -5,11 +5,11 @@ import (
 	"io"
 )
 
-// WriteImpact emits the impact subcommand's text result: a header line
+// writeImpact emits the impact subcommand's text result: a header line
 // summarising the count and an indented list of every transitively-
 // affected entity ID. An empty `affected` writes the "nothing affected"
 // baseline.
-func WriteImpact(w io.Writer, id string, affected []string) {
+func writeImpact(w io.Writer, id string, affected []string) {
 	if len(affected) == 0 {
 		fmt.Fprintf(w, "No entities are affected by changes to %s\n", id)
 		return
@@ -22,7 +22,7 @@ func WriteImpact(w io.Writer, id string, affected []string) {
 }
 
 // entityIsAre returns "entity is" / "entities are" depending on n —
-// keeps the WriteImpact header grammatically correct for both
+// keeps the writeImpact header grammatically correct for both
 // singular and plural cases.
 func entityIsAre(n int) string {
 	if n == 1 {

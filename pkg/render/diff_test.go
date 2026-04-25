@@ -8,23 +8,21 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-// ---- WriteDiffResults ----
+// ---- Diff ----
 
-func TestWriteDiffResultsEmptyEmitsBaseline(t *testing.T) {
+func TestRendererDiffEmptyEmitsBaseline(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteDiffResults(&buf, "main", nil, nil)
-	got := buf.String()
-	if got != "No changes detected vs main.\n" {
+	consoleRenderer(&buf).Diff("main", ".", nil, nil)
+	if got := buf.String(); got != "No changes detected vs main.\n" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestWriteDiffResultsAllUninterestingEmitsBaseline(t *testing.T) {
+func TestRendererDiffAllUninterestingEmitsBaseline(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteDiffResults(&buf, "main", []diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{
 		{Pair: loader.ModuleCallPair{Key: "x", Status: loader.StatusChanged, OldSource: "a", NewSource: "a"}},
 	}, nil)
 	if !strings.Contains(buf.String(), "No changes detected") {
@@ -32,13 +30,13 @@ func TestWriteDiffResultsAllUninterestingEmitsBaseline(t *testing.T) {
 	}
 }
 
-func TestWriteDiffResultsRootPlusModuleSeparatedByBlankLine(t *testing.T) {
+func TestRendererDiffRootPlusModuleSeparatedByBlankLine(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteDiffResults(&buf, "main",
+	consoleRenderer(&buf).Diff("main", ".",
 		[]diff.PairResult{{
 			Pair: loader.ModuleCallPair{
 				Key: "vpc", Status: loader.StatusChanged,
-				OldSource: "x", NewSource: "y", // attr move → interesting
+				OldSource: "x", NewSource: "y",
 			},
 		}},
 		[]diff.Change{{Kind: diff.Breaking, Subject: "var.x", Detail: "removed"}},
@@ -50,55 +48,52 @@ func TestWriteDiffResultsRootPlusModuleSeparatedByBlankLine(t *testing.T) {
 	if !strings.Contains(got, "Module \"vpc\":") {
 		t.Errorf("missing Module heading:\n%s", got)
 	}
-	// Blank line separator between sections — i.e. \n\n appears
-	// somewhere between the two headings.
 	if !strings.Contains(got, "\n\nModule \"vpc\":") {
 		t.Errorf("expected blank line before Module section; got:\n%s", got)
 	}
 }
 
-// ---- WriteRootChanges ----
-
-func TestWriteRootChangesUsesCanonicalIndents(t *testing.T) {
+// TestRendererDiffRootChangesUseCanonicalIndents pins down the root-
+// module section's indentation contract — the cmd layer relies on
+// the "  Breaking (N):" / "    subject: detail" shape for visual
+// consistency with the per-module sections.
+func TestRendererDiffRootChangesUseCanonicalIndents(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteRootChanges(&buf, []diff.Change{
+	consoleRenderer(&buf).Diff("main", ".", nil, []diff.Change{
 		{Kind: diff.Breaking, Subject: "variable.test", Detail: "required variable added"},
 	})
-	got := buf.String()
 	want := "" +
 		"Root module:\n" +
 		"  Breaking (1):\n" +
 		"    variable.test: required variable added\n"
-	if got != want {
+	if got := buf.String(); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-// ---- WritePairResult ----
+// ---- per-pair text ----
 
-func TestWritePairResultAdded(t *testing.T) {
+func TestRendererDiffPairAdded(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusAdded,
 			NewSource: "ns/vpc/aws", NewVersion: "1.0.0",
 		},
-	})
-	got := buf.String()
-	want := "Module \"vpc\": ADDED (source=ns/vpc/aws, version=1.0.0)\n"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	}}, nil)
+	if !strings.Contains(buf.String(), `Module "vpc": ADDED (source=ns/vpc/aws, version=1.0.0)`) {
+		t.Errorf("missing ADDED line; got:\n%s", buf.String())
 	}
 }
 
-func TestWritePairResultAddedWithoutVersion(t *testing.T) {
+func TestRendererDiffPairAddedWithoutVersion(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusAdded,
 			NewSource: "./modules/vpc",
 		},
-	})
+	}}, nil)
 	got := buf.String()
 	if !strings.Contains(got, "ADDED (source=./modules/vpc)") {
 		t.Errorf("local source without version should omit version=; got %q", got)
@@ -108,31 +103,29 @@ func TestWritePairResultAddedWithoutVersion(t *testing.T) {
 	}
 }
 
-func TestWritePairResultRemoved(t *testing.T) {
+func TestRendererDiffPairRemoved(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusRemoved,
 			OldSource: "ns/vpc/aws", OldVersion: "1.0.0",
 		},
-	})
-	got := buf.String()
-	want := "Module \"vpc\": REMOVED (was source=ns/vpc/aws, version=1.0.0)\n"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	}}, nil)
+	if !strings.Contains(buf.String(), `Module "vpc": REMOVED (was source=ns/vpc/aws, version=1.0.0)`) {
+		t.Errorf("missing REMOVED line; got:\n%s", buf.String())
 	}
 }
 
-func TestWritePairResultChangedSourceAndVersion(t *testing.T) {
+func TestRendererDiffPairChangedSourceAndVersion(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusChanged,
 			OldSource: "ns/vpc/aws", NewSource: "ns/vpc-v2/aws",
 			OldVersion: "1.0.0", NewVersion: "2.0.0",
 		},
 		Changes: []diff.Change{{Kind: diff.Breaking, Subject: "var.x", Detail: "removed"}},
-	})
+	}}, nil)
 	got := buf.String()
 	for _, want := range []string{
 		`Module "vpc":`,
@@ -147,72 +140,67 @@ func TestWritePairResultChangedSourceAndVersion(t *testing.T) {
 	}
 }
 
-// TestWritePairResultChangedContentOnly: source + version unchanged
+// TestRendererDiffPairChangedContentOnly: source + version unchanged
 // but Changes is non-empty (e.g. content drift on a local source).
 // The heading ends with "(content changed)" instead of attr arrows.
-func TestWritePairResultChangedContentOnly(t *testing.T) {
+func TestRendererDiffPairChangedContentOnly(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusChanged,
 			OldSource: "x", NewSource: "x",
 		},
 		Changes: []diff.Change{{Kind: diff.Breaking, Subject: "var.x", Detail: "removed"}},
-	})
-	got := buf.String()
-	if !strings.Contains(got, "(content changed)") {
-		t.Errorf("expected (content changed) marker; got:\n%s", got)
+	}}, nil)
+	if !strings.Contains(buf.String(), "(content changed)") {
+		t.Errorf("expected (content changed) marker; got:\n%s", buf.String())
 	}
 }
 
-// TestWritePairResultChangedNoAPIChanges: status=changed, source moved
+// TestRendererDiffPairChangedNoAPIChanges: status=changed, source moved
 // (so the attr line shows arrows), but Changes is empty — emits
 // "(no API changes)" line.
-func TestWritePairResultChangedNoAPIChanges(t *testing.T) {
+func TestRendererDiffPairChangedNoAPIChanges(t *testing.T) {
 	var buf bytes.Buffer
-	render.WritePairResult(&buf, diff.PairResult{
+	consoleRenderer(&buf).Diff("main", ".", []diff.PairResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusChanged,
 			OldSource: "x", NewSource: "y",
 		},
-	})
-	got := buf.String()
-	if !strings.Contains(got, "(no API changes)") {
-		t.Errorf("expected (no API changes); got:\n%s", got)
+	}}, nil)
+	if !strings.Contains(buf.String(), "(no API changes)") {
+		t.Errorf("expected (no API changes); got:\n%s", buf.String())
 	}
 }
 
-// ---- WriteWhatifResults / WriteWhatifCall ----
+// ---- Whatif ----
 
-func TestWriteWhatifResultsEmptyEmitsBaseline(t *testing.T) {
+func TestRendererWhatifEmptyEmitsBaseline(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteWhatifResults(&buf, "main", "./modules/x", nil)
-	got := buf.String()
-	if got != "No upgraded module calls to simulate (path vs main).\n" {
+	consoleRenderer(&buf).Whatif("main", "./modules/x", nil)
+	if got := buf.String(); got != "No upgraded module calls to simulate (path vs main).\n" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestWriteWhatifCallRemovedShortLine(t *testing.T) {
+func TestRendererWhatifRemovedShortLine(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteWhatifCall(&buf, ".", diff.WhatifResult{
+	consoleRenderer(&buf).Whatif("main", ".", []diff.WhatifResult{{
 		Pair: loader.ModuleCallPair{
 			Key: "vpc", Status: loader.StatusRemoved,
 			OldSource: "ns/vpc/aws", OldVersion: "1.0.0",
 		},
-	})
-	got := buf.String()
-	want := "module.vpc: REMOVED (was source=ns/vpc/aws, version=\"1.0.0\")\n"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	}})
+	if !strings.Contains(buf.String(), "module.vpc: REMOVED (was source=ns/vpc/aws, version=\"1.0.0\")") {
+		t.Errorf("missing REMOVED line; got:\n%s", buf.String())
 	}
 }
 
-func TestWriteWhatifCallNoDirectImpact(t *testing.T) {
+func TestRendererWhatifNoDirectImpact(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteWhatifCall(&buf, ".", diff.WhatifResult{
+	consoleRenderer(&buf).Whatif("main", ".", []diff.WhatifResult{{
 		Pair: loader.ModuleCallPair{Key: "vpc", Status: loader.StatusChanged},
-	})
+	}})
 	got := buf.String()
 	for _, want := range []string{
 		"Direct impact on module.vpc in . (0 issue(s)):",
@@ -224,9 +212,9 @@ func TestWriteWhatifCallNoDirectImpact(t *testing.T) {
 	}
 }
 
-func TestWriteWhatifCallWithDirectImpactAndAPIChanges(t *testing.T) {
+func TestRendererWhatifWithDirectImpactAndAPIChanges(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteWhatifCall(&buf, ".", diff.WhatifResult{
+	consoleRenderer(&buf).Whatif("main", ".", []diff.WhatifResult{{
 		Pair: loader.ModuleCallPair{Key: "vpc", Status: loader.StatusChanged},
 		DirectImpact: []analysis.ValidationError{
 			{EntityID: "module.vpc", Msg: "missing required input \"x\""},
@@ -234,7 +222,7 @@ func TestWriteWhatifCallWithDirectImpactAndAPIChanges(t *testing.T) {
 		APIChanges: []diff.Change{
 			{Kind: diff.Breaking, Subject: "variable.x", Detail: "removed"},
 		},
-	})
+	}})
 	got := buf.String()
 	for _, want := range []string{
 		"Direct impact on module.vpc in . (1 issue(s)):",
@@ -248,9 +236,9 @@ func TestWriteWhatifCallWithDirectImpactAndAPIChanges(t *testing.T) {
 	}
 }
 
-func TestWriteWhatifResultsMultipleCallsSeparatedByBlankLine(t *testing.T) {
+func TestRendererWhatifMultipleCallsSeparatedByBlankLine(t *testing.T) {
 	var buf bytes.Buffer
-	render.WriteWhatifResults(&buf, "main", ".", []diff.WhatifResult{
+	consoleRenderer(&buf).Whatif("main", ".", []diff.WhatifResult{
 		{Pair: loader.ModuleCallPair{Key: "a", Status: loader.StatusChanged}},
 		{Pair: loader.ModuleCallPair{Key: "b", Status: loader.StatusChanged}},
 	})
@@ -261,7 +249,6 @@ func TestWriteWhatifResultsMultipleCallsSeparatedByBlankLine(t *testing.T) {
 	if !strings.Contains(got, "Direct impact on module.b") {
 		t.Errorf("missing second call:\n%s", got)
 	}
-	// Blank line between the two
 	if !strings.Contains(got, "\n\nDirect impact on module.b") {
 		t.Errorf("expected blank line before second call; got:\n%s", got)
 	}

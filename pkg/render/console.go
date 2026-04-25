@@ -19,23 +19,23 @@ type ConsoleRenderer struct {
 	W io.Writer
 }
 
-func (c *ConsoleRenderer) Cycles(cycles [][]string)                    { WriteCycles(c.W, cycles) }
-func (c *ConsoleRenderer) Deps(id string, deps, dependents []string)   { WriteDeps(c.W, id, deps, dependents) }
-func (c *ConsoleRenderer) Impact(id string, affected []string)         { WriteImpact(c.W, id, affected) }
-func (c *ConsoleRenderer) Inventory(m *analysis.Module)                { WriteInventory(c.W, m) }
-func (c *ConsoleRenderer) Unused(unused []analysis.Entity)             { WriteUnused(c.W, unused) }
-func (c *ConsoleRenderer) FmtParseErrors(diags hcl.Diagnostics)        { WriteFmtParseErrors(c.W, diags) }
-func (c *ConsoleRenderer) CacheInfo(path string, entries int, b int64) { WriteCacheInfo(c.W, path, entries, b) }
-func (c *ConsoleRenderer) CacheAlreadyEmpty(path string)               { WriteCacheAlreadyEmpty(c.W, path) }
+func (c *ConsoleRenderer) Cycles(cycles [][]string)                    { writeCycles(c.W, cycles) }
+func (c *ConsoleRenderer) Deps(id string, deps, dependents []string)   { writeDeps(c.W, id, deps, dependents) }
+func (c *ConsoleRenderer) Impact(id string, affected []string)         { writeImpact(c.W, id, affected) }
+func (c *ConsoleRenderer) Inventory(m *analysis.Module)                { writeInventory(c.W, m) }
+func (c *ConsoleRenderer) Unused(unused []analysis.Entity)             { writeUnused(c.W, unused) }
+func (c *ConsoleRenderer) FmtParseErrors(diags hcl.Diagnostics)        { writeFmtParseErrors(c.W, diags) }
+func (c *ConsoleRenderer) CacheInfo(path string, entries int, b int64) { writeCacheInfo(c.W, path, entries, b) }
+func (c *ConsoleRenderer) CacheAlreadyEmpty(path string)               { writeCacheAlreadyEmpty(c.W, path) }
 func (c *ConsoleRenderer) CacheCleared(entries int, b int64, path string) {
-	WriteCacheCleared(c.W, entries, b, path)
+	writeCacheCleared(c.W, entries, b, path)
 }
 
 func (c *ConsoleRenderer) Validate(
 	refErrs, crossErrs []analysis.ValidationError,
 	typeErrs []analysis.TypeCheckError,
 ) {
-	WriteValidate(c.W, refErrs, crossErrs, typeErrs)
+	writeValidate(c.W, refErrs, crossErrs, typeErrs)
 }
 
 func (c *ConsoleRenderer) Diff(
@@ -43,13 +43,13 @@ func (c *ConsoleRenderer) Diff(
 	results []diff.PairResult,
 	rootChanges []diff.Change,
 ) {
-	WriteDiffResults(c.W, baseRef, results, rootChanges)
+	writeDiffResults(c.W, baseRef, results, rootChanges)
 }
 
 func (c *ConsoleRenderer) Whatif(baseRef, path string, calls []diff.WhatifResult) {
-	WriteWhatifResults(c.W, baseRef, path, calls)
+	writeWhatifResults(c.W, baseRef, path, calls)
 }
 
 func (c *ConsoleRenderer) Statediff(result *statediff.Result) {
-	WriteStatediff(c.W, result)
+	writeStatediff(c.W, result)
 }

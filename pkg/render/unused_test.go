@@ -6,20 +6,19 @@ import (
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/analysis"
-	"github.com/dgr237/tflens/pkg/render"
 )
 
-func TestWriteUnusedEmpty(t *testing.T) {
+func TestRendererUnusedEmpty(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteUnused(&b, nil)
+	consoleRenderer(&b).Unused(nil)
 	if got := b.String(); got != "No unreferenced entities found.\n" {
 		t.Errorf("empty unused = %q", got)
 	}
 }
 
-func TestWriteUnusedListsEntities(t *testing.T) {
+func TestRendererUnusedListsEntities(t *testing.T) {
 	var b bytes.Buffer
-	render.WriteUnused(&b, []analysis.Entity{
+	consoleRenderer(&b).Unused([]analysis.Entity{
 		{Kind: analysis.KindVariable, Name: "orphan"},
 		{Kind: analysis.KindLocal, Name: "stale"},
 	})
