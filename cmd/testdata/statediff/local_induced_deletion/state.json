@@ -1,0 +1,22 @@
+{
+  "version": 4,
+  "resources": [
+    {
+      "module": "",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "instances": [
+        {"index_key": "us-east-1", "attributes": {}},
+        {"index_key": "us-west-2", "attributes": {}}
+      ]
+    },
+    {
+      "module": "",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "instances": [{"attributes": {}}]
+    }
+  ]
+}
