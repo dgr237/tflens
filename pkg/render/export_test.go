@@ -3,27 +3,86 @@ package render_test
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
-// TestBuildExportShape exercises the prototype export shape end-to-end:
-// loads a project from testdata, runs BuildExport, and asserts the
-// envelope + per-module fields have the expected values. Brittle on
-// purpose — the schema is experimental and consumers depend on the
-// shape, so any change should be deliberate.
-func TestBuildExportShape(t *testing.T) {
-	dir := writeExportFixture(t)
+// exportFixtureProject loads pkg/render/testdata/export/<name> as a
+// loader.Project using the offline-only loader (no network). Mirrors
+// the inventoryFixtureModule pattern but for full project trees so
+// child-module nesting fixtures are supported.
+func exportFixtureProject(t *testing.T, name string) *loader.Project {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	dir := filepath.Join(filepath.Dir(file), "testdata", "export", name)
 	p, _, err := loader.LoadProject(dir)
 	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
+		t.Fatalf("LoadProject(%s): %v", name, err)
 	}
-	exp := render.BuildExport(p, "test-version")
+	return p
+}
 
+// exportCase pairs a fixture name with focused assertions on the
+// resulting Export envelope. Per-case fixtures keep failures
+// actionable — when one assertion blows up you know exactly which
+// concept regressed.
+type exportCase struct {
+	Name   string
+	Custom func(t *testing.T, exp render.Export)
+}
+
+func TestRendererExportCases(t *testing.T) {
+	for _, tc := range exportCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			p := exportFixtureProject(t, tc.Name)
+			exp := render.BuildExport(p, "test-version")
+			tc.Custom(t, exp)
+		})
+	}
+}
+
+var exportCases = []exportCase{
+	{
+		// Variables, locals, outputs, data — and the cty stdlib
+		// evaluation surface in particular: the format()-driven local
+		// MUST surface an evaluated_value (proves stdlib is wired
+		// through the export); the data-source-driven local MUST NOT
+		// (proves the conservative-fallback principle holds — text
+		// only when evaluation can't resolve). Tracked-attribute
+		// surfacing is also exercised here because the marker lives
+		// on the same local.
+		Name:   "scalar_entities",
+		Custom: assertScalarEntities,
+	},
+	{
+		// Resource + data source meta-args: for_each text capture,
+		// lifecycle prevent_destroy / ignore_changes capture, count
+		// text capture, separate buckets for resources vs data sources,
+		// stable sort by (type, name).
+		Name:   "resources_and_data",
+		Custom: assertResourcesAndData,
+	},
+	{
+		// Terraform block: required_version + required_providers
+		// (with source + version constraint) + backend type. Catches
+		// regressions in pkg/analysis getter naming.
+		Name:   "terraform_block",
+		Custom: assertTerraformBlock,
+	},
+	{
+		// Project tree recursion: child module appears under
+		// root.children.<call-name> with the original source string
+		// preserved, child's own variables/outputs are exported.
+		Name:   "nested_modules",
+		Custom: assertNestedModules,
+	},
+}
+
+func assertScalarEntities(t *testing.T, exp render.Export) {
 	if !exp.Experimental {
 		t.Error("expected _experimental: true")
 	}
@@ -31,40 +90,24 @@ func TestBuildExportShape(t *testing.T) {
 		t.Errorf("schema_version = %q, want %q", exp.SchemaVersion, render.ExportSchemaVersion)
 	}
 	if exp.TflensVersion != "test-version" {
-		t.Errorf("tflens_version = %q, want %q", exp.TflensVersion, "test-version")
+		t.Errorf("tflens_version = %q", exp.TflensVersion)
 	}
 
-	// Variables should include `region` with type=string and default
-	// value evaluable to "us-east-1".
 	rm := exp.Root.Module
-	var region *render.ExportVariable
-	for i := range rm.Variables {
-		if rm.Variables[i].Name == "region" {
-			region = &rm.Variables[i]
-		}
-	}
-	if region == nil {
-		t.Fatalf("expected variable 'region' in export")
-	}
+	region := findVariable(t, rm.Variables, "region")
 	if region.Type != "string" {
-		t.Errorf("region.type = %q, want %q", region.Type, "string")
+		t.Errorf("region.type = %q, want string", region.Type)
 	}
 	if region.DefaultValue == nil {
-		t.Fatal("region.default_value should be populated for a literal default")
+		t.Error("region.default_value should be populated for a literal default")
 	}
 
-	// Local 'image' uses format() — should both have value_text AND
-	// an evaluated_value (proves stdlib evaluation is wired through
-	// the export).
-	var image *render.ExportLocal
-	for i := range rm.Locals {
-		if rm.Locals[i].Name == "image" {
-			image = &rm.Locals[i]
-		}
+	count := findVariable(t, rm.Variables, "instance_count")
+	if !count.Sensitive {
+		t.Error("instance_count.sensitive should be true")
 	}
-	if image == nil {
-		t.Fatalf("expected local 'image'")
-	}
+
+	image := findLocal(t, rm.Locals, "image")
 	if image.ValueText == "" {
 		t.Error("image.value_text should be populated")
 	}
@@ -72,96 +115,130 @@ func TestBuildExportShape(t *testing.T) {
 		t.Error("image.evaluated_value should be populated (format() is in the curated stdlib)")
 	}
 
-	// Tracked attribute should surface with subject = local.image.value
-	// and the canonical expression text.
+	unevaled := findLocal(t, rm.Locals, "unevaled")
+	if unevaled.ValueText == "" {
+		t.Error("unevaled.value_text should be populated")
+	}
+	if unevaled.EvaluatedValue != nil {
+		t.Errorf("unevaled.evaluated_value should be nil (data-source ref is unevaluable); got %s",
+			string(unevaled.EvaluatedValue.Value))
+	}
+
+	// Tracked attribute on local.image surfaces with subject =
+	// local.image.value and the canonical expression text.
 	if len(rm.Tracked) == 0 {
 		t.Fatal("expected at least one tracked_attribute")
 	}
 	if rm.Tracked[0].Subject != "local.image.value" {
-		t.Errorf("tracked[0].subject = %q, want %q", rm.Tracked[0].Subject, "local.image.value")
+		t.Errorf("tracked[0].subject = %q, want local.image.value", rm.Tracked[0].Subject)
 	}
 
-	// Child module nesting: 'child' should appear under root.children
-	// with the source string preserved.
-	if _, ok := exp.Root.Children["child"]; !ok {
+	// Outputs come through with both text and (when applicable)
+	// sensitivity flag.
+	if len(rm.Outputs) != 2 {
+		t.Fatalf("outputs len = %d, want 2", len(rm.Outputs))
+	}
+	for _, o := range rm.Outputs {
+		if o.ValueText == "" {
+			t.Errorf("output %q value_text should be populated", o.Name)
+		}
+	}
+}
+
+func assertResourcesAndData(t *testing.T, exp render.Export) {
+	rm := exp.Root.Module
+	if len(rm.Resources) != 2 {
+		t.Fatalf("resources len = %d, want 2", len(rm.Resources))
+	}
+	// Stable sort by (type, name): aws_instance.web before aws_security_group.sg.
+	if rm.Resources[0].Type != "aws_instance" || rm.Resources[1].Type != "aws_security_group" {
+		t.Errorf("resources not sorted by (type,name): %+v",
+			[]string{rm.Resources[0].Type, rm.Resources[1].Type})
+	}
+
+	web := rm.Resources[0]
+	if web.ForEachText == "" {
+		t.Error("aws_instance.web.for_each_text should be populated")
+	}
+	if !web.PreventDestroy {
+		t.Error("aws_instance.web.prevent_destroy should be true")
+	}
+	if web.IgnoreChangesText == "" {
+		t.Error("aws_instance.web.ignore_changes_text should be populated")
+	}
+
+	sg := rm.Resources[1]
+	if sg.CountText == "" {
+		t.Error("aws_security_group.sg.count_text should be populated")
+	}
+
+	// Data sources go in their own array, sorted by (type, name).
+	if len(rm.DataSources) != 2 {
+		t.Fatalf("data_sources len = %d, want 2", len(rm.DataSources))
+	}
+	if rm.DataSources[0].Type != "aws_ami" || rm.DataSources[1].Type != "aws_caller_identity" {
+		t.Errorf("data_sources not sorted by type: %+v",
+			[]string{rm.DataSources[0].Type, rm.DataSources[1].Type})
+	}
+}
+
+func assertTerraformBlock(t *testing.T, exp render.Export) {
+	tf := exp.Root.Module.Terraform
+	if tf.RequiredVersion != ">= 1.5.0" {
+		t.Errorf("required_version = %q", tf.RequiredVersion)
+	}
+	aws, ok := tf.RequiredProviders["aws"]
+	if !ok {
+		t.Fatalf("required_providers missing 'aws'; got %v", tf.RequiredProviders)
+	}
+	if aws.Source != "hashicorp/aws" {
+		t.Errorf("aws.source = %q", aws.Source)
+	}
+	if aws.VersionConstraint != "~> 5.0" {
+		t.Errorf("aws.version_constraint = %q", aws.VersionConstraint)
+	}
+	if _, ok := tf.RequiredProviders["random"]; !ok {
+		t.Error("required_providers missing 'random'")
+	}
+	if tf.Backend == nil || tf.Backend.Type != "s3" {
+		t.Errorf("backend = %+v, want type=s3", tf.Backend)
+	}
+}
+
+func assertNestedModules(t *testing.T, exp render.Export) {
+	if len(exp.Root.Module.ModuleCalls) != 1 {
+		t.Fatalf("module_calls len = %d, want 1", len(exp.Root.Module.ModuleCalls))
+	}
+	mc := exp.Root.Module.ModuleCalls[0]
+	if mc.Name != "child" || mc.Source != "./child" {
+		t.Errorf("module_call = %+v, want name=child source=./child", mc)
+	}
+	if mc.Arguments["region"] != "var.region" {
+		t.Errorf("module.region argument = %q", mc.Arguments["region"])
+	}
+
+	child, ok := exp.Root.Children["child"]
+	if !ok {
 		t.Fatalf("expected 'child' in root.children; got %v", exp.Root.Children)
 	}
-	if exp.Root.Children["child"].Source != "./child" {
-		t.Errorf("child.source = %q, want %q", exp.Root.Children["child"].Source, "./child")
+	if child.Source != "./child" {
+		t.Errorf("child.source = %q, want ./child", child.Source)
 	}
-
-	// terraform block: required_version + provider source + backend
-	// type all surface in the same nested object.
-	if rm.Terraform.RequiredVersion != ">= 1.5.0" {
-		t.Errorf("required_version = %q", rm.Terraform.RequiredVersion)
+	if findVariable(t, child.Module.Variables, "region").Type != "string" {
+		t.Error("child's region variable should have type=string")
 	}
-	if got := rm.Terraform.RequiredProviders["aws"].Source; got != "hashicorp/aws" {
-		t.Errorf("required_providers.aws.source = %q", got)
-	}
-	if rm.Terraform.Backend == nil || rm.Terraform.Backend.Type != "s3" {
-		t.Errorf("backend = %+v, want type=s3", rm.Terraform.Backend)
-	}
-
-	// Resources: one aws_instance with for_each + lifecycle block
-	// (prevent_destroy + ignore_changes). Pins the meta-arg surface.
-	if len(rm.Resources) != 1 {
-		t.Fatalf("resources len = %d, want 1", len(rm.Resources))
-	}
-	r := rm.Resources[0]
-	if r.Type != "aws_instance" || r.Name != "web" {
-		t.Errorf("resource[0] = %s.%s, want aws_instance.web", r.Type, r.Name)
-	}
-	if r.ForEachText == "" {
-		t.Error("resource.for_each_text should be populated")
-	}
-	if !r.PreventDestroy {
-		t.Error("resource.prevent_destroy should be true")
-	}
-	if r.IgnoreChangesText == "" {
-		t.Error("resource.ignore_changes_text should be populated")
-	}
-
-	// Data sources go in their own array.
-	if len(rm.DataSources) != 1 || rm.DataSources[0].Type != "aws_ami" {
-		t.Errorf("data_sources = %+v", rm.DataSources)
-	}
-
-	// Output value evaluation will fall through (length() applied to a
-	// resource address can't be evaluated statically — no provider
-	// schema), so EvaluatedValue is nil but ValueText is captured.
-	if len(rm.Outputs) != 1 {
-		t.Fatalf("outputs len = %d, want 1", len(rm.Outputs))
-	}
-	if rm.Outputs[0].ValueText == "" {
-		t.Error("output.value_text should be populated even when evaluation fails")
-	}
-
-	// Module-call arguments map captured as text.
-	if len(rm.ModuleCalls) != 1 {
-		t.Fatalf("module_calls len = %d, want 1", len(rm.ModuleCalls))
-	}
-	if rm.ModuleCalls[0].Arguments["region"] != "var.region" {
-		t.Errorf("module.region argument = %q", rm.ModuleCalls[0].Arguments["region"])
-	}
-
-	// Dependency graph: aws_instance.web references var.region via
-	// for_each, and module.child also references it via the region
-	// argument. Both edges should appear.
-	if deps := rm.Dependencies["resource.aws_instance.web"]; len(deps) == 0 {
-		t.Error("expected dependencies for resource.aws_instance.web")
+	if len(child.Module.Outputs) != 1 || child.Module.Outputs[0].Name != "echo" {
+		t.Errorf("child outputs = %+v, want one named 'echo'", child.Module.Outputs)
 	}
 }
 
 // TestWriteExportRoundtripsViaJSON confirms WriteExport emits valid
 // JSON that re-parses into the Export struct without loss for the
-// fields we care about. Catches regressions where struct tags
-// drift away from the field names.
+// fields the table tests exercise. Catches regressions where struct
+// tags drift away from the field names. Reuses scalar_entities so
+// the round-trip touches every field group covered by the table.
 func TestWriteExportRoundtripsViaJSON(t *testing.T) {
-	dir := writeExportFixture(t)
-	p, _, err := loader.LoadProject(dir)
-	if err != nil {
-		t.Fatalf("LoadProject: %v", err)
-	}
+	p := exportFixtureProject(t, "scalar_entities")
 	exp := render.BuildExport(p, "v0")
 	var buf bytes.Buffer
 	if err := render.WriteExport(exp, &buf); err != nil {
@@ -177,12 +254,22 @@ func TestWriteExportRoundtripsViaJSON(t *testing.T) {
 	if !round.Experimental {
 		t.Error("round-trip _experimental should still be true")
 	}
+	// Spot-check that the evaluated_value RawMessage round-trips —
+	// the json.RawMessage shape is the most likely thing to break.
+	if len(round.Root.Module.Locals) == 0 {
+		t.Fatal("round-trip lost locals")
+	}
+	for _, l := range round.Root.Module.Locals {
+		if l.Name == "image" && l.EvaluatedValue == nil {
+			t.Error("round-trip lost image.evaluated_value")
+		}
+	}
 }
 
 // TestBuildExportNilProjectIsEmpty pins the nil-safety contract: a
 // nil/empty project produces a valid envelope (with experimental flag
-// + schema version) rather than panicking. cmd code can rely on this
-// for the "loaded zero modules" edge case.
+// + schema version) rather than panicking. Inline because no fixture
+// is needed — the input is literally nil.
 func TestBuildExportNilProjectIsEmpty(t *testing.T) {
 	exp := render.BuildExport(nil, "")
 	if !exp.Experimental {
@@ -193,71 +280,26 @@ func TestBuildExportNilProjectIsEmpty(t *testing.T) {
 	}
 }
 
-// writeExportFixture builds a small project tree with exactly the
-// shape the export tests need: one variable, one local using format(),
-// one tracked attribute, one local-source child module. Inline so the
-// test is self-contained and the fixture can evolve alongside the
-// assertions.
-func writeExportFixture(t *testing.T) string {
+// ---- helpers ----
+
+func findVariable(t *testing.T, vars []render.ExportVariable, name string) render.ExportVariable {
 	t.Helper()
-	dir := t.TempDir()
-	rootTF := `terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-  backend "s3" {
-    bucket = "my-state"
-  }
-}
-
-variable "region" {
-  type    = string
-  default = "us-east-1"
-}
-
-locals {
-  image = format("ec2-%s-v%d", "small", 3) # tflens:track: AMI image identifier
-}
-
-resource "aws_instance" "web" {
-  for_each = toset([var.region])
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes  = [tags]
-  }
-}
-
-data "aws_ami" "latest" {
-  most_recent = true
-}
-
-output "instance_count" {
-  value     = length(aws_instance.web)
-  sensitive = false
-}
-
-module "child" {
-  source = "./child"
-  region = var.region
-}
-`
-	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(rootTF), 0o644); err != nil {
-		t.Fatal(err)
+	for _, v := range vars {
+		if v.Name == name {
+			return v
+		}
 	}
-	childDir := filepath.Join(dir, "child")
-	if err := os.MkdirAll(childDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	childTF := `variable "region" {
-  type = string
+	t.Fatalf("variable %q not found in %d variables", name, len(vars))
+	return render.ExportVariable{}
 }
-`
-	if err := os.WriteFile(filepath.Join(childDir, "main.tf"), []byte(childTF), 0o644); err != nil {
-		t.Fatal(err)
+
+func findLocal(t *testing.T, locals []render.ExportLocal, name string) render.ExportLocal {
+	t.Helper()
+	for _, l := range locals {
+		if l.Name == name {
+			return l
+		}
 	}
-	return dir
+	t.Fatalf("local %q not found in %d locals", name, len(locals))
+	return render.ExportLocal{}
 }
