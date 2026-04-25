@@ -1,0 +1,81 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.1.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "nested_modules",
+    "module": {
+      "variables": [
+        {
+          "name": "region",
+          "type": "string",
+          "has_default": true,
+          "default_text": "\"us-east-1\"",
+          "default_value": {
+            "type": "string",
+            "value": "us-east-1"
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [],
+      "resources": [],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [
+        {
+          "name": "child",
+          "source": "./child",
+          "arguments": {
+            "region": "var.region"
+          },
+          "location": "main.tf:6"
+        }
+      ],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "module.child": [
+          "variable.region"
+        ]
+      }
+    },
+    "children": {
+      "child": {
+        "dir": "child",
+        "source": "./child",
+        "module": {
+          "variables": [
+            {
+              "name": "region",
+              "type": "string",
+              "has_default": false,
+              "nullable": true,
+              "location": "main.tf:1"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "echo",
+              "value_text": "var.region",
+              "location": "main.tf:5"
+            }
+          ],
+          "resources": [],
+          "data_sources": [],
+          "locals": [],
+          "module_calls": [],
+          "terraform": {},
+          "tracked_attributes": [],
+          "dependencies": {
+            "output.echo": [
+              "variable.region"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

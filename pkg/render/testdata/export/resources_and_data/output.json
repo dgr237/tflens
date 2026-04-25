@@ -1,0 +1,58 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.1.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "resources_and_data",
+    "module": {
+      "variables": [
+        {
+          "name": "regions",
+          "type": "list(string)",
+          "has_default": false,
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_instance",
+          "name": "web",
+          "for_each_text": "toset(var.regions)",
+          "prevent_destroy": true,
+          "ignore_changes_text": "[tags]",
+          "location": "main.tf:5"
+        },
+        {
+          "type": "aws_security_group",
+          "name": "sg",
+          "count_text": "2",
+          "location": "main.tf:13"
+        }
+      ],
+      "data_sources": [
+        {
+          "type": "aws_ami",
+          "name": "ubuntu",
+          "location": "main.tf:17"
+        },
+        {
+          "type": "aws_caller_identity",
+          "name": "current",
+          "location": "main.tf:21"
+        }
+      ],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_instance.web": [
+          "variable.regions"
+        ]
+      }
+    }
+  }
+}

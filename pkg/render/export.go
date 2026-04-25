@@ -3,6 +3,7 @@ package render
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"sort"
 	"strconv"
 
@@ -403,7 +404,10 @@ func exportTrackedAttributes(m *analysis.Module, _ *hcl.EvalContext) []ExportTra
 			Marker:         ta.Description,
 		}
 		if ta.Pos.File != "" {
-			t.Location = ta.Pos.File + ":" + strconv.Itoa(ta.Pos.Line)
+			// Match the basename convention used by Entity.Location()
+			// (file:line, not abspath:line) so consumers see consistent
+			// short locations across all entity kinds.
+			t.Location = filepath.Base(ta.Pos.File) + ":" + strconv.Itoa(ta.Pos.Line)
 		}
 		out = append(out, t)
 	}

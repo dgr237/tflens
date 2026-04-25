@@ -1,0 +1,95 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.1.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "scalar_entities",
+    "module": {
+      "variables": [
+        {
+          "name": "instance_count",
+          "type": "number",
+          "has_default": false,
+          "sensitive": true,
+          "nullable": true,
+          "location": "main.tf:6"
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "has_default": true,
+          "default_text": "\"us-east-1\"",
+          "default_value": {
+            "type": "string",
+            "value": "us-east-1"
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "value_text": "local.image",
+          "evaluated_value": {
+            "type": "string",
+            "value": "ec2-small-v3"
+          },
+          "location": "main.tf:20"
+        },
+        {
+          "name": "instance_count",
+          "value_text": "var.instance_count",
+          "sensitive": true,
+          "location": "main.tf:24"
+        }
+      ],
+      "resources": [],
+      "data_sources": [
+        {
+          "type": "aws_ami",
+          "name": "latest",
+          "location": "main.tf:16"
+        }
+      ],
+      "locals": [
+        {
+          "name": "image",
+          "value_text": "format(\"ec2-%s-v%d\", \"small\", 3)",
+          "evaluated_value": {
+            "type": "string",
+            "value": "ec2-small-v3"
+          },
+          "location": "main.tf:12"
+        },
+        {
+          "name": "unevaled",
+          "value_text": "data.aws_ami.latest.id",
+          "location": "main.tf:13"
+        }
+      ],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [
+        {
+          "subject": "local.image.value",
+          "expression_text": "format(\"ec2-%s-v%d\", \"small\", 3)",
+          "marker": "AMI image identifier",
+          "location": "main.tf:12"
+        }
+      ],
+      "dependencies": {
+        "local.unevaled": [
+          "data.aws_ami.latest"
+        ],
+        "output.image": [
+          "local.image"
+        ],
+        "output.instance_count": [
+          "variable.instance_count"
+        ]
+      }
+    }
+  }
+}
