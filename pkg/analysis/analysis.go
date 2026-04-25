@@ -74,18 +74,18 @@ type Entity struct {
 	Kind           EntityKind
 	Type           string // non-empty for resource and data source
 	Name           string
-	Pos            token.Position   // source location of the declaration
-	DeclaredType   *TFType          // parsed type constraint; non-nil only for variables
-	HasDefault     bool             // variables: a default value was declared
-	DefaultExpr    *Expr            // variables: the default value expression
-	HasCount       bool             // resource/data/module: count meta-argument used
-	HasForEach     bool             // resource/data/module: for_each meta-argument used
-	NonNullable    bool             // variables: `nullable = false` explicitly set
-	Sensitive      bool             // variables/outputs: `sensitive = true` set
-	Ephemeral      bool             // variables/outputs: `ephemeral = true` (Terraform 1.10+)
-	Validations    int              // variables: number of `validation {}` blocks
-	Preconditions  int              // variables/outputs/resources: number of precondition blocks
-	Postconditions int              // variables/outputs/resources: number of postcondition blocks
+	Pos            token.Position // source location of the declaration
+	DeclaredType   *TFType        // parsed type constraint; non-nil only for variables
+	HasDefault     bool           // variables: a default value was declared
+	DefaultExpr    *Expr          // variables: the default value expression
+	HasCount       bool           // resource/data/module: count meta-argument used
+	HasForEach     bool           // resource/data/module: for_each meta-argument used
+	NonNullable    bool           // variables: `nullable = false` explicitly set
+	Sensitive      bool           // variables/outputs: `sensitive = true` set
+	Ephemeral      bool           // variables/outputs: `ephemeral = true` (Terraform 1.10+)
+	Validations    int            // variables: number of `validation {}` blocks
+	Preconditions  int            // variables/outputs/resources: number of precondition blocks
+	Postconditions int            // variables/outputs/resources: number of postcondition blocks
 
 	// Canonical text of every block's `condition` attribute, in source
 	// order. Used by pkg/diff to detect content changes that count
@@ -94,13 +94,13 @@ type Entity struct {
 	ValidationConditions    []string
 	PreconditionConditions  []string
 	PostconditionConditions []string
-	ValueExpr      *Expr            // outputs: the value expression
-	ProviderExpr   *Expr            // resource/data: value of `provider` attribute
-	ModuleArgs     map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
-	LocalExpr      *Expr            // locals: the local's value expression
-	ForEachExpr    *Expr            // resource/data/module: value of `for_each`
-	CountExpr      *Expr            // resource/data/module: value of `count`
-	DependsOnExpr  *Expr            // resource/data/module/output: value of `depends_on`
+	ValueExpr               *Expr            // outputs: the value expression
+	ProviderExpr            *Expr            // resource/data: value of `provider` attribute
+	ModuleArgs              map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
+	LocalExpr               *Expr            // locals: the local's value expression
+	ForEachExpr             *Expr            // resource/data/module: value of `for_each`
+	CountExpr               *Expr            // resource/data/module: value of `count`
+	DependsOnExpr           *Expr            // resource/data/module/output: value of `depends_on`
 
 	// Lifecycle block (resources only)
 	PreventDestroy         bool  // `prevent_destroy = true`

@@ -85,35 +85,35 @@ var analysisCases = []analysisCase{
 
 	// ---- dependency edges ----
 	{
-		Name: "var_dependency",
+		Name:    "var_dependency",
 		HasDeps: [][2]string{{"local.prefix", "variable.env"}},
 	},
 	{
-		Name: "local_to_local_dependency",
+		Name:    "local_to_local_dependency",
 		HasDeps: [][2]string{{"local.count", "local.is_prod"}},
 	},
 	{
-		Name: "resource_to_data_dependency",
+		Name:    "resource_to_data_dependency",
 		HasDeps: [][2]string{{"resource.aws_instance.web", "data.aws_ami.ubuntu"}},
 	},
 	{
-		Name: "resource_to_resource_dependency",
+		Name:    "resource_to_resource_dependency",
 		HasDeps: [][2]string{{"resource.aws_subnet.pub", "resource.aws_vpc.main"}},
 	},
 	{
-		Name: "output_dependency",
+		Name:    "output_dependency",
 		HasDeps: [][2]string{{"output.vpc_id", "resource.aws_vpc.main"}},
 	},
 	{
-		Name: "dep_in_nested_block",
+		Name:    "dep_in_nested_block",
 		HasDeps: [][2]string{{"resource.aws_security_group.web", "resource.aws_vpc.main"}},
 	},
 	{
-		Name: "dep_in_template_string",
+		Name:    "dep_in_template_string",
 		HasDeps: [][2]string{{"local.name", "variable.env"}},
 	},
 	{
-		Name: "dep_in_for_expr",
+		Name:    "dep_in_for_expr",
 		HasDeps: [][2]string{{"local.ids", "resource.aws_instance.web"}},
 	},
 	{

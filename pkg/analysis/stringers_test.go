@@ -60,16 +60,16 @@ func TestValidationErrorErrorDefaultFormat(t *testing.T) {
 
 func TestTFTypeString(t *testing.T) {
 	cases := map[string]*analysis.TFType{
-		"unknown":           nil,
-		"string":            {Kind: analysis.TypeString},
-		"number":            {Kind: analysis.TypeNumber},
-		"bool":              {Kind: analysis.TypeBool},
-		"null":              {Kind: analysis.TypeNull},
-		"any":               {Kind: analysis.TypeAny},
-		"list(any)":         {Kind: analysis.TypeList},
-		"list(string)":      {Kind: analysis.TypeList, Elem: &analysis.TFType{Kind: analysis.TypeString}},
-		"set(any)":          {Kind: analysis.TypeSet},
-		"map(any)":          {Kind: analysis.TypeMap},
+		"unknown":      nil,
+		"string":       {Kind: analysis.TypeString},
+		"number":       {Kind: analysis.TypeNumber},
+		"bool":         {Kind: analysis.TypeBool},
+		"null":         {Kind: analysis.TypeNull},
+		"any":          {Kind: analysis.TypeAny},
+		"list(any)":    {Kind: analysis.TypeList},
+		"list(string)": {Kind: analysis.TypeList, Elem: &analysis.TFType{Kind: analysis.TypeString}},
+		"set(any)":     {Kind: analysis.TypeSet},
+		"map(any)":     {Kind: analysis.TypeMap},
 	}
 	for want, in := range cases {
 		if got := in.String(); got != want {

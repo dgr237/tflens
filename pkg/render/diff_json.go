@@ -32,11 +32,11 @@ func (s *JSONSummary) add(c diff.Change) {
 // covers the root module (which isn't itself a call). Summary holds
 // the totals across both.
 type JSONDiffOutput struct {
-	BaseRef     string            `json:"base_ref"`
-	Path        string            `json:"path"`
-	Modules     []JSONDiffModule  `json:"modules"`
-	RootChanges []JSONChange      `json:"root_changes,omitempty"`
-	Summary     JSONSummary       `json:"summary"`
+	BaseRef     string           `json:"base_ref"`
+	Path        string           `json:"path"`
+	Modules     []JSONDiffModule `json:"modules"`
+	RootChanges []JSONChange     `json:"root_changes,omitempty"`
+	Summary     JSONSummary      `json:"summary"`
 }
 
 // JSONDiffModule is one paired module call's wire form. Source /
@@ -92,10 +92,10 @@ func buildJSONDiff(baseRef, path string, results []diff.PairResult, rootChanges 
 // --format=json`. Calls are the per-pair simulation results;
 // Summary aggregates DirectImpact + per-Kind change counts.
 type JSONWhatifOutput struct {
-	BaseRef string             `json:"base_ref"`
-	Path    string             `json:"path"`
-	Calls   []JSONWhatifCall   `json:"calls"`
-	Summary JSONWhatifSummary  `json:"summary"`
+	BaseRef string            `json:"base_ref"`
+	Path    string            `json:"path"`
+	Calls   []JSONWhatifCall  `json:"calls"`
+	Summary JSONWhatifSummary `json:"summary"`
 }
 
 // JSONWhatifCall is one paired call's simulation result on the wire.

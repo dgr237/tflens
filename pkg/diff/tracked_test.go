@@ -178,7 +178,6 @@ locals {
 	}
 }
 
-
 // trackedCase mirrors diffCase but drives diff.DiffTracked instead of
 // diff.Diff. Reads testdata/<name>/{old.tf,new.tf}.
 type trackedCase struct {

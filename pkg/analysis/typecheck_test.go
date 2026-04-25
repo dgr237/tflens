@@ -141,8 +141,8 @@ var typecheckCases = []typecheckCase{
 	// ---- default value checking ----
 	{Name: "default_matches_type", WantNoErrors: true},
 	{
-		Name: "default_type_mismatch",
-		WantErrorAttr: "default",
+		Name:                 "default_type_mismatch",
+		WantErrorAttr:        "default",
 		WantErrorMsgContains: []string{"variable.count", "string", "number"},
 	},
 	{Name: "default_null_always_ok", WantNoErrors: true},
@@ -150,27 +150,27 @@ var typecheckCases = []typecheckCase{
 
 	// ---- for_each ----
 	{
-		Name: "for_each_list_literal_fails",
-		WantErrorAttr: "for_each",
+		Name:                 "for_each_list_literal_fails",
+		WantErrorAttr:        "for_each",
 		WantErrorMsgContains: []string{"map", "set"},
 	},
 	{Name: "for_each_map_literal_ok", WantNoErrors: true},
 	{Name: "for_each_toset_ok", WantNoErrors: true},
 	{
-		Name: "for_each_list_var_fails",
+		Name:                 "for_each_list_var_fails",
 		WantErrorMsgContains: []string{"list"},
 	},
 	{Name: "for_each_map_var_ok", WantNoErrors: true},
 	{Name: "for_each_string_literal_fails"}, // any error suffices
 	{
-		Name: "for_each_in_module_block",
+		Name:              "for_each_in_module_block",
 		WantErrorEntityID: "module.envs",
 	},
 
 	// ---- count ----
 	{Name: "count_with_number_ok", WantNoErrors: true},
 	{
-		Name: "count_with_list_fails",
+		Name:          "count_with_list_fails",
 		WantErrorAttr: "count",
 	},
 	{Name: "count_with_bool_fails"}, // any error suffices
@@ -194,7 +194,7 @@ var typecheckCases = []typecheckCase{
 
 	// ---- built-in function return types ----
 	{
-		Name: "for_each_with_keys_fails",
+		Name:                 "for_each_with_keys_fails",
 		WantErrorMsgContains: []string{"list"},
 	},
 	{Name: "for_each_with_values_fails"},
@@ -205,7 +205,7 @@ var typecheckCases = []typecheckCase{
 	{Name: "count_with_keys_fails"},
 	{Name: "default_with_jsonencode_ok", WantNoErrors: true},
 	{
-		Name: "default_with_wrong_builtin_fails",
+		Name:                 "default_with_wrong_builtin_fails",
 		WantErrorMsgContains: []string{"number", "string"},
 	},
 }
