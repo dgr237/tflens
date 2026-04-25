@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -37,12 +37,5 @@ func runUnused(s config.Settings) {
 		}{Unreferenced: entities})
 		return
 	}
-	if len(unused) == 0 {
-		fmt.Println("No unreferenced entities found.")
-		return
-	}
-	fmt.Printf("Unreferenced entities (%d):\n", len(unused))
-	for _, e := range unused {
-		fmt.Printf("  %s\n", e.ID())
-	}
+	render.WriteUnused(os.Stdout, unused)
 }

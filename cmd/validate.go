@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -46,61 +46,50 @@ func runValidate(s config.Settings) {
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
-
 	if s.JSON {
-		refJSON := make([]render.JSONValidationError, 0, len(refErrs))
-		crossJSON := make([]render.JSONValidationError, 0, len(crossErrs))
-		typeJSON := make([]render.JSONTypeError, 0, len(typeErrs))
-		// Refs and cross-errors both reuse ValidationError but have different
-		// semantics. Keep them separate for consumers.
-		for _, e := range refErrs {
-			refJSON = append(refJSON, render.JSONValErr(e))
-		}
-		for _, e := range crossErrs {
-			crossJSON = append(crossJSON, render.JSONValErr(e))
-		}
-		for _, e := range typeErrs {
-			typeJSON = append(typeJSON, render.JSONTypeErr(e))
-		}
-		code := 0
-		if total > 0 {
-			code = 1
-		}
-		exitJSON(struct {
-			UndefinedReferences []render.JSONValidationError `json:"undefined_references"`
-			CrossModuleIssues   []render.JSONValidationError `json:"cross_module_issues"`
-			TypeErrors          []render.JSONTypeError       `json:"type_errors"`
-		}{refJSON, crossJSON, typeJSON}, code)
+		emitValidateJSON(refErrs, crossErrs, typeErrs, total)
 		return
 	}
+	// Errors go to stderr so they don't pollute pipes; the success
+	// message goes to stdout.
+	var w io.Writer = os.Stdout
+	if total > 0 {
+		w = os.Stderr
+	}
+	render.WriteValidate(w, refErrs, crossErrs, typeErrs)
+	if total > 0 {
+		os.Exit(1)
+	}
+}
 
-	if total == 0 {
-		fmt.Println("No validation errors found.")
-		return
+// emitValidateJSON builds the structured envelope for `validate
+// --format=json`. Refs and cross-errors share the ValidationError
+// type but mean different things; the wire format keeps them in
+// distinct top-level keys for consumers.
+func emitValidateJSON(
+	refErrs, crossErrs []analysis.ValidationError,
+	typeErrs []analysis.TypeCheckError,
+	total int,
+) {
+	refJSON := make([]render.JSONValidationError, 0, len(refErrs))
+	for _, e := range refErrs {
+		refJSON = append(refJSON, render.JSONValErr(e))
 	}
-	section := func(sep bool, title string, items []analysis.ValidationError) bool {
-		if len(items) == 0 {
-			return sep
-		}
-		if sep {
-			fmt.Fprintln(os.Stderr)
-		}
-		fmt.Fprintf(os.Stderr, "%s (%d):\n", title, len(items))
-		for _, e := range items {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
-		return true
+	crossJSON := make([]render.JSONValidationError, 0, len(crossErrs))
+	for _, e := range crossErrs {
+		crossJSON = append(crossJSON, render.JSONValErr(e))
 	}
-	sep := section(false, "Undefined references", refErrs)
-	sep = section(sep, "Cross-module issues", crossErrs)
-	if len(typeErrs) > 0 {
-		if sep {
-			fmt.Fprintln(os.Stderr)
-		}
-		fmt.Fprintf(os.Stderr, "Type errors (%d):\n", len(typeErrs))
-		for _, e := range typeErrs {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
+	typeJSON := make([]render.JSONTypeError, 0, len(typeErrs))
+	for _, e := range typeErrs {
+		typeJSON = append(typeJSON, render.JSONTypeErr(e))
 	}
-	os.Exit(1)
+	code := 0
+	if total > 0 {
+		code = 1
+	}
+	exitJSON(struct {
+		UndefinedReferences []render.JSONValidationError `json:"undefined_references"`
+		CrossModuleIssues   []render.JSONValidationError `json:"cross_module_issues"`
+		TypeErrors          []render.JSONTypeError       `json:"type_errors"`
+	}{refJSON, crossJSON, typeJSON}, code)
 }

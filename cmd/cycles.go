@@ -1,13 +1,12 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var cyclesCmd = &cobra.Command{
@@ -32,22 +31,22 @@ func runCycles(s config.Settings) {
 		if cycles == nil {
 			cycles = [][]string{}
 		}
-		code := 0
-		if len(cycles) > 0 {
-			code = 1
-		}
 		exitJSON(struct {
 			Cycles [][]string `json:"cycles"`
-		}{Cycles: cycles}, code)
+		}{Cycles: cycles}, exitCodeIfPositive(len(cycles)))
 		return
 	}
-	if len(cycles) == 0 {
-		fmt.Println("No cycles detected.")
-		return
+	render.WriteCycles(os.Stdout, cycles)
+	if len(cycles) > 0 {
+		os.Exit(1)
 	}
-	fmt.Printf("Cycles detected (%d):\n", len(cycles))
-	for i, c := range cycles {
-		fmt.Printf("  %d: %s\n", i+1, strings.Join(c, " → "))
+}
+
+// exitCodeIfPositive returns 1 when n > 0, else 0. Tiny helper used
+// by subcommands whose JSON exit code mirrors a count.
+func exitCodeIfPositive(n int) int {
+	if n > 0 {
+		return 1
 	}
-	os.Exit(1)
+	return 0
 }

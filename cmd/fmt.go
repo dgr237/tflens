@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var fmtCmd = &cobra.Command{
@@ -58,9 +59,7 @@ func runFmt(s config.Settings) {
 	// will silently produce garbage on broken input.
 	p := hclparse.NewParser()
 	if _, diags := p.ParseHCL(src, s.Path); diags.HasErrors() {
-		for _, d := range diags {
-			fmt.Fprintf(os.Stderr, "parse error: %s\n", d.Error())
-		}
+		render.WriteFmtParseErrors(os.Stderr, diags)
 		os.Exit(1)
 	}
 

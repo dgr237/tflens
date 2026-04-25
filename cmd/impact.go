@@ -1,11 +1,12 @@
 package cmd
 
 import (
-	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var impactCmd = &cobra.Command{
@@ -29,7 +30,6 @@ func runImpact(s config.Settings, id string) {
 		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
 			id, s.Path, s.Path)
 	}
-
 	affected := mod.Impact(id)
 	if s.JSON {
 		if affected == nil {
@@ -41,14 +41,5 @@ func runImpact(s config.Settings, id string) {
 		}{Entity: id, Affected: affected})
 		return
 	}
-	if len(affected) == 0 {
-		fmt.Printf("No entities are affected by changes to %s\n", id)
-		return
-	}
-
-	fmt.Printf("If %s changes, %d %s affected (in evaluation order):\n",
-		id, len(affected), plural(len(affected), "entity is", "entities are"))
-	for _, aid := range affected {
-		fmt.Printf("  %s\n", aid)
-	}
+	render.WriteImpact(os.Stdout, id, affected)
 }

@@ -1,11 +1,12 @@
 package cmd
 
 import (
-	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var depsCmd = &cobra.Command{
@@ -29,10 +30,8 @@ func runDeps(s config.Settings, id string) {
 		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
 			id, s.Path, s.Path)
 	}
-
 	deps := mod.Dependencies(id)
 	dependents := mod.Dependents(id)
-
 	if s.JSON {
 		emitJSON(struct {
 			Entity       string   `json:"entity"`
@@ -41,22 +40,5 @@ func runDeps(s config.Settings, id string) {
 		}{Entity: id, DependsOn: deps, ReferencedBy: dependents})
 		return
 	}
-
-	fmt.Printf("Entity:  %s\n", id)
-
-	fmt.Printf("\nDepends on (%d):\n", len(deps))
-	if len(deps) == 0 {
-		fmt.Println("  (none)")
-	}
-	for _, d := range deps {
-		fmt.Printf("  %s\n", d)
-	}
-
-	fmt.Printf("\nReferenced by (%d):\n", len(dependents))
-	if len(dependents) == 0 {
-		fmt.Println("  (none)")
-	}
-	for _, d := range dependents {
-		fmt.Printf("  %s\n", d)
-	}
+	render.WriteDeps(os.Stdout, id, deps, dependents)
 }

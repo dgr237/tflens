@@ -52,13 +52,6 @@ func mustLoadModule(path string) *analysis.Module {
 	return mod
 }
 
-func plural(n int, singular, plural string) string {
-	if n == 1 {
-		return singular
-	}
-	return plural
-}
-
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
 	os.Exit(1)
