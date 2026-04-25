@@ -1,0 +1,7 @@
+{
+  "Modules": [
+    {"Key": "",       "Source": "",                              "Dir": "."},
+    {"Key": "vpc",    "Source": "terraform-aws-modules/vpc/aws", "Dir": ".terraform/modules/vpc"},
+    {"Key": "vpc.sg", "Source": "./submodules/sg",               "Dir": ".terraform/modules/vpc/submodules/sg"}
+  ]
+}
