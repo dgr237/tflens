@@ -4,7 +4,7 @@ This is a worked **prototype** showing how to consume the JSON document produced
 
 It is intentionally narrow — two Terraform resource types (`aws_iam_role`, `aws_eks_cluster`), one variable-driven parameterisation, one cross-resource ARN reference, one `format()` call, one nested block. The goal is to demonstrate that `tflens export`'s `{text, value?, ast?}` shape gives a converter author enough information to do the job without re-implementing parsing, type inference, or cross-module resolution.
 
-> **Status: prototype.** Both the `tflens export` schema (`0.2.0-prototype`) and this generator are scaffolding. Field renames and shape changes are expected.
+> **Status: prototype.** Both the `tflens export` schema (`0.3.0-prototype`) and this generator are scaffolding. Field renames and shape changes are expected.
 
 ## Quick start
 
@@ -102,8 +102,7 @@ This relies on a subtle HCL detail: a bare identifier in an object-cons key posi
 
 | Limitation | Workaround for now |
 | --- | --- |
-| `dynamic "name" { for_each = ..., content { ... } }` blocks aren't yet in the export | Deferred at the `tflens export` layer (see the README's "Static evaluation surface" → deferred items). Common in security-group rules and IAM policies. |
-| Tracked-attribute records still emit `expression_text` only (no `value`/`ast`) | Promote when the underlying `*Expr` is exported from `pkg/analysis.TrackedAttribute`. Doesn't affect resource-attribute conversion (where the AST IS available). |
+| Map-typed `for_each` on dynamic blocks (`for_each = { a = ..., b = ... }`, with `<iterator>.key` / `<iterator>.value` semantics) | The export captures the for_each + content correctly, but the POC's `emit_dynamic` only handles the list-of-objects case (CEL `.map()`). Map iteration would either need rewriting to a list-of-objects upstream or generating one CEL expression per known key. See the dedicated "Dynamic blocks" subsection above. |
 | Many AWS resource types lack ACK CRDs | Per-resource manual mapping in `ACK_MAPPING`. The [aws-controllers-k8s/code-generator](https://github.com/aws-controllers-k8s/code-generator) repo ships these mappings — a production converter would generate the table from there rather than hand-curate. |
 | Splat expressions (`aws_subnet.example[*].id`) emit as `.map(x, ...)` in CEL | CEL doesn't have splat semantics; the rewrite is approximate. May need a kro extension or manual review. |
 | `count = X` with non-trivial `X` | Translates to a CEL expression but kro's loop semantics are different from Terraform's. The POC doesn't currently handle `count` at all in the resource emitter — production code would generate one resource per count value or fold into a kro for-each construct when available. |

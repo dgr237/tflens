@@ -4,6 +4,13 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Documentation
+
+- **README cleanup post-dynamic-blocks merge.** Three stale claims fixed:
+  - Schema-version pointer in `docs/export-to-kro-rgd/README.md` updated `0.2.0-prototype` → `0.3.0-prototype`.
+  - Removed the kro POC's "Known gaps" row claiming dynamic blocks weren't in the export (they shipped in 0.8.0); replaced with a narrower note about map-typed `for_each`, which the export captures fine but the POC's `emit_dynamic` only handles for the list-of-objects case.
+  - Removed the "Tracked-attribute records still emit `expression_text` only" entry from both the main README's "Not yet emitted" list and the kro POC's "Known gaps" — tracked-attribute records are diff-machinery (the canonical text is what powers the breaking-change detector), not converter input, so the text-only shape is the right shape and not a gap.
+
 ## [0.8.0] — 2026-04-25
 
 ### Added
