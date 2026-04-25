@@ -32,16 +32,43 @@
               "value": {
                 "type": "string",
                 "value": "ami-0c55b159cbfafe1f0"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "ami-0c55b159cbfafe1f0"
+                }
               }
             },
             "instance_type": {
-              "text": "var.size"
+              "text": "var.size",
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "size",
+                    "step": "attr"
+                  }
+                ]
+              }
             },
             "monitoring": {
               "text": "true",
               "value": {
                 "type": "bool",
                 "value": true
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                }
               }
             },
             "tags": {
@@ -60,6 +87,90 @@
                   "Name": "web",
                   "Tier": "prod-frontend"
                 }
+              },
+              "ast": {
+                "items": [
+                  {
+                    "key": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "Name",
+                          "step": "root"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "web"
+                      }
+                    }
+                  },
+                  {
+                    "key": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "Env",
+                          "step": "root"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "var",
+                          "step": "root"
+                        },
+                        {
+                          "name": "env",
+                          "step": "attr"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "Tier",
+                          "step": "root"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "args": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "%s-frontend"
+                          }
+                        },
+                        {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "var",
+                              "step": "root"
+                            },
+                            {
+                              "name": "env",
+                              "step": "attr"
+                            }
+                          ]
+                        }
+                      ],
+                      "name": "format",
+                      "node": "function_call"
+                    }
+                  }
+                ],
+                "node": "object_cons"
               }
             }
           },
@@ -76,6 +187,13 @@
               "value": {
                 "type": "bool",
                 "value": true
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                }
               }
             },
             "owners": {
@@ -90,6 +208,18 @@
                 "value": [
                   "amazon"
                 ]
+              },
+              "ast": {
+                "elements": [
+                  {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "amazon"
+                    }
+                  }
+                ],
+                "node": "tuple_cons"
               }
             }
           },
@@ -102,6 +232,13 @@
                     "value": {
                       "type": "string",
                       "value": "name"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "name"
+                      }
                     }
                   },
                   "values": {
@@ -116,6 +253,18 @@
                       "value": [
                         "ubuntu/*"
                       ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "ubuntu/*"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
                     }
                   }
                 },

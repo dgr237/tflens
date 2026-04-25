@@ -63,6 +63,7 @@ var exportCaseNames = []string{
 	"nested_modules",
 	"resource_attributes",
 	"nested_blocks_eks",
+	"expression_ast",
 }
 
 // TestBuildExportNilProjectIsEmpty pins the nil-safety contract: a

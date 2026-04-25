@@ -105,14 +105,25 @@ type ExportResource struct {
 }
 
 // ExportAttribute pairs the canonical source text of a resource's
-// attribute with its statically-evaluated cty value when one can be
-// resolved. Same shape as locals/variables — converters that need a
-// clean structured value get one for literal-heavy attributes (`tags = { Name = "web" }`),
-// while expressions referencing data sources or computed attributes
-// fall back to the text-only form.
+// attribute with its statically-evaluated cty value (when one can be
+// resolved) AND a tagged JSON-tree representation of the underlying
+// HCL expression. The three fields are complementary:
+//
+//   - text:  the source as written. Always present. Lossless for
+//     consumers that just want to pass the expression through.
+//   - value: the evaluated cty value when the curated stdlib resolves
+//     the expression. Lets converters emit literal values directly
+//     for the common case of literal-heavy attributes
+//     (`tags = { Name = "web" }`).
+//   - ast:   the structural decomposition (function calls, traversals,
+//     conditionals, …). Lets converters translate expressions into
+//     the target language without re-parsing the text. Especially
+//     valuable for non-Go consumers that don't want to embed an HCL
+//     parser. See export_ast.go for the supported node kinds.
 type ExportAttribute struct {
 	Text  string         `json:"text"`
 	Value *ExportCtyJSON `json:"value,omitempty"`
+	AST   any            `json:"ast,omitempty"`
 }
 
 // ExportBlock is one nested block instance — recursive, since blocks
@@ -364,6 +375,7 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 			r.Attributes[name] = ExportAttribute{
 				Text:  expr.Text(),
 				Value: evalToExport(expr, ctx),
+				AST:   astFor(expr),
 			}
 		}
 	}
@@ -397,6 +409,7 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 			out.Attributes[name] = ExportAttribute{
 				Text:  expr.Text(),
 				Value: evalToExport(expr, ctx),
+				AST:   astFor(expr),
 			}
 		}
 	}

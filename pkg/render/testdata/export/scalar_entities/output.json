@@ -56,6 +56,13 @@
               "value": {
                 "type": "bool",
                 "value": true
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                }
               }
             }
           },

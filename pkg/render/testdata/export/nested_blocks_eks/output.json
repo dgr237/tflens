@@ -44,16 +44,59 @@
               "value": {
                 "type": "string",
                 "value": "prod-eks"
+              },
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "cluster_name",
+                    "step": "attr"
+                  }
+                ]
               }
             },
             "role_arn": {
-              "text": "aws_iam_role.cluster.arn"
+              "text": "aws_iam_role.cluster.arn",
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "aws_iam_role",
+                    "step": "root"
+                  },
+                  {
+                    "name": "cluster",
+                    "step": "attr"
+                  },
+                  {
+                    "name": "arn",
+                    "step": "attr"
+                  }
+                ]
+              }
             },
             "version": {
               "text": "var.k8s_version",
               "value": {
                 "type": "string",
                 "value": "1.31"
+              },
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "k8s_version",
+                    "step": "attr"
+                  }
+                ]
               }
             }
           },
@@ -66,6 +109,13 @@
                     "value": {
                       "type": "string",
                       "value": "API"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "API"
+                      }
                     }
                   },
                   "bootstrap_cluster_creator_admin_permissions": {
@@ -73,6 +123,13 @@
                     "value": {
                       "type": "bool",
                       "value": true
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "bool",
+                        "value": true
+                      }
                     }
                   }
                 },
@@ -94,6 +151,18 @@
                       "value": [
                         "secrets"
                       ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "secrets"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
                     }
                   }
                 },
@@ -102,7 +171,24 @@
                     {
                       "attributes": {
                         "key_arn": {
-                          "text": "aws_kms_key.example.arn"
+                          "text": "aws_kms_key.example.arn",
+                          "ast": {
+                            "node": "scope_traversal",
+                            "traversal": [
+                              {
+                                "name": "aws_kms_key",
+                                "step": "root"
+                              },
+                              {
+                                "name": "example",
+                                "step": "attr"
+                              },
+                              {
+                                "name": "arn",
+                                "step": "attr"
+                              }
+                            ]
+                          }
                         }
                       },
                       "location": "main.tf:25"
@@ -120,6 +206,13 @@
                     "value": {
                       "type": "string",
                       "value": "STANDARD"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "STANDARD"
+                      }
                     }
                   }
                 },
@@ -134,6 +227,13 @@
                     "value": {
                       "type": "bool",
                       "value": true
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "bool",
+                        "value": true
+                      }
                     }
                   },
                   "endpoint_public_access": {
@@ -141,10 +241,45 @@
                     "value": {
                       "type": "bool",
                       "value": false
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "bool",
+                        "value": false
+                      }
                     }
                   },
                   "subnet_ids": {
-                    "text": "aws_subnet.example[*].id"
+                    "text": "aws_subnet.example[*].id",
+                    "ast": {
+                      "each": {
+                        "node": "relative_traversal",
+                        "source": {
+                          "node": "anon_symbol"
+                        },
+                        "traversal": [
+                          {
+                            "name": "id",
+                            "step": "attr"
+                          }
+                        ]
+                      },
+                      "node": "splat",
+                      "source": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "aws_subnet",
+                            "step": "root"
+                          },
+                          {
+                            "name": "example",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    }
                   }
                 },
                 "location": "main.tf:16"
@@ -162,6 +297,32 @@
               "value": {
                 "type": "string",
                 "value": "prod-eks-sg"
+              },
+              "ast": {
+                "args": [
+                  {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "%s-sg"
+                    }
+                  },
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "cluster_name",
+                        "step": "attr"
+                      }
+                    ]
+                  }
+                ],
+                "name": "format",
+                "node": "function_call"
               }
             }
           },
@@ -181,6 +342,18 @@
                       "value": [
                         "0.0.0.0/0"
                       ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "0.0.0.0/0"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
                     }
                   },
                   "from_port": {
@@ -188,6 +361,13 @@
                     "value": {
                       "type": "number",
                       "value": 0
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 0
+                      }
                     }
                   },
                   "protocol": {
@@ -195,6 +375,13 @@
                     "value": {
                       "type": "string",
                       "value": "-1"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "-1"
+                      }
                     }
                   },
                   "to_port": {
@@ -202,6 +389,13 @@
                     "value": {
                       "type": "number",
                       "value": 0
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 0
+                      }
                     }
                   }
                 },
@@ -223,6 +417,18 @@
                       "value": [
                         "10.0.0.0/8"
                       ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "10.0.0.0/8"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
                     }
                   },
                   "from_port": {
@@ -230,6 +436,13 @@
                     "value": {
                       "type": "number",
                       "value": 443
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 443
+                      }
                     }
                   },
                   "protocol": {
@@ -237,6 +450,13 @@
                     "value": {
                       "type": "string",
                       "value": "tcp"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "tcp"
+                      }
                     }
                   },
                   "to_port": {
@@ -244,6 +464,13 @@
                     "value": {
                       "type": "number",
                       "value": 443
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 443
+                      }
                     }
                   }
                 },
@@ -263,6 +490,18 @@
                       "value": [
                         "10.1.0.0/16"
                       ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "10.1.0.0/16"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
                     }
                   },
                   "from_port": {
@@ -270,6 +509,13 @@
                     "value": {
                       "type": "number",
                       "value": 22
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 22
+                      }
                     }
                   },
                   "protocol": {
@@ -277,6 +523,13 @@
                     "value": {
                       "type": "string",
                       "value": "tcp"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "tcp"
+                      }
                     }
                   },
                   "to_port": {
@@ -284,6 +537,13 @@
                     "value": {
                       "type": "number",
                       "value": 22
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "number",
+                        "value": 22
+                      }
                     }
                   }
                 },
