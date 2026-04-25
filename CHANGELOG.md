@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-04-25
+
 ### Added
 
 - **`docs/export-to-kro-crossplane/` — third worked-example POC: kro RGD targeting Crossplane provider-aws managed resources.** Hybrid of the other two POCs — kro's CEL substitution + lifecycle for the RGD shape, Upbound's provider-aws CRDs (`eks.aws.upbound.io/v1beta1`, `iam.aws.upbound.io/v1beta1`, …) for the managed resources. Useful when you want kro's CEL flexibility (string concat, `json.marshal`, `.map()` iteration) over Crossplane's narrower transforms vocabulary, but you want the Crossplane provider-aws CRD catalogue (much wider AWS coverage than ACK's). 95% identical to the kro+ACK POC — only deltas are the `CROSSPLANE_MAPPING` table (Upbound apiVersions + Terraform-style camelCase attribute names: `roleArn` not `roleARN`, `assumeRolePolicy` not `assumeRolePolicyDocument`), the `CROSSPLANE_ARN_PATH = "status.atProvider.arn"` constant (Upbound puts every status field under `atProvider`, mirroring the `forProvider`/`atProvider` Crossplane convention), and one extra dict-level wrap to put resource fields under `spec.forProvider`. That isolation is itself a useful finding: the export schema is structured so per-target deltas live in a small mapping table + a couple of constants, not in the generator's overall shape. The bundled README contrasts kro+ACK vs kro+Crossplane vs Crossplane Compositions on every translation axis.
@@ -192,7 +194,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/dgr237/tflens/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dgr237/tflens/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/dgr237/tflens/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dgr237/tflens/compare/v0.7.0...v0.8.0
