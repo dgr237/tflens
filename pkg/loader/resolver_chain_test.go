@@ -34,6 +34,22 @@ func TestLoaderProjectCases(t *testing.T) {
 	}
 }
 
+// TestLoaderProjectOnlineModeChainConstructs hits the online (non-
+// offline) branch of defaultResolverChain. The fixture only has a
+// local-source main.tf so no network is touched — the registry +
+// git resolvers are constructed but never invoked. Pure chain-
+// composition coverage.
+func TestLoaderProjectOnlineModeChainConstructs(t *testing.T) {
+	root := manifestFixtureDir(t, "no_manifest_local_sources_work")
+	p, _, err := loader.New(config.Settings{Offline: false}).Project(root)
+	if err != nil {
+		t.Fatalf("Loader.Project online: %v", err)
+	}
+	if _, ok := p.Root.Children["child"]; !ok {
+		t.Error("local-path child should resolve under online + no manifest")
+	}
+}
+
 var loaderProjectCases = []loaderProjectCase{
 	{
 		// Offline mode + a registry-source main.tf: the registry
