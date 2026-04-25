@@ -10,21 +10,15 @@ import (
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// loadOldAndNew loads both sides of a project diff: the working tree
-// at path (the "new" side) and the same path at baseRef (the "old"
-// side, materialised in a temporary git worktree). Returns the two
-// projects plus a cleanup func the caller MUST defer to remove the
-// worktree. Used by every subcommand that compares two refs.
+// loadOldAndNew loads both sides of a project diff (the working tree
+// at path + the same path materialised in a temporary git worktree at
+// baseRef) using the standard resolver chain. Reads --offline from
+// the command flags. Thin cobra-side wrapper around
+// loader.LoadProjectsForDiff. The returned cleanup is non-nil even
+// on the error paths so a deferred cleanup() is always safe.
 func loadOldAndNew(cmd *cobra.Command, path, baseRef string) (oldProj, newProj *loader.Project, cleanup func(), err error) {
-	newProj, err = loadProject(cmd, path)
-	if err != nil {
-		return nil, nil, func() {}, fmt.Errorf("loading path: %w", err)
-	}
-	oldProj, cleanup, err = loadOldProjectForRef(cmd, path, baseRef)
-	if err != nil {
-		return nil, nil, func() {}, err
-	}
-	return oldProj, newProj, cleanup, nil
+	offline, _ := cmd.Flags().GetBool("offline")
+	return loader.LoadProjectsForDiff(path, baseRef, offline)
 }
 
 // mustLoadModule loads a single .tf file or a directory of .tf files
@@ -38,12 +32,7 @@ func mustLoadModule(path string) *analysis.Module {
 	if err != nil {
 		fatalf("%v", err)
 	}
-	for _, fe := range fileErrs {
-		fmt.Fprintf(os.Stderr, "warning: parse errors in %s\n", fe.Path)
-		for _, e := range fe.Errors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
-	}
+	printFileErrs(fileErrs)
 	if mod == nil {
 		os.Exit(1)
 	}

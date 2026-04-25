@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"github.com/spf13/cobra"
-
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
@@ -19,15 +17,4 @@ const RefAutoKeyword = "auto"
 // naming.
 func resolveAutoRef(workspace string) (string, error) {
 	return loader.ResolveAutoRef(workspace)
-}
-
-// loadOldProjectForRef loads the workspace checked out at baseRef
-// using the resolver assembled from the current cobra flags. Wraps
-// loader.LoadProjectAtRef.
-func loadOldProjectForRef(cmd *cobra.Command, newWs, baseRef string) (*loader.Project, func(), error) {
-	r, _, err := buildResolver(cmd, newWs)
-	if err != nil {
-		return nil, nil, err
-	}
-	return loader.LoadProjectAtRef(newWs, baseRef, r)
 }

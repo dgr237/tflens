@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var validateCmd = &cobra.Command{
@@ -99,19 +99,15 @@ func runValidate(cmd *cobra.Command, path string) {
 }
 
 // loadForValidate returns the root module for validation plus any
-// cross-module errors discovered by walking into locally-referenced child
-// modules. For a single .tf file, cross-module checks are skipped (no tree).
+// cross-module errors discovered by walking into locally-referenced
+// child modules. Thin cobra-side wrapper around loader.LoadForValidate;
+// fatal on I/O errors and prints any FileErrors to stderr as warnings.
 func loadForValidate(cmd *cobra.Command, path string) (*analysis.Module, []analysis.ValidationError) {
-	info, err := os.Stat(path)
+	offline, _ := cmd.Flags().GetBool("offline")
+	mod, crossErrs, fileErrs, err := loader.LoadForValidate(path, offline)
 	if err != nil {
 		fatalf("%v", err)
 	}
-	if !info.IsDir() {
-		return mustLoadModule(path), nil
-	}
-	project, err := loadProject(cmd, path)
-	if err != nil {
-		fatalf("loading project: %v", err)
-	}
-	return project.Root.Module, loader.CrossValidate(project)
+	printFileErrs(fileErrs)
+	return mod, crossErrs
 }

@@ -7,6 +7,7 @@ All notable changes to tflens are documented here. The format is loosely based o
 ### Changed (internal)
 
 - **`analysis.Module` getters are now nil-safe.** `Backend`, `RequiredVersion`, `RequiredProviders`, `Moved`, `RemovedDeclared`, `Validate`, `ModuleSource`, `ModuleVersion`, `ModuleOutputReferences`, `Entities`, `Filter`, `HasEntity`, `EntityByID`, `TrackedAttributes`, `EvalContext`, and `GatherRefsFromExpr` now return their zero value (or an empty map / nil slice) when called on a nil receiver instead of panicking. Lets `pkg/diff.Diff(nil, nil)` and `AnalyzeProjects(nil, nil)` work as no-ops, which the cmd layer relies on when one side of a comparison has no root module.
+- **Resolver-chain composition + project-loading helpers extracted from `cmd/` to `pkg/loader`** as exported `DefaultResolverChain(absRoot, offline)`, `LoadProjectDefaults(rootDir, offline)`, `LoadProjectsForDiff(path, baseRef, offline)`, and `LoadForValidate(path, offline)`. The cmd layer's `loadProject`, `loadOldAndNew`, `loadOldProjectForRef`, `buildResolver`, and `loadForValidate` are now thin cobra-side wrappers (or deleted entirely, in the case of `loadOldProjectForRef` and `buildResolver`) that read `--offline` from the command flags and delegate to the loader. Same behaviour, but the chain composition is now unit-testable directly — 9 new tests cover offline mode, the manifest-warning seed, relative-path absolutisation, missing-ref errors, and the file-vs-dir dispatch in `LoadForValidate`.
 
 ### Added
 
