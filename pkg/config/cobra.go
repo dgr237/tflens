@@ -21,6 +21,7 @@ func FromCommand(cmd *cobra.Command, opts ...Option) Settings {
 		Markdown:  getString(cmd, "format") == "markdown",
 		BaseRef:   getString(cmd, "ref"),
 		StatePath: getString(cmd, "state"),
+		PlanPath:  getString(cmd, "enrich-with-plan"),
 		Write:     getBool(cmd, "write"),
 		Check:     getBool(cmd, "check"),
 	}

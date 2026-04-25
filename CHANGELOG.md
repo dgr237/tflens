@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens diff --enrich-with-plan plan.json` — fold `terraform show -json` plan output into the static-analysis diff.** Bridges the gap that previously left resource attribute changes (`cidr_block` modifications, force-new attributes, etc.) invisible to tflens because we don't embed provider schemas. Force-new attributes (those in the plan's `replace_paths`) become Breaking; other attribute changes become Informational; resource deletes and replaces become Breaking. The CI exit code refreshes to include plan-derived Breaking findings, so a plan-only force-new attribute still gates the merge even when the source-side text doesn't differ. Plan-derived rows are tagged with a `[plan]` prefix in the console renderer and a 📋 marker in the markdown renderer so reviewers can tell at a glance which findings came from which path. Implementation: new `pkg/plan` package (loader for terraform JSON plans, format_version 1.x supported, address parser handling `module.X.module.Y.<type>.<name>[<index>]` shapes including count/for_each indices, attribute-tree walker with `replace_paths` lookup), new `diff.EnrichFromPlan(changes, plan, project)` helper that merges plan deltas into the source-side change list, and a new `Source` field on `diff.Change` (`"static"` / `"plan"`) for renderer provenance. New `--enrich-with-plan` flag on `tflens diff` reading from a new `config.Settings.PlanPath`. Documented first-cut limitations: resource matching by exact address only (renames via `moved {}` surface as delete+create pairs); `count`/`for_each` instances all match the same source-side entity (per-instance matching is a follow-up); only `diff` takes the flag (not `whatif`/`statediff` yet).
+
 ## [0.10.0] — 2026-04-25
 
 ### Added
