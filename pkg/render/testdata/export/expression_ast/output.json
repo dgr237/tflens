@@ -1,0 +1,431 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.2.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "expression_ast",
+    "module": {
+      "variables": [
+        {
+          "name": "env",
+          "type": "string",
+          "has_default": true,
+          "default": {
+            "text": "\"prod\"",
+            "value": {
+              "type": "string",
+              "value": "prod"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "prod"
+              }
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        },
+        {
+          "name": "scale",
+          "type": "number",
+          "has_default": true,
+          "default": {
+            "text": "3",
+            "value": {
+              "type": "number",
+              "value": 3
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:6"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_instance",
+          "name": "demo",
+          "attributes": {
+            "ami": {
+              "text": "\"ami-0c55b159cbfafe1f0\"",
+              "value": {
+                "type": "string",
+                "value": "ami-0c55b159cbfafe1f0"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "ami-0c55b159cbfafe1f0"
+                }
+              }
+            },
+            "ebs_optimized": {
+              "text": "var.scale \u003e 2",
+              "value": {
+                "type": "bool",
+                "value": true
+              },
+              "ast": {
+                "lhs": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "scale",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "node": "binary_op",
+                "op": "\u003e",
+                "rhs": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "number",
+                    "value": 2
+                  }
+                }
+              }
+            },
+            "instance_type": {
+              "text": "var.env",
+              "value": {
+                "type": "string",
+                "value": "prod"
+              },
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "env",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "monitoring": {
+              "text": "var.env == \"prod\" ? true : false",
+              "value": {
+                "type": "bool",
+                "value": true
+              },
+              "ast": {
+                "condition": {
+                  "lhs": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "env",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "node": "binary_op",
+                  "op": "==",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "prod"
+                    }
+                  }
+                },
+                "false": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "bool",
+                    "value": false
+                  }
+                },
+                "node": "conditional",
+                "true": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "bool",
+                    "value": true
+                  }
+                }
+              }
+            },
+            "name": {
+              "text": "format(\"%s-instance-%d\", var.env, var.scale)",
+              "value": {
+                "type": "string",
+                "value": "prod-instance-3"
+              },
+              "ast": {
+                "args": [
+                  {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "%s-instance-%d"
+                    }
+                  },
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "env",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "scale",
+                        "step": "attr"
+                      }
+                    ]
+                  }
+                ],
+                "name": "format",
+                "node": "function_call"
+              }
+            },
+            "security_group_ids": {
+              "text": "aws_security_group.sg[*].id",
+              "ast": {
+                "each": {
+                  "node": "relative_traversal",
+                  "source": {
+                    "node": "anon_symbol"
+                  },
+                  "traversal": [
+                    {
+                      "name": "id",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "node": "splat",
+                "source": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "aws_security_group",
+                      "step": "root"
+                    },
+                    {
+                      "name": "sg",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              }
+            },
+            "tags": {
+              "text": "{\n  Name = format(\"%s-demo\", var.env)\n  Env  = var.env\n}",
+              "value": {
+                "type": [
+                  "object",
+                  {
+                    "Env": "string",
+                    "Name": "string"
+                  }
+                ],
+                "value": {
+                  "Env": "prod",
+                  "Name": "prod-demo"
+                }
+              },
+              "ast": {
+                "items": [
+                  {
+                    "key": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Name"
+                      }
+                    },
+                    "value": {
+                      "args": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "%s-demo"
+                          }
+                        },
+                        {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "var",
+                              "step": "root"
+                            },
+                            {
+                              "name": "env",
+                              "step": "attr"
+                            }
+                          ]
+                        }
+                      ],
+                      "name": "format",
+                      "node": "function_call"
+                    }
+                  },
+                  {
+                    "key": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Env"
+                      }
+                    },
+                    "value": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "var",
+                          "step": "root"
+                        },
+                        {
+                          "name": "env",
+                          "step": "attr"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "node": "object_cons"
+              }
+            }
+          },
+          "location": "main.tf:11"
+        },
+        {
+          "type": "aws_security_group",
+          "name": "sg",
+          "count": {
+            "text": "2",
+            "value": {
+              "type": "number",
+              "value": 2
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          },
+          "attributes": {
+            "description": {
+              "text": "join(\",\", [for s in [\"a\", \"b\", \"c\"] : upper(s)])",
+              "value": {
+                "type": "string",
+                "value": "A,B,C"
+              },
+              "ast": {
+                "args": [
+                  {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": ","
+                    }
+                  },
+                  {
+                    "collection": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "a"
+                          }
+                        },
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "b"
+                          }
+                        },
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "c"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
+                    },
+                    "node": "for",
+                    "value_result": {
+                      "args": [
+                        {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "s",
+                              "step": "root"
+                            }
+                          ]
+                        }
+                      ],
+                      "name": "upper",
+                      "node": "function_call"
+                    },
+                    "value_var": "s"
+                  }
+                ],
+                "name": "join",
+                "node": "function_call"
+              }
+            }
+          },
+          "location": "main.tf:37"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_instance.demo": [
+          "resource.aws_security_group.sg",
+          "variable.env",
+          "variable.scale"
+        ]
+      }
+    }
+  }
+}

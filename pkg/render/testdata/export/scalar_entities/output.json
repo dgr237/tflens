@@ -1,0 +1,202 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.2.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "scalar_entities",
+    "module": {
+      "variables": [
+        {
+          "name": "instance_count",
+          "type": "number",
+          "has_default": false,
+          "sensitive": true,
+          "nullable": true,
+          "location": "main.tf:6"
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "has_default": true,
+          "default": {
+            "text": "\"us-east-1\"",
+            "value": {
+              "type": "string",
+              "value": "us-east-1"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "us-east-1"
+              }
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "value": {
+            "text": "local.image",
+            "value": {
+              "type": "string",
+              "value": "ec2-small-v3"
+            },
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "local",
+                  "step": "root"
+                },
+                {
+                  "name": "image",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:20"
+        },
+        {
+          "name": "instance_count",
+          "value": {
+            "text": "var.instance_count",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "var",
+                  "step": "root"
+                },
+                {
+                  "name": "instance_count",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "sensitive": true,
+          "location": "main.tf:24"
+        }
+      ],
+      "resources": [],
+      "data_sources": [
+        {
+          "type": "aws_ami",
+          "name": "latest",
+          "attributes": {
+            "most_recent": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                }
+              }
+            }
+          },
+          "location": "main.tf:16"
+        }
+      ],
+      "locals": [
+        {
+          "name": "image",
+          "value": {
+            "text": "format(\"ec2-%s-v%d\", \"small\", 3)",
+            "value": {
+              "type": "string",
+              "value": "ec2-small-v3"
+            },
+            "ast": {
+              "args": [
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "ec2-%s-v%d"
+                  }
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "small"
+                  }
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "number",
+                    "value": 3
+                  }
+                }
+              ],
+              "name": "format",
+              "node": "function_call"
+            }
+          },
+          "location": "main.tf:12"
+        },
+        {
+          "name": "unevaled",
+          "value": {
+            "text": "data.aws_ami.latest.id",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "data",
+                  "step": "root"
+                },
+                {
+                  "name": "aws_ami",
+                  "step": "attr"
+                },
+                {
+                  "name": "latest",
+                  "step": "attr"
+                },
+                {
+                  "name": "id",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:13"
+        }
+      ],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [
+        {
+          "subject": "local.image.value",
+          "expression_text": "format(\"ec2-%s-v%d\", \"small\", 3)",
+          "marker": "AMI image identifier",
+          "location": "main.tf:12"
+        }
+      ],
+      "dependencies": {
+        "local.unevaled": [
+          "data.aws_ami.latest"
+        ],
+        "output.image": [
+          "local.image"
+        ],
+        "output.instance_count": [
+          "variable.instance_count"
+        ]
+      }
+    }
+  }
+}

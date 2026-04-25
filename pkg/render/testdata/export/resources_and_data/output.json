@@ -1,0 +1,124 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.2.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "resources_and_data",
+    "module": {
+      "variables": [
+        {
+          "name": "regions",
+          "type": "list(string)",
+          "has_default": false,
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_instance",
+          "name": "web",
+          "for_each": {
+            "text": "toset(var.regions)",
+            "ast": {
+              "args": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "regions",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ],
+              "name": "toset",
+              "node": "function_call"
+            }
+          },
+          "prevent_destroy": true,
+          "ignore_changes": {
+            "text": "[tags]",
+            "ast": {
+              "elements": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "tags",
+                      "step": "root"
+                    }
+                  ]
+                }
+              ],
+              "node": "tuple_cons"
+            }
+          },
+          "location": "main.tf:5"
+        },
+        {
+          "type": "aws_security_group",
+          "name": "sg",
+          "count": {
+            "text": "2",
+            "value": {
+              "type": "number",
+              "value": 2
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          },
+          "location": "main.tf:13"
+        }
+      ],
+      "data_sources": [
+        {
+          "type": "aws_ami",
+          "name": "ubuntu",
+          "attributes": {
+            "most_recent": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                }
+              }
+            }
+          },
+          "location": "main.tf:17"
+        },
+        {
+          "type": "aws_caller_identity",
+          "name": "current",
+          "location": "main.tf:21"
+        }
+      ],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_instance.web": [
+          "variable.regions"
+        ]
+      }
+    }
+  }
+}

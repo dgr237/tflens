@@ -1,0 +1,42 @@
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: converted-from-terraform
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: ConvertedFromTerraform
+    spec:
+      cluster_name: "string | default=\"demo\""
+      k8s_version: "string | default=\"1.31\""
+    status:
+      cluster_endpoint: "${resources.this.status.endpoint}"
+  resources:
+    - id: this
+      template:
+        apiVersion: eks.services.k8s.aws/v1alpha1
+        kind: Cluster
+        metadata:
+          name: "${schema.spec.cluster_name}"
+        spec:
+          name: "${schema.spec.cluster_name}"
+          roleARN: "${resources.cluster.status.ackResourceMetadata.arn}"
+          version: "${schema.spec.k8s_version}"
+          accessConfig:
+            authenticationMode: API
+            bootstrapClusterCreatorAdminPermissions: true
+          resourcesVPCConfig:
+            endpointPrivateAccess: true
+            endpointPublicAccess: false
+            subnetIds:
+              - subnet-aaaa
+              - subnet-bbbb
+    - id: cluster
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: "${(schema.spec.cluster_name + \"-eks-role\")}"
+        spec:
+          assumeRolePolicyDocument: "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}"
+          name: "${(schema.spec.cluster_name + \"-eks-role\")}"

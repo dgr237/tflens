@@ -64,6 +64,7 @@ tflens --offline diff --ref main ./my-tf
 | `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
+| `export [path]` | **[EXPERIMENTAL]** Emit the enriched module model as JSON — variables/outputs/resources with type info, evaluated values where statically resolvable, dependency graph, tracked-attribute markers. Shape subject to change; intended as a building block for converters to other provisioning systems (kro, crossplane, Pulumi, etc.). See [Export (experimental)](#export-experimental). |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
 
@@ -468,6 +469,48 @@ Evaluation goes through known variable defaults and local values via the cty std
 - **Child modules** — every module call (recursively) is also covered, regardless of source type. Local-source children get tracked diffing in addition to consumption checks; registry/git children get it in addition to the full API diff.
 
 Tracked-attribute diffs always count toward the `tflens diff` exit code, so CI gates work without extra wiring.
+
+## Export (experimental)
+
+> **Status: prototype.** The output shape is explicitly versioned (`schema_version` field) and flagged `_experimental: true` in every emitted document. **Do not depend on field stability across minor versions until this graduates** — entries may be added, renamed, or restructured in response to feedback from downstream converter authors.
+
+```
+tflens export [path]
+```
+
+`path` defaults to cwd. Walks the project tree (root + all resolvable child modules) and emits a single JSON document containing the enriched entity model that tflens has built up internally:
+
+- **Unified expression shape.** Every field that holds an HCL expression — resource attributes, `count`, `for_each`, `depends_on`, lifecycle (`ignore_changes`, `replace_triggered_by`), module-call arguments, locals, outputs, variable defaults — emits as `{text, value?, ast?}`: `text` is the canonical source, `value` is the cty-marshalled JSON when the curated stdlib resolves the expression, and `ast` is the structural decomposition as a tagged JSON tree (`function_call`, `scope_traversal`, `binary_op`, `conditional`, `for`, `splat`, `object_cons`, …) so non-Go consumers can translate expressions without re-parsing the text. Tracked-attribute records still emit `expression_text` only (the underlying expression is private to `pkg/analysis`); promoting them to the unified shape is a small follow-up.
+- **Per module**: variables (parsed type + default expression + sensitivity flags + validation count), outputs (value expression + sensitivity), resources + data sources (every meta-arg + per-attribute map + recursive `blocks` map for nested blocks like EKS's `vpc_config { ... }` / `encryption_config { provider { key_arn = ... } }`; repeated blocks like `ingress { ... } × N` come back as a list of instances in source order), locals (value expression), module calls (source, version, count/for_each, full argument map), the `terraform { }` block (required version, required providers, backend type), and `# tflens:track` markers.
+- **Dependency graph**: adjacency map of canonical entity IDs.
+- **Project tree**: child modules nested under `root.children.<call-name>` recursively, with the original `source` string preserved.
+
+Evaluated values come through the curated stdlib (see [Static evaluation surface](#static-evaluation-surface)) — anything that resolves statically (literals, variable defaults, `format`/`jsonencode`/`lower`/etc. of known constants, transitive var/local refs) gets an `evaluated_value` populated with both the cty type and the JSON value. Anything that reaches a computed attribute, data source, or non-curated function omits `evaluated_value` and surfaces only `value_text` — converters can choose what to do with unevaluable expressions.
+
+### Why it exists
+
+Downstream tools that translate Terraform configurations into other provisioning systems (kro, crossplane, Pulumi, CDK for Terraform, …) all need the same upstream work: parse the HCL, infer types, resolve cross-module references, evaluate what's statically resolvable, build the dependency graph. tflens has all of that already. `export` makes it accessible without each converter re-implementing the parser/analyser layers.
+
+`hashicorp/hcl`'s parser output gives you the raw AST — fine if you want literal source bytes, but you'd still need to do the type inference and cross-module work yourself. `terraform show -json` gives you the fully-evaluated plan — but it requires provider credentials, real state, and provider schemas, which static converters don't want to deal with. `tflens export` sits between: schema-free, providerless, no plan required, but with the type and dependency information that raw HCL doesn't surface.
+
+### Worked example
+
+[`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) is an end-to-end POC consuming the export JSON to emit a [kro](https://kro.run) `ResourceGraphDefinition` targeting [AWS Controllers for Kubernetes (ACK)](https://aws-controllers-k8s.github.io/community/) custom resources. ~250 LOC of stdlib-only Python (`generator.py`) covering: variable refs → `${schema.spec.X}`, cross-resource ARN refs → `${resources.foo.status.ackResourceMetadata.arn}` (ACK convention), `format()` template expansion → CEL string concat, `jsonencode` → kro's `json.marshal` CEL function (or literal JSON when statically resolvable), nested blocks → recursive YAML, snake_case → camelCase attribute renames. Read the bundled `README.md` for the full translation model, the subtleties the POC handles (parameterisation vs static eval, the HCL bare-identifier-key gotcha), and an effort estimate for productionising similar converters for crossplane / Pulumi / CDK for Terraform.
+
+### Shape stability
+
+The shape is versioned via the `schema_version` field. While `_experimental: true`, fields may be added, renamed, or restructured between minor releases. We'll bump `schema_version` whenever the shape changes (even additions) so consumers can detect drift cheaply. When the prototype graduates, `_experimental` flips to `false` and the schema becomes part of the stable API contract under SemVer.
+
+### Not yet emitted
+
+Deferred until a converter author asks — adding fields is cheap; reverting them after they ship is expensive:
+
+- **`dynamic "name" { for_each = ..., content { ... } }` blocks.** Captured into `BodyBlocks` would mislead converters into thinking they have a static `name` block; the dynamic-generation semantics need their own representation (for_each + content). Deferred. `lifecycle` is also excluded from `blocks` because its attributes are already projected into dedicated meta-arg fields (`prevent_destroy`, `ignore_changes_text`, etc.) on the parent resource — surfacing it twice would just be noise.
+- **Validation/precondition/postcondition block contents.** Counts are exposed; the condition expressions themselves are not.
+- **Dynamic block bodies.** `dynamic "ingress" { for_each = ... }` block contents are opaque.
+- **Provider alias graph.** Multiple `provider` declarations with `alias = ...` aren't separately surfaced.
+
+If you're building a converter and need any of these, please open an issue — the shape conversation is exactly what the experimental phase exists for.
 
 ## Module resolution
 
