@@ -1,0 +1,3 @@
+module "sg" {
+  source = "./sg"
+}
