@@ -1,0 +1,5 @@
+Value changes that may alter count/for_each expansion:
+  - local.enabled
+      old: 1
+      new: 0
+    Affected: aws_vpc.main (count)

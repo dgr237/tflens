@@ -57,9 +57,9 @@ func TestResultFlaggedCount(t *testing.T) {
 	r := statediff.Result{
 		AddedResources:   make([]statediff.ResourceRef, 2),
 		RemovedResources: make([]statediff.ResourceRef, 1),
-		RenamedResources: make([]statediff.RenamePair, 5),       // not counted
+		RenamedResources: make([]statediff.RenamePair, 5), // not counted
 		SensitiveChanges: make([]statediff.SensitiveChange, 3),
-		StateOrphans:     []string{"a", "b", "c", "d"},          // not counted
+		StateOrphans:     []string{"a", "b", "c", "d"}, // not counted
 	}
 	if got := r.FlaggedCount(); got != 6 {
 		t.Errorf("FlaggedCount = %d, want 6 (2+1+3, renames + orphans excluded)", got)

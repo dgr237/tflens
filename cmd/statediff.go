@@ -6,7 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/statediff"
 	"github.com/dgr237/tflens/pkg/tfstate"
@@ -40,48 +41,39 @@ provider schemas and expression evaluation — run 'terraform plan' for
 that. statediff is a static hazard detector, not a plan replacement.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "."
-		if len(args) == 1 {
-			path = args[0]
+		s := config.FromCommand(cmd, config.WithPath(pathArg(args, 0)))
+		if err := resolveAutoBaseRef(&s); err != nil {
+			return err
 		}
-		base, _ := cmd.Flags().GetString("ref")
-		if base == RefAutoKeyword {
-			auto, err := resolveAutoRef(path)
-			if err != nil {
-				return err
-			}
-			base = auto
-		}
-		statePath, _ := cmd.Flags().GetString("state")
-		return runStatediff(cmd, path, base, statePath)
+		return runStatediff(s)
 	},
 }
 
 func init() {
-	statediffCmd.Flags().String("ref", RefAutoKeyword,
+	statediffCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	statediffCmd.Flags().String("state", "", "optional Terraform state v4 JSON file for instance cross-reference")
 	rootCmd.AddCommand(statediffCmd)
 }
 
-func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
-	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
+func runStatediff(s config.Settings) error {
+	oldProj, newProj, cleanup, err := loader.New(s).ProjectsForDiff(s.Path, s.BaseRef)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	state, err := loadOptionalState(statePath)
+	state, err := loadOptionalState(s.StatePath)
 	if err != nil {
 		return err
 	}
 	result := statediff.Analyze(oldProj, newProj, state)
-	result.BaseRef, result.Path = baseRef, path
-	if outputJSON(cmd) {
-		exitJSON(result, diff.ExitCodeFor(result.FlaggedCount()))
-		return nil
-	}
-	render.WriteStatediff(os.Stdout, &result)
+	result.BaseRef, result.Path = s.BaseRef, s.Path
+	render.New(s).Statediff(&result)
 	if result.FlaggedCount() > 0 {
+		// os.Exit skips the deferred cleanup, so run it explicitly
+		// to avoid leaking the temporary git worktree on every
+		// CI-gating run that flags resources.
+		cleanup()
 		os.Exit(1)
 	}
 	return nil

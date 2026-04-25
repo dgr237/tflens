@@ -6,7 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -35,53 +37,45 @@ The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
 → main → master.`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "."
-		name := ""
-		if len(args) >= 1 {
-			path = args[0]
-		}
+		opts := []config.Option{config.WithPath(pathArg(args, 0))}
 		if len(args) == 2 {
-			name = args[1]
+			opts = append(opts, config.WithOnlyName(args[1]))
 		}
-		base, _ := cmd.Flags().GetString("ref")
-		if base == RefAutoKeyword {
-			auto, err := resolveAutoRef(path)
-			if err != nil {
-				return err
-			}
-			base = auto
+		s := config.FromCommand(cmd, opts...)
+		if err := resolveAutoBaseRef(&s); err != nil {
+			return err
 		}
-		return runWhatifRef(cmd, path, base, name)
+		return runWhatifRef(s)
 	},
 }
 
 func init() {
-	whatifCmd.Flags().String("ref", RefAutoKeyword,
+	whatifCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	rootCmd.AddCommand(whatifCmd)
 }
 
 // runWhatifRef simulates merging the working tree's module upgrades
-// against callers at baseRef. If only is non-empty it restricts to that
-// one call name; otherwise every call that differs is simulated.
-func runWhatifRef(cmd *cobra.Command, path, baseRef, only string) error {
-	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
+// against callers at s.BaseRef. If s.OnlyName is non-empty it
+// restricts to that one call name; otherwise every call that differs
+// is simulated.
+func runWhatifRef(s config.Settings) error {
+	oldProj, newProj, cleanup, err := loader.New(s).ProjectsForDiff(s.Path, s.BaseRef)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	calls, totalImpact, filtered := diff.AnalyzeWhatif(oldProj, newProj, only)
+	calls, totalImpact, filtered := diff.AnalyzeWhatif(oldProj, newProj, s.OnlyName)
 	if filtered {
-		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", only, baseRef)
+		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", s.OnlyName, s.BaseRef)
 	}
-	if outputJSON(cmd) {
-		exitJSON(render.BuildJSONWhatif(baseRef, path, calls), diff.ExitCodeFor(totalImpact))
-		return nil
-	}
-	render.WriteWhatifResults(os.Stdout, baseRef, path, calls)
+	render.New(s).Whatif(s.BaseRef, s.Path, calls)
 	if totalImpact > 0 {
+		// os.Exit skips the deferred cleanup, so run it explicitly
+		// to avoid leaking the temporary git worktree on every
+		// CI-gating run that finds direct impact.
+		cleanup()
 		os.Exit(1)
 	}
 	return nil
 }
-

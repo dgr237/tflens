@@ -1,0 +1,5 @@
+Direct impact on module.a in . (0 issue(s)):
+  (none — callers at base are compatible with the new child)
+
+Direct impact on module.b in . (0 issue(s)):
+  (none — callers at base are compatible with the new child)

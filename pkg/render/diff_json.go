@@ -13,10 +13,10 @@ type JSONSummary struct {
 	Informational int `json:"informational"`
 }
 
-// Add increments the appropriate field for c's Kind. Convenience for
+// add increments the appropriate field for c's Kind. Convenience for
 // builders that want to keep a running tally without re-implementing
 // the switch.
-func (s *JSONSummary) Add(c diff.Change) {
+func (s *JSONSummary) add(c diff.Change) {
 	switch c.Kind {
 	case diff.Breaking:
 		s.Breaking++
@@ -32,11 +32,11 @@ func (s *JSONSummary) Add(c diff.Change) {
 // covers the root module (which isn't itself a call). Summary holds
 // the totals across both.
 type JSONDiffOutput struct {
-	BaseRef     string            `json:"base_ref"`
-	Path        string            `json:"path"`
-	Modules     []JSONDiffModule  `json:"modules"`
-	RootChanges []JSONChange      `json:"root_changes,omitempty"`
-	Summary     JSONSummary       `json:"summary"`
+	BaseRef     string           `json:"base_ref"`
+	Path        string           `json:"path"`
+	Modules     []JSONDiffModule `json:"modules"`
+	RootChanges []JSONChange     `json:"root_changes,omitempty"`
+	Summary     JSONSummary      `json:"summary"`
 }
 
 // JSONDiffModule is one paired module call's wire form. Source /
@@ -53,18 +53,18 @@ type JSONDiffModule struct {
 	Summary    JSONSummary  `json:"summary"`
 }
 
-// BuildJSONDiff composes the full --format=json output for `tflens
+// buildJSONDiff composes the full --format=json output for `tflens
 // diff` from the analysis results. results comes from the per-module
 // pairing; rootChanges covers the root module's API + tracked diff.
 //
 // Pairs that aren't Interesting() are filtered out — same rule the
 // text renderer uses, so json output and text output describe the
 // same set of changes.
-func BuildJSONDiff(baseRef, path string, results []diff.PairResult, rootChanges []diff.Change) JSONDiffOutput {
+func buildJSONDiff(baseRef, path string, results []diff.PairResult, rootChanges []diff.Change) JSONDiffOutput {
 	out := JSONDiffOutput{BaseRef: baseRef, Path: path}
 	for _, c := range rootChanges {
-		out.RootChanges = append(out.RootChanges, JSONChg(c))
-		out.Summary.Add(c)
+		out.RootChanges = append(out.RootChanges, jsonChg(c))
+		out.Summary.add(c)
 	}
 	for _, r := range results {
 		if !r.Interesting() {
@@ -79,9 +79,9 @@ func BuildJSONDiff(baseRef, path string, results []diff.PairResult, rootChanges 
 			NewVersion: r.Pair.NewVersion,
 		}
 		for _, c := range r.Changes {
-			entry.Changes = append(entry.Changes, JSONChg(c))
-			entry.Summary.Add(c)
-			out.Summary.Add(c)
+			entry.Changes = append(entry.Changes, jsonChg(c))
+			entry.Summary.add(c)
+			out.Summary.add(c)
 		}
 		out.Modules = append(out.Modules, entry)
 	}
@@ -92,10 +92,10 @@ func BuildJSONDiff(baseRef, path string, results []diff.PairResult, rootChanges 
 // --format=json`. Calls are the per-pair simulation results;
 // Summary aggregates DirectImpact + per-Kind change counts.
 type JSONWhatifOutput struct {
-	BaseRef string             `json:"base_ref"`
-	Path    string             `json:"path"`
-	Calls   []JSONWhatifCall   `json:"calls"`
-	Summary JSONWhatifSummary  `json:"summary"`
+	BaseRef string            `json:"base_ref"`
+	Path    string            `json:"path"`
+	Calls   []JSONWhatifCall  `json:"calls"`
+	Summary JSONWhatifSummary `json:"summary"`
 }
 
 // JSONWhatifCall is one paired call's simulation result on the wire.
@@ -117,9 +117,9 @@ type JSONWhatifSummary struct {
 	JSONSummary
 }
 
-// BuildJSONWhatif composes the full --format=json output for `tflens
+// buildJSONWhatif composes the full --format=json output for `tflens
 // whatif` from the analysis results.
-func BuildJSONWhatif(baseRef, path string, calls []diff.WhatifResult) JSONWhatifOutput {
+func buildJSONWhatif(baseRef, path string, calls []diff.WhatifResult) JSONWhatifOutput {
 	out := JSONWhatifOutput{BaseRef: baseRef, Path: path}
 	for _, r := range calls {
 		entry := JSONWhatifCall{
@@ -127,12 +127,12 @@ func BuildJSONWhatif(baseRef, path string, calls []diff.WhatifResult) JSONWhatif
 			Status: r.Pair.Status.String(),
 		}
 		for _, e := range r.DirectImpact {
-			entry.DirectImpact = append(entry.DirectImpact, JSONValErr(e))
+			entry.DirectImpact = append(entry.DirectImpact, jsonValErr(e))
 			out.Summary.DirectImpact++
 		}
 		for _, c := range r.APIChanges {
-			entry.APIChanges = append(entry.APIChanges, JSONChg(c))
-			out.Summary.JSONSummary.Add(c)
+			entry.APIChanges = append(entry.APIChanges, jsonChg(c))
+			out.Summary.JSONSummary.add(c)
 		}
 		out.Calls = append(out.Calls, entry)
 	}

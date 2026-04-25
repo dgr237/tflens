@@ -333,11 +333,11 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "output_value_expression_changed_unknown_type", Subject: "output.id",
-		WantKind: diff.Informational,
+		WantKind:       diff.Informational,
 		DetailContains: []string{"value expression changed", "id", "arn"},
 	},
 	{
-		Name: "output_value_expression_identical_no_change",
+		Name:          "output_value_expression_identical_no_change",
 		WantNoChanges: true,
 	},
 	{
@@ -355,12 +355,12 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "output_type_narrowed", Subject: "output.name",
-		WantKind: diff.Breaking,
+		WantKind:       diff.Breaking,
 		DetailContains: []string{"output type changed", "string"},
 	},
 	{
 		Name: "output_referencing_local_changed", Subject: "output.name",
-		WantKind: diff.Informational,
+		WantKind:       diff.Informational,
 		DetailContains: []string{"local.prefix", "old", "new"},
 	},
 	{
@@ -382,7 +382,7 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "depends_on_changed_on_output", Subject: "output.x",
-		WantKind: diff.Informational,
+		WantKind:       diff.Informational,
 		DetailContains: []string{"aws_vpc.old", "aws_vpc.new"},
 	},
 
@@ -511,7 +511,7 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "for_each_expression_changed", Subject: "resource.aws_iam_user.u",
-		WantKind: diff.Informational,
+		WantKind:       diff.Informational,
 		DetailContains: []string{"for_each expression changed", "var.a", "var.b"},
 	},
 	{
@@ -556,7 +556,7 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "lifecycle_ignore_changes_changed", Subject: "resource.aws_vpc.main",
-		WantKind: diff.Informational,
+		WantKind:       diff.Informational,
 		DetailContains: []string{"ignore_changes", "cidr_block"},
 	},
 	{
@@ -604,7 +604,7 @@ var diffCases = []diffCase{
 	},
 	{
 		Name: "provider_source_changed", Subject: "provider.aws",
-		WantKind: diff.Breaking,
+		WantKind:       diff.Breaking,
 		DetailContains: []string{"hashicorp/aws", "myorg/aws-fork"},
 	},
 	{
@@ -658,23 +658,23 @@ var diffCases = []diffCase{
 
 	// ---- moved / removed blocks ----
 	{
-		Name: "moved_block_suppresses_rename",
-		Subject: "resource.aws_vpc.old_name → resource.aws_vpc.new_name",
+		Name:     "moved_block_suppresses_rename",
+		Subject:  "resource.aws_vpc.old_name → resource.aws_vpc.new_name",
 		WantKind: diff.Informational, DetailContains: []string{"moved"},
 	},
 	{
-		Name: "moved_block_for_module",
-		Subject: "module.net → module.network",
+		Name:     "moved_block_for_module",
+		Subject:  "module.net → module.network",
 		WantKind: diff.Informational,
 	},
 	{
-		Name: "removed_block_downgrades_removal",
-		Subject: "resource.aws_vpc.legacy",
+		Name:     "removed_block_downgrades_removal",
+		Subject:  "resource.aws_vpc.legacy",
 		WantKind: diff.Informational, DetailContains: []string{"removed"},
 	},
 	{
-		Name: "moved_block_mismatch_still_breaking",
-		Subject: "resource.aws_vpc.old_name → resource.aws_vpc.new_name",
+		Name:     "moved_block_mismatch_still_breaking",
+		Subject:  "resource.aws_vpc.old_name → resource.aws_vpc.new_name",
 		WantKind: diff.Breaking,
 	},
 

@@ -1,9 +1,9 @@
 package analysis_test
 
 import (
+	"github.com/dgr237/tflens/pkg/analysis"
 	"strings"
 	"testing"
-	"github.com/dgr237/tflens/pkg/analysis"
 )
 
 func entityIDs(entities []analysis.Entity) []string {

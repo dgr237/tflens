@@ -122,7 +122,7 @@ var validateCases = []validateCase{
 		},
 	},
 	{
-		Name: "sensitive_var_referenced_by_nonsensitive_output",
+		Name:     "sensitive_var_referenced_by_nonsensitive_output",
 		WantPair: &struct{ EntityID, Ref string }{"output.pw", "variable.password"},
 	},
 	{
@@ -136,7 +136,7 @@ var validateCases = []validateCase{
 		},
 	},
 	{
-		Name: "nonsensitive_output_references_nonsensitive_var_ok",
+		Name:            "nonsensitive_output_references_nonsensitive_var_ok",
 		MustNotMatchRef: "variable.env",
 	},
 	{

@@ -27,8 +27,8 @@ import (
 type crossValidateCase struct {
 	Name string
 
-	WantNoErrors      bool
-	WantMsgContains   []string
+	WantNoErrors       bool
+	WantMsgContains    []string
 	WantEntityIDAndMsg *struct {
 		EntityID    string
 		MsgContains []string
@@ -222,15 +222,15 @@ var crossValidateCases = []crossValidateCase{
 		}{"module.net", []string{"string", "number"}},
 	},
 	{
-		Name: "unknown_expr_skipped",
+		Name:              "unknown_expr_skipped",
 		MustNotContainMsg: []string{"but child variable expects"},
 	},
 	{
-		Name: "child_with_no_type_constraint_skips_typecheck",
+		Name:              "child_with_no_type_constraint_skips_typecheck",
 		MustNotContainMsg: []string{"but child variable expects"},
 	},
 	{
-		Name: "output_reference_satisfied",
+		Name:         "output_reference_satisfied",
 		WantNoErrors: true,
 	},
 	{

@@ -1,0 +1,4 @@
+Value changes that may alter count/for_each expansion:
+  - variable.n
+      old: 3
+      new: (absent)

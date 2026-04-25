@@ -1,0 +1,3 @@
+Module "vpc": (content changed)
+  Breaking (1):
+    var.x: removed

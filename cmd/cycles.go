@@ -1,11 +1,12 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var cyclesCmd = &cobra.Command{
@@ -13,7 +14,7 @@ var cyclesCmd = &cobra.Command{
 	Short: "Detect and print dependency cycles (exits non-zero if any found)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runCycles(cmd, args[0])
+		runCycles(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -21,29 +22,11 @@ func init() {
 	rootCmd.AddCommand(cyclesCmd)
 }
 
-func runCycles(cmd *cobra.Command, path string) {
-	mod := mustLoadModule(path)
+func runCycles(s config.Settings) {
+	mod := mustLoadModule(s)
 	cycles := mod.Cycles()
-	if outputJSON(cmd) {
-		if cycles == nil {
-			cycles = [][]string{}
-		}
-		code := 0
-		if len(cycles) > 0 {
-			code = 1
-		}
-		exitJSON(struct {
-			Cycles [][]string `json:"cycles"`
-		}{Cycles: cycles}, code)
-		return
+	render.New(s).Cycles(cycles)
+	if len(cycles) > 0 {
+		os.Exit(1)
 	}
-	if len(cycles) == 0 {
-		fmt.Println("No cycles detected.")
-		return
-	}
-	fmt.Printf("Cycles detected (%d):\n", len(cycles))
-	for i, c := range cycles {
-		fmt.Printf("  %d: %s\n", i+1, strings.Join(c, " → "))
-	}
-	os.Exit(1)
 }

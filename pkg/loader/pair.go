@@ -89,7 +89,7 @@ func PairModuleCalls(oldProj, newProj *Project) []ModuleCallPair {
 	for key := range keys {
 		oldC, hasOld := oldCalls[key]
 		newC, hasNew := newCalls[key]
-		p := ModuleCallPair{Key: key, LocalName: LeafSegment(key)}
+		p := ModuleCallPair{Key: key, LocalName: leafSegment(key)}
 		switch {
 		case !hasOld:
 			p.Status = StatusAdded
@@ -119,9 +119,10 @@ func PairModuleCalls(oldProj, newProj *Project) []ModuleCallPair {
 	return out
 }
 
-// LeafSegment returns the trailing dotted segment of s — "sg" for
-// "vpc.sg", "vpc" for "vpc" (no dot), "" for "" (no input).
-func LeafSegment(s string) string {
+// leafSegment returns the trailing dotted segment of s — "sg" for
+// "vpc.sg", "vpc" for "vpc" (no dot), "" for "" (no input). Internal
+// helper for PairModuleCalls.
+func leafSegment(s string) string {
 	if i := strings.LastIndex(s, "."); i >= 0 {
 		return s[i+1:]
 	}

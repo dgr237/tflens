@@ -7,6 +7,9 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var fmtCmd = &cobra.Command{
@@ -23,7 +26,7 @@ already formatted, or prints the path and exits 1 when not formatted
 Comments and blank lines are preserved.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runFmt(cmd, args[0])
+		runFmt(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -33,21 +36,19 @@ func init() {
 	rootCmd.AddCommand(fmtCmd)
 }
 
-func runFmt(cmd *cobra.Command, path string) {
-	write, _ := cmd.Flags().GetBool("write")
-	check, _ := cmd.Flags().GetBool("check")
-	if write && check {
+func runFmt(s config.Settings) {
+	if s.Write && s.Check {
 		fatalf("--write and --check are mutually exclusive")
 	}
 
-	info, err := os.Stat(path)
+	info, err := os.Stat(s.Path)
 	if err != nil {
 		fatalf("%v", err)
 	}
 	if info.IsDir() {
 		fatalf("fmt operates on individual files; use a .tf path")
 	}
-	src, err := os.ReadFile(path)
+	src, err := os.ReadFile(s.Path)
 	if err != nil {
 		fatalf("reading file: %v", err)
 	}
@@ -55,29 +56,33 @@ func runFmt(cmd *cobra.Command, path string) {
 	// Parse first to surface syntax errors with positions; the formatter
 	// will silently produce garbage on broken input.
 	p := hclparse.NewParser()
-	if _, diags := p.ParseHCL(src, path); diags.HasErrors() {
-		for _, d := range diags {
-			fmt.Fprintf(os.Stderr, "parse error: %s\n", d.Error())
+	if _, diags := p.ParseHCL(src, s.Path); diags.HasErrors() {
+		// Text-mode parse errors stay on stderr to keep stdout pipe-
+		// safe. The JSON envelope goes to stdout as usual.
+		errSettings := s
+		if !s.JSON {
+			errSettings.Out = s.Err
 		}
+		render.New(errSettings).FmtParseErrors(diags)
 		os.Exit(1)
 	}
 
 	formatted := string(hclwrite.Format(src))
 
 	switch {
-	case check:
+	case s.Check:
 		if string(src) != formatted {
-			fmt.Println(path)
+			fmt.Fprintln(s.Out, s.Path)
 			os.Exit(1)
 		}
-	case write:
+	case s.Write:
 		if string(src) == formatted {
 			return // no-op; don't bump mtime unnecessarily
 		}
-		if err := os.WriteFile(path, []byte(formatted), info.Mode()); err != nil {
-			fatalf("writing %s: %v", path, err)
+		if err := os.WriteFile(s.Path, []byte(formatted), info.Mode()); err != nil {
+			fatalf("writing %s: %v", s.Path, err)
 		}
 	default:
-		fmt.Print(formatted)
+		fmt.Fprint(s.Out, formatted)
 	}
 }

@@ -1,0 +1,3 @@
+variable "required" {
+  type = string
+}

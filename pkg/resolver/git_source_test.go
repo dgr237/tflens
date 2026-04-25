@@ -129,10 +129,10 @@ func TestParseGitSourceRejectsNonGit(t *testing.T) {
 		"",
 		"./local",
 		"../sibling",
-		"terraform-aws-modules/vpc/aws",    // registry source
-		"https://example.com/mod.tar.gz",   // plain URL, no git:: prefix
-		"git@github.com:foo/bar.git",       // SCP form (unsupported)
-		"unknown-host.com/foo/bar",         // not a known VCS host
+		"terraform-aws-modules/vpc/aws",  // registry source
+		"https://example.com/mod.tar.gz", // plain URL, no git:: prefix
+		"git@github.com:foo/bar.git",     // SCP form (unsupported)
+		"unknown-host.com/foo/bar",       // not a known VCS host
 	}
 	for _, s := range bad {
 		if _, ok := parseGitSource(s); ok {

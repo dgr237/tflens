@@ -4,57 +4,52 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// loadOldAndNew loads both sides of a project diff: the working tree
-// at path (the "new" side) and the same path at baseRef (the "old"
-// side, materialised in a temporary git worktree). Returns the two
-// projects plus a cleanup func the caller MUST defer to remove the
-// worktree. Used by every subcommand that compares two refs.
-func loadOldAndNew(cmd *cobra.Command, path, baseRef string) (oldProj, newProj *loader.Project, cleanup func(), err error) {
-	newProj, err = loadProject(cmd, path)
-	if err != nil {
-		return nil, nil, func() {}, fmt.Errorf("loading path: %w", err)
+// pathArg returns args[i] if present, otherwise ".". Used by every
+// subcommand whose first positional arg is an optional workspace path.
+func pathArg(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
 	}
-	oldProj, cleanup, err = loadOldProjectForRef(cmd, path, baseRef)
-	if err != nil {
-		return nil, nil, func() {}, err
+	return "."
+}
+
+// resolveAutoBaseRef rewrites s.BaseRef in place when it equals the
+// "auto" keyword: dispatches to loader.ResolveAutoRef using s.Path so
+// the auto detection runs against the correct workspace. No-op when
+// the user supplied an explicit ref.
+func resolveAutoBaseRef(s *config.Settings) error {
+	if s.BaseRef != config.RefAutoKeyword {
+		return nil
 	}
-	return oldProj, newProj, cleanup, nil
+	auto, err := loader.ResolveAutoRef(s.Path)
+	if err != nil {
+		return err
+	}
+	s.BaseRef = auto
+	return nil
 }
 
 // mustLoadModule loads a single .tf file or a directory of .tf files
-// via loader.LoadAny. File-level parse errors are printed as warnings
-// to stderr; a top-level I/O failure (missing path, unreadable inode)
-// is fatal. The returned module may be nil only when LoadAny itself
-// errored — file-level partial-parse results still produce a usable
-// module.
-func mustLoadModule(path string) *analysis.Module {
-	mod, fileErrs, err := loader.LoadAny(path)
+// via loader.LoadAny using s.Path. File-level parse errors are
+// printed as warnings to s.Err; a top-level I/O failure (missing
+// path, unreadable inode) is fatal. The returned module may be nil
+// only when LoadAny itself errored — file-level partial-parse results
+// still produce a usable module.
+func mustLoadModule(s config.Settings) *analysis.Module {
+	mod, fileErrs, err := loader.LoadAny(s.Path)
 	if err != nil {
 		fatalf("%v", err)
 	}
-	for _, fe := range fileErrs {
-		fmt.Fprintf(os.Stderr, "warning: parse errors in %s\n", fe.Path)
-		for _, e := range fe.Errors {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
-	}
+	printFileErrs(s, fileErrs)
 	if mod == nil {
 		os.Exit(1)
 	}
 	return mod
-}
-
-func plural(n int, singular, plural string) string {
-	if n == 1 {
-		return singular
-	}
-	return plural
 }
 
 func fatalf(format string, args ...any) {

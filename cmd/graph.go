@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/config"
 )
 
 var graphCmd = &cobra.Command{
@@ -11,7 +13,7 @@ var graphCmd = &cobra.Command{
 	Short: "Print the dependency graph in Graphviz DOT format",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runGraph(args[0])
+		runGraph(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -19,7 +21,6 @@ func init() {
 	rootCmd.AddCommand(graphCmd)
 }
 
-func runGraph(path string) {
-	mod := mustLoadModule(path)
-	fmt.Print(mod.ToDOT())
+func runGraph(s config.Settings) {
+	fmt.Fprint(s.Out, mustLoadModule(s).ToDOT())
 }

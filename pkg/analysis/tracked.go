@@ -57,8 +57,11 @@ type TrackedAttribute struct {
 func (t TrackedAttribute) Key() string { return t.EntityID + "." + t.AttrName }
 
 // TrackedAttributes returns a copy of the module's tracked attributes
-// in declaration order.
+// in declaration order. Nil-safe.
 func (m *Module) TrackedAttributes() []TrackedAttribute {
+	if m == nil {
+		return nil
+	}
 	out := make([]TrackedAttribute, len(m.tracked))
 	copy(out, m.tracked)
 	return out

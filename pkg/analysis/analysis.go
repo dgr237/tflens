@@ -74,18 +74,18 @@ type Entity struct {
 	Kind           EntityKind
 	Type           string // non-empty for resource and data source
 	Name           string
-	Pos            token.Position   // source location of the declaration
-	DeclaredType   *TFType          // parsed type constraint; non-nil only for variables
-	HasDefault     bool             // variables: a default value was declared
-	DefaultExpr    *Expr            // variables: the default value expression
-	HasCount       bool             // resource/data/module: count meta-argument used
-	HasForEach     bool             // resource/data/module: for_each meta-argument used
-	NonNullable    bool             // variables: `nullable = false` explicitly set
-	Sensitive      bool             // variables/outputs: `sensitive = true` set
-	Ephemeral      bool             // variables/outputs: `ephemeral = true` (Terraform 1.10+)
-	Validations    int              // variables: number of `validation {}` blocks
-	Preconditions  int              // variables/outputs/resources: number of precondition blocks
-	Postconditions int              // variables/outputs/resources: number of postcondition blocks
+	Pos            token.Position // source location of the declaration
+	DeclaredType   *TFType        // parsed type constraint; non-nil only for variables
+	HasDefault     bool           // variables: a default value was declared
+	DefaultExpr    *Expr          // variables: the default value expression
+	HasCount       bool           // resource/data/module: count meta-argument used
+	HasForEach     bool           // resource/data/module: for_each meta-argument used
+	NonNullable    bool           // variables: `nullable = false` explicitly set
+	Sensitive      bool           // variables/outputs: `sensitive = true` set
+	Ephemeral      bool           // variables/outputs: `ephemeral = true` (Terraform 1.10+)
+	Validations    int            // variables: number of `validation {}` blocks
+	Preconditions  int            // variables/outputs/resources: number of precondition blocks
+	Postconditions int            // variables/outputs/resources: number of postcondition blocks
 
 	// Canonical text of every block's `condition` attribute, in source
 	// order. Used by pkg/diff to detect content changes that count
@@ -94,13 +94,13 @@ type Entity struct {
 	ValidationConditions    []string
 	PreconditionConditions  []string
 	PostconditionConditions []string
-	ValueExpr      *Expr            // outputs: the value expression
-	ProviderExpr   *Expr            // resource/data: value of `provider` attribute
-	ModuleArgs     map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
-	LocalExpr      *Expr            // locals: the local's value expression
-	ForEachExpr    *Expr            // resource/data/module: value of `for_each`
-	CountExpr      *Expr            // resource/data/module: value of `count`
-	DependsOnExpr  *Expr            // resource/data/module/output: value of `depends_on`
+	ValueExpr               *Expr            // outputs: the value expression
+	ProviderExpr            *Expr            // resource/data: value of `provider` attribute
+	ModuleArgs              map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
+	LocalExpr               *Expr            // locals: the local's value expression
+	ForEachExpr             *Expr            // resource/data/module: value of `for_each`
+	CountExpr               *Expr            // resource/data/module: value of `count`
+	DependsOnExpr           *Expr            // resource/data/module/output: value of `depends_on`
 
 	// Lifecycle block (resources only)
 	PreventDestroy         bool  // `prevent_destroy = true`
@@ -207,16 +207,30 @@ func newModule() *Module {
 
 // Backend returns the parsed terraform { backend ... } configuration, or
 // nil when the module declares no backend block (i.e. uses the default
-// local backend).
-func (m *Module) Backend() *Backend { return m.backend }
+// local backend). Nil-safe.
+func (m *Module) Backend() *Backend {
+	if m == nil {
+		return nil
+	}
+	return m.backend
+}
 
 // RequiredVersion returns the Terraform CLI version constraint declared by
 // a terraform { required_version = ... } block, or an empty string if none.
-func (m *Module) RequiredVersion() string { return m.requiredVersion }
+// Nil-safe.
+func (m *Module) RequiredVersion() string {
+	if m == nil {
+		return ""
+	}
+	return m.requiredVersion
+}
 
 // RequiredProviders returns a copy of the provider requirements declared in
-// terraform { required_providers { ... } }.
+// terraform { required_providers { ... } }. Nil-safe.
 func (m *Module) RequiredProviders() map[string]ProviderRequirement {
+	if m == nil {
+		return map[string]ProviderRequirement{}
+	}
 	out := make(map[string]ProviderRequirement, len(m.requiredProviders))
 	for k, v := range m.requiredProviders {
 		out[k] = v
@@ -225,7 +239,11 @@ func (m *Module) RequiredProviders() map[string]ProviderRequirement {
 }
 
 // Moved returns the rename pairs declared by `moved` blocks in this module.
+// Nil-safe.
 func (m *Module) Moved() map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
 	out := make(map[string]string, len(m.moved))
 	for k, v := range m.moved {
 		out[k] = v
@@ -234,11 +252,20 @@ func (m *Module) Moved() map[string]string {
 }
 
 // RemovedDeclared reports whether id was declared by a `removed` block.
-func (m *Module) RemovedDeclared(id string) bool { return m.removedIDs[id] }
+// Nil-safe.
+func (m *Module) RemovedDeclared(id string) bool {
+	if m == nil {
+		return false
+	}
+	return m.removedIDs[id]
+}
 
 // Validate returns all undefined-reference errors found during analysis,
-// sorted by source location.
+// sorted by source location. Nil-safe.
 func (m *Module) Validate() []ValidationError {
+	if m == nil {
+		return nil
+	}
 	out := make([]ValidationError, len(m.valErrs))
 	copy(out, m.valErrs)
 	sort.Slice(out, func(i, j int) bool {
@@ -255,18 +282,32 @@ func (m *Module) Validate() []ValidationError {
 }
 
 // ModuleSource returns the value of the source attribute for a module call.
-func (m *Module) ModuleSource(name string) string { return m.moduleSources[name] }
+// Nil-safe.
+func (m *Module) ModuleSource(name string) string {
+	if m == nil {
+		return ""
+	}
+	return m.moduleSources[name]
+}
 
-// ModuleVersion returns the version constraint for a module call.
-func (m *Module) ModuleVersion(name string) string { return m.moduleVersions[name] }
+// ModuleVersion returns the version constraint for a module call. Nil-safe.
+func (m *Module) ModuleVersion(name string) string {
+	if m == nil {
+		return ""
+	}
+	return m.moduleVersions[name]
+}
 
 // ModuleOutputReferences returns the sorted set of output names this
 // module references via module.<callName>.<outputName> traversals (in
 // outputs, locals, resource attributes, or anywhere else in the module's
 // expressions). Returns an empty slice when callName has no recognised
 // references — including the case where every reference was just bare
-// `module.<callName>` with no .attribute suffix.
+// `module.<callName>` with no .attribute suffix. Nil-safe.
 func (m *Module) ModuleOutputReferences(callName string) []string {
+	if m == nil {
+		return nil
+	}
 	set := m.moduleOutputRefs[callName]
 	out := make([]string, 0, len(set))
 	for name := range set {
@@ -317,10 +358,20 @@ func (m *Module) addDep(from, to string) {
 }
 
 // Entities returns all declared entities in declaration order.
-func (m *Module) Entities() []Entity { return m.entities }
+// Nil-safe: returns nil for a nil receiver.
+func (m *Module) Entities() []Entity {
+	if m == nil {
+		return nil
+	}
+	return m.entities
+}
 
-// Filter returns all entities of the given kind, in declaration order.
+// Filter returns all entities of the given kind, in declaration
+// order. Nil-safe: returns nil for a nil receiver.
 func (m *Module) Filter(kind EntityKind) []Entity {
+	if m == nil {
+		return nil
+	}
 	var out []Entity
 	for _, e := range m.entities {
 		if e.Kind == kind {

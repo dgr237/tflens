@@ -8,18 +8,18 @@ import (
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// WriteDiffResults emits the full text-mode output for `tflens diff`:
+// writeDiffResults emits the full text-mode output for `tflens diff`:
 // a "Root module:" section (when rootChanges is non-empty) followed
 // by a section per interesting paired call. When neither has any
 // content, writes a single "No changes detected vs <baseRef>." line.
 //
 // Sections are separated by a blank line. Each call's per-Kind
-// breakdown reuses WriteChangesByKind with the canonical "  " / "    "
+// breakdown reuses writeChangesByKind with the canonical "  " / "    "
 // indents.
-func WriteDiffResults(w io.Writer, baseRef string, results []diff.PairResult, rootChanges []diff.Change) {
+func writeDiffResults(w io.Writer, baseRef string, results []diff.PairResult, rootChanges []diff.Change) {
 	any := false
 	if len(rootChanges) > 0 {
-		WriteRootChanges(w, rootChanges)
+		writeRootChanges(w, rootChanges)
 		any = true
 	}
 	for _, r := range results {
@@ -30,27 +30,27 @@ func WriteDiffResults(w io.Writer, baseRef string, results []diff.PairResult, ro
 			fmt.Fprintln(w)
 		}
 		any = true
-		WritePairResult(w, r)
+		writePairResult(w, r)
 	}
 	if !any {
 		fmt.Fprintf(w, "No changes detected vs %s.\n", baseRef)
 	}
 }
 
-// WriteRootChanges emits the API + tracked-attribute changes for the
+// writeRootChanges emits the API + tracked-attribute changes for the
 // root module under a "Root module:" heading. The root isn't a module
 // call, so it doesn't show up in the per-module section — but a new
 // required root variable, a removed output, etc. still matter.
-func WriteRootChanges(w io.Writer, changes []diff.Change) {
+func writeRootChanges(w io.Writer, changes []diff.Change) {
 	fmt.Fprintln(w, "Root module:")
-	WriteChangesByKind(w, "  ", "    ", changes)
+	writeChangesByKind(w, "  ", "    ", changes)
 }
 
-// WritePairResult emits one paired call's text section: a heading
+// writePairResult emits one paired call's text section: a heading
 // describing the change kind (added / removed / changed with optional
 // source-or-version delta), followed by either "(no API changes)" or
 // the bucketed change list.
-func WritePairResult(w io.Writer, r diff.PairResult) {
+func writePairResult(w io.Writer, r diff.PairResult) {
 	switch r.Pair.Status {
 	case loader.StatusAdded:
 		fmt.Fprintf(w, "Module %q: ADDED (source=%s", r.Pair.Key, r.Pair.NewSource)
@@ -89,14 +89,14 @@ func WritePairResult(w io.Writer, r diff.PairResult) {
 		fmt.Fprintln(w, "  (no API changes)")
 		return
 	}
-	WriteChangesByKind(w, "  ", "    ", r.Changes)
+	writeChangesByKind(w, "  ", "    ", r.Changes)
 }
 
-// WriteWhatifResults emits the full text-mode output for `tflens
+// writeWhatifResults emits the full text-mode output for `tflens
 // whatif`: one section per simulated call, separated by blank lines.
 // When calls is empty, writes a single "No upgraded module calls
 // to simulate (path vs <baseRef>)." line.
-func WriteWhatifResults(w io.Writer, baseRef, path string, calls []diff.WhatifResult) {
+func writeWhatifResults(w io.Writer, baseRef, path string, calls []diff.WhatifResult) {
 	if len(calls) == 0 {
 		fmt.Fprintf(w, "No upgraded module calls to simulate (path vs %s).\n", baseRef)
 		return
@@ -105,14 +105,14 @@ func WriteWhatifResults(w io.Writer, baseRef, path string, calls []diff.WhatifRe
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		WriteWhatifCall(w, path, r)
+		writeWhatifCall(w, path, r)
 	}
 }
 
-// WriteWhatifCall emits one simulated call's section. Removed calls
+// writeWhatifCall emits one simulated call's section. Removed calls
 // get a single REMOVED line; everything else gets a Direct-impact
 // block followed by an optional API-changes block.
-func WriteWhatifCall(w io.Writer, path string, r diff.WhatifResult) {
+func writeWhatifCall(w io.Writer, path string, r diff.WhatifResult) {
 	if r.Pair.Status == loader.StatusRemoved {
 		fmt.Fprintf(w, "module.%s: REMOVED (was source=%s, version=%q)\n",
 			r.Pair.Key, r.Pair.OldSource, r.Pair.OldVersion)
@@ -132,5 +132,5 @@ func WriteWhatifCall(w io.Writer, path string, r diff.WhatifResult) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  API changes for module.%s:\n", r.Pair.Key)
-	WriteChangesByKind(w, "    ", "      ", r.APIChanges)
+	writeChangesByKind(w, "    ", "      ", r.APIChanges)
 }

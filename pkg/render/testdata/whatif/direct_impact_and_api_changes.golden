@@ -1,0 +1,6 @@
+Direct impact on module.vpc in . (1 issue(s)):
+  0:0: missing required input "x"
+
+  API changes for module.vpc:
+    Breaking (1):
+      variable.x: removed

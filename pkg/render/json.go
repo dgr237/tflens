@@ -25,19 +25,19 @@ type JSONPosition struct {
 	Column int    `json:"column"`
 }
 
-// JSONPos converts a token.Position into its wire form.
-func JSONPos(p token.Position) JSONPosition {
+// jsonPos converts a token.Position into its wire form.
+func jsonPos(p token.Position) JSONPosition {
 	return JSONPosition{File: p.File, Line: p.Line, Column: p.Column}
 }
 
-// JSONPosPtr returns nil for a zero Position (the convention used for
+// jsonPosPtr returns nil for a zero Position (the convention used for
 // added-only / removed-only changes), and a pointer otherwise so an
 // `omitempty` tag drops it from the output.
-func JSONPosPtr(p token.Position) *JSONPosition {
+func jsonPosPtr(p token.Position) *JSONPosition {
 	if p.File == "" && p.Line == 0 && p.Column == 0 {
 		return nil
 	}
-	jp := JSONPos(p)
+	jp := jsonPos(p)
 	return &jp
 }
 
@@ -50,14 +50,14 @@ type JSONEntity struct {
 	Pos  JSONPosition `json:"pos"`
 }
 
-// JSONEnt converts an analysis.Entity into its wire form.
-func JSONEnt(e analysis.Entity) JSONEntity {
+// jsonEnt converts an analysis.Entity into its wire form.
+func jsonEnt(e analysis.Entity) JSONEntity {
 	return JSONEntity{
 		ID:   e.ID(),
 		Kind: string(e.Kind),
 		Type: e.Type,
 		Name: e.Name,
-		Pos:  JSONPos(e.Pos),
+		Pos:  jsonPos(e.Pos),
 	}
 }
 
@@ -69,14 +69,14 @@ type JSONValidationError struct {
 	Message  string       `json:"message"`
 }
 
-// JSONValErr converts an analysis.ValidationError into its wire form.
+// jsonValErr converts an analysis.ValidationError into its wire form.
 // Message is the formatted string from Error(), so consumers don't
 // need to compose Pos + Ref themselves.
-func JSONValErr(e analysis.ValidationError) JSONValidationError {
+func jsonValErr(e analysis.ValidationError) JSONValidationError {
 	return JSONValidationError{
 		EntityID: e.EntityID,
 		Ref:      e.Ref,
-		Pos:      JSONPos(e.Pos),
+		Pos:      jsonPos(e.Pos),
 		Message:  e.Error(),
 	}
 }
@@ -89,12 +89,12 @@ type JSONTypeError struct {
 	Message  string       `json:"message"`
 }
 
-// JSONTypeErr converts an analysis.TypeCheckError into its wire form.
-func JSONTypeErr(e analysis.TypeCheckError) JSONTypeError {
+// jsonTypeErr converts an analysis.TypeCheckError into its wire form.
+func jsonTypeErr(e analysis.TypeCheckError) JSONTypeError {
 	return JSONTypeError{
 		EntityID: e.EntityID,
 		Attr:     e.Attr,
-		Pos:      JSONPos(e.Pos),
+		Pos:      jsonPos(e.Pos),
 		Message:  e.Msg,
 	}
 }
@@ -109,16 +109,16 @@ type JSONChange struct {
 	NewPos  *JSONPosition `json:"new_pos,omitempty"`
 }
 
-// JSONChg converts a diff.Change into its wire form. The Old/New
+// jsonChg converts a diff.Change into its wire form. The Old/New
 // position pointers are nil for changes that only have one side
 // (additions, removals).
-func JSONChg(c diff.Change) JSONChange {
+func jsonChg(c diff.Change) JSONChange {
 	return JSONChange{
 		Kind:    c.Kind.String(),
 		Subject: c.Subject,
 		Detail:  c.Detail,
 		Hint:    c.Hint,
-		OldPos:  JSONPosPtr(c.OldPos),
-		NewPos:  JSONPosPtr(c.NewPos),
+		OldPos:  jsonPosPtr(c.OldPos),
+		NewPos:  jsonPosPtr(c.NewPos),
 	}
 }

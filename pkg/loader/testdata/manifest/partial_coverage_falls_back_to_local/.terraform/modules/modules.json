@@ -1,0 +1,6 @@
+{
+  "Modules": [
+    {"Key": "",      "Source": "",                                "Dir": "."},
+    {"Key": "other", "Source": "terraform-aws-modules/other/aws", "Dir": ".terraform/modules/other"}
+  ]
+}

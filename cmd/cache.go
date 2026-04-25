@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/cache"
+	"github.com/dgr237/tflens/pkg/config"
+	"github.com/dgr237/tflens/pkg/render"
 )
 
 var cacheCmd = &cobra.Command{
@@ -36,17 +38,7 @@ var cacheInfoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if outputJSON(cmd) {
-			exitJSON(struct {
-				Path    string `json:"path"`
-				Entries int    `json:"entries"`
-				Bytes   int64  `json:"bytes"`
-			}{c.Root(), entries, bytes}, 0)
-			return nil
-		}
-		fmt.Printf("Path:    %s\n", c.Root())
-		fmt.Printf("Entries: %d\n", entries)
-		fmt.Printf("Size:    %s\n", humanBytes(bytes))
+		render.New(config.FromCommand(cmd)).CacheInfo(c.Root(), entries, bytes)
 		return nil
 	},
 }
@@ -63,11 +55,12 @@ trusts its own contents as immutable, re-fetching requires clearing).`,
 		if err != nil {
 			return err
 		}
+		r := render.New(config.FromCommand(cmd))
 		root := c.Root()
 		info, err := os.Stat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Printf("Cache is already empty (%s does not exist).\n", root)
+				r.CacheAlreadyEmpty(root)
 				return nil
 			}
 			return err
@@ -79,7 +72,7 @@ trusts its own contents as immutable, re-fetching requires clearing).`,
 		if err := os.RemoveAll(root); err != nil {
 			return fmt.Errorf("removing cache: %w", err)
 		}
-		fmt.Printf("Cleared %d entries (%s) from %s.\n", entries, humanBytes(bytes), root)
+		r.CacheCleared(entries, bytes, root)
 		return nil
 	},
 }
@@ -132,17 +125,4 @@ func cacheStats(root string) (entries int, bytes int64, err error) {
 		return nil
 	})
 	return entries, bytes, err
-}
-
-func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for x := n / unit; x >= unit; x /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

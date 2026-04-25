@@ -1,0 +1,7 @@
+Module "vpc": (content changed)
+  Breaking (1):
+    var.required: removed
+  Non-breaking (1):
+    var.tags: added optional
+  Informational (1):
+    out.docs: description updated

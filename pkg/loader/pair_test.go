@@ -3,34 +3,18 @@ package loader_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-func TestLeafSegment(t *testing.T) {
-	cases := map[string]string{
-		"vpc":         "vpc",
-		"vpc.sg":      "sg",
-		"a.b.c":       "c",
-		"":            "",
-		".":           "",
-		"trailing.":   "",
-		".leading":    "leading",
-	}
-	for in, want := range cases {
-		if got := loader.LeafSegment(in); got != want {
-			t.Errorf("LeafSegment(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestModuleCallStatusString(t *testing.T) {
 	cases := map[loader.ModuleCallStatus]string{
-		loader.StatusChanged: "changed",
-		loader.StatusAdded:   "added",
-		loader.StatusRemoved: "removed",
+		loader.StatusChanged:        "changed",
+		loader.StatusAdded:          "added",
+		loader.StatusRemoved:        "removed",
 		loader.ModuleCallStatus(99): "changed", // unknown falls back to "changed"
 	}
 	for s, want := range cases {
@@ -40,187 +24,165 @@ func TestModuleCallStatusString(t *testing.T) {
 	}
 }
 
-// TestPairModuleCallsBothNil confirms the all-nil safety case — no
-// panic, empty result.
-func TestPairModuleCallsBothNil(t *testing.T) {
-	got := loader.PairModuleCalls(nil, nil)
-	if len(got) != 0 {
-		t.Errorf("nil/nil: got %d pairs, want 0", len(got))
-	}
-}
-
-// TestPairModuleCallsAddedOnly: a project that only exists in NEW.
-// All pairs should be StatusAdded with only New* fields populated.
-func TestPairModuleCallsAddedOnly(t *testing.T) {
-	root := writeMiniProject(t, `
-module "vpc" {
-  source  = "ns/vpc/aws"
-  version = "1.0.0"
-}
-`)
-	newProj := loadProjectOrFail(t, root)
-	pairs := loader.PairModuleCalls(nil, newProj)
-	if len(pairs) != 1 {
-		t.Fatalf("got %d pairs, want 1", len(pairs))
-	}
-	p := pairs[0]
-	if p.Key != "vpc" || p.LocalName != "vpc" {
-		t.Errorf("Key/LocalName = %q/%q, want vpc/vpc", p.Key, p.LocalName)
-	}
-	if p.Status != loader.StatusAdded {
-		t.Errorf("Status = %v, want StatusAdded", p.Status)
-	}
-	if p.NewSource != "ns/vpc/aws" || p.NewVersion != "1.0.0" {
-		t.Errorf("NewSource/NewVersion = %q/%q", p.NewSource, p.NewVersion)
-	}
-	if p.OldSource != "" || p.OldVersion != "" {
-		t.Errorf("Old fields should be empty; got %q/%q", p.OldSource, p.OldVersion)
-	}
-}
-
-// TestPairModuleCallsRemovedOnly: a project that only exists in OLD.
-// All pairs should be StatusRemoved.
-func TestPairModuleCallsRemovedOnly(t *testing.T) {
-	root := writeMiniProject(t, `
-module "vpc" {
-  source = "ns/vpc/aws"
-}
-`)
-	oldProj := loadProjectOrFail(t, root)
-	pairs := loader.PairModuleCalls(oldProj, nil)
-	if len(pairs) != 1 {
-		t.Fatalf("got %d pairs, want 1", len(pairs))
-	}
-	if pairs[0].Status != loader.StatusRemoved {
-		t.Errorf("Status = %v, want StatusRemoved", pairs[0].Status)
-	}
-	if pairs[0].OldSource != "ns/vpc/aws" {
-		t.Errorf("OldSource = %q, want ns/vpc/aws", pairs[0].OldSource)
-	}
-}
-
-// TestPairModuleCallsChangedAcrossSides: same key in both, with
-// different sources/versions. Both Old* and New* fields populated.
-func TestPairModuleCallsChangedAcrossSides(t *testing.T) {
-	oldRoot := writeMiniProject(t, `
-module "vpc" {
-  source  = "ns/vpc/aws"
-  version = "1.0.0"
-}
-`)
-	newRoot := writeMiniProject(t, `
-module "vpc" {
-  source  = "ns/vpc/aws"
-  version = "2.0.0"
-}
-`)
-	pairs := loader.PairModuleCalls(loadProjectOrFail(t, oldRoot), loadProjectOrFail(t, newRoot))
-	if len(pairs) != 1 {
-		t.Fatalf("got %d pairs, want 1", len(pairs))
-	}
-	p := pairs[0]
-	if p.Status != loader.StatusChanged {
-		t.Errorf("Status = %v, want StatusChanged", p.Status)
-	}
-	if p.OldVersion != "1.0.0" || p.NewVersion != "2.0.0" {
-		t.Errorf("versions: old=%q new=%q, want 1.0.0/2.0.0", p.OldVersion, p.NewVersion)
-	}
-}
-
-// TestPairModuleCallsCoversAddedRemovedTogether mixes adds + removes
-// in the same diff to confirm the union over keys works correctly.
-func TestPairModuleCallsCoversAddedRemovedTogether(t *testing.T) {
-	oldRoot := writeMiniProject(t, `
-module "removed_one" { source = "ns/removed/aws" }
-module "kept"        { source = "ns/kept/aws" }
-`)
-	newRoot := writeMiniProject(t, `
-module "kept"      { source = "ns/kept/aws" }
-module "added_one" { source = "ns/added/aws" }
-`)
-	pairs := loader.PairModuleCalls(loadProjectOrFail(t, oldRoot), loadProjectOrFail(t, newRoot))
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
-
-	if len(pairs) != 3 {
-		t.Fatalf("got %d pairs, want 3", len(pairs))
-	}
-	wantStatuses := map[string]loader.ModuleCallStatus{
-		"added_one":   loader.StatusAdded,
-		"kept":        loader.StatusChanged,
-		"removed_one": loader.StatusRemoved,
-	}
-	for _, p := range pairs {
-		want, ok := wantStatuses[p.Key]
-		if !ok {
-			t.Errorf("unexpected key: %q", p.Key)
-			continue
-		}
-		if p.Status != want {
-			t.Errorf("%q: Status = %v, want %v", p.Key, p.Status, want)
-		}
-	}
-}
-
-// TestPairModuleCallsRecursesIntoChildren: nested modules produce
-// dotted keys and are paired independently.
-func TestPairModuleCallsRecursesIntoChildren(t *testing.T) {
-	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.tf"), `
-module "vpc" {
-  source = "./modules/vpc"
-}
-`)
-	if err := os.MkdirAll(filepath.Join(root, "modules", "vpc"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(root, "modules", "vpc", "main.tf"), `
-module "sg" {
-  source = "./sg"
-}
-`)
-	if err := os.MkdirAll(filepath.Join(root, "modules", "vpc", "sg"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(root, "modules", "vpc", "sg", "main.tf"), `
-resource "aws_security_group" "this" {}
-`)
-
-	proj := loadProjectOrFail(t, root)
-	pairs := loader.PairModuleCalls(nil, proj)
-	keys := make([]string, len(pairs))
-	for i, p := range pairs {
-		keys[i] = p.Key
-	}
-	sort.Strings(keys)
-	want := []string{"vpc", "vpc.sg"}
-	if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
-		t.Errorf("keys = %v, want %v", keys, want)
-	}
-}
-
-// ---- helpers ----
-
-// writeMiniProject creates a temp dir with a single main.tf and
-// returns the root path.
-func writeMiniProject(t *testing.T, src string) string {
+// pairFixtureDir returns the absolute path to
+// pkg/loader/testdata/pair/<case>/<side>. Returns "" when the side
+// directory doesn't exist (so the case can express "no project on
+// this side" by simply omitting the directory).
+func pairFixtureDir(t *testing.T, name, side string) string {
 	t.Helper()
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "main.tf"), src)
-	return dir
-}
-
-func mustWrite(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func loadProjectOrFail(t *testing.T, root string) *loader.Project {
-	t.Helper()
-	proj, _, err := loader.LoadProject(root)
+	_, file, _, _ := runtime.Caller(0)
+	abs, err := filepath.Abs(filepath.Join(filepath.Dir(file), "testdata", "pair", name, side))
 	if err != nil {
-		t.Fatalf("LoadProject(%s): %v", root, err)
+		t.Fatalf("resolving fixture %s/%s: %v", name, side, err)
+	}
+	if _, err := os.Stat(abs); os.IsNotExist(err) {
+		return ""
+	}
+	return abs
+}
+
+// loadPairSide loads the named side ("old" / "new") of a pair fixture,
+// returning nil when the side dir doesn't exist (the "all-Added" /
+// "all-Removed" cases).
+func loadPairSide(t *testing.T, casename, side string) *loader.Project {
+	t.Helper()
+	dir := pairFixtureDir(t, casename, side)
+	if dir == "" {
+		return nil
+	}
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject(%s/%s): %v", casename, side, err)
 	}
 	return proj
+}
+
+// pairCase pairs an old/new fixture pair with assertions on the
+// resulting []ModuleCallPair. Either side's directory may be absent,
+// expressing the all-Added or all-Removed scenarios.
+type pairCase struct {
+	Name   string
+	Custom func(t *testing.T, pairs []loader.ModuleCallPair)
+}
+
+func TestPairModuleCallsCases(t *testing.T) {
+	for _, tc := range pairCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			old := loadPairSide(t, tc.Name, "old")
+			newp := loadPairSide(t, tc.Name, "new")
+			tc.Custom(t, loader.PairModuleCalls(old, newp))
+		})
+	}
+}
+
+var pairCases = []pairCase{
+	{
+		// All-nil safety case — no panic, empty result. No fixture
+		// directory exists for either side; both sides resolve to nil.
+		Name: "both_nil",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			if len(pairs) != 0 {
+				t.Errorf("nil/nil: got %d pairs, want 0", len(pairs))
+			}
+		},
+	},
+	{
+		// Project only exists on the new side. All pairs should be
+		// StatusAdded with only New* fields populated.
+		Name: "added_only",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			if len(pairs) != 1 {
+				t.Fatalf("got %d pairs, want 1", len(pairs))
+			}
+			p := pairs[0]
+			if p.Key != "vpc" || p.LocalName != "vpc" {
+				t.Errorf("Key/LocalName = %q/%q, want vpc/vpc", p.Key, p.LocalName)
+			}
+			if p.Status != loader.StatusAdded {
+				t.Errorf("Status = %v, want StatusAdded", p.Status)
+			}
+			if p.NewSource != "ns/vpc/aws" || p.NewVersion != "1.0.0" {
+				t.Errorf("NewSource/NewVersion = %q/%q", p.NewSource, p.NewVersion)
+			}
+			if p.OldSource != "" || p.OldVersion != "" {
+				t.Errorf("Old fields should be empty; got %q/%q", p.OldSource, p.OldVersion)
+			}
+		},
+	},
+	{
+		// Project only exists on the old side. All pairs should be
+		// StatusRemoved.
+		Name: "removed_only",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			if len(pairs) != 1 {
+				t.Fatalf("got %d pairs, want 1", len(pairs))
+			}
+			if pairs[0].Status != loader.StatusRemoved {
+				t.Errorf("Status = %v, want StatusRemoved", pairs[0].Status)
+			}
+			if pairs[0].OldSource != "ns/vpc/aws" {
+				t.Errorf("OldSource = %q, want ns/vpc/aws", pairs[0].OldSource)
+			}
+		},
+	},
+	{
+		// Same key in both sides, with different sources/versions.
+		// Both Old* and New* fields populated.
+		Name: "changed_across_sides",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			if len(pairs) != 1 {
+				t.Fatalf("got %d pairs, want 1", len(pairs))
+			}
+			p := pairs[0]
+			if p.Status != loader.StatusChanged {
+				t.Errorf("Status = %v, want StatusChanged", p.Status)
+			}
+			if p.OldVersion != "1.0.0" || p.NewVersion != "2.0.0" {
+				t.Errorf("versions: old=%q new=%q, want 1.0.0/2.0.0", p.OldVersion, p.NewVersion)
+			}
+		},
+	},
+	{
+		// Adds + removes mixed in the same diff to confirm the union
+		// over keys works correctly.
+		Name: "added_removed_together",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
+			if len(pairs) != 3 {
+				t.Fatalf("got %d pairs, want 3", len(pairs))
+			}
+			wantStatuses := map[string]loader.ModuleCallStatus{
+				"added_one":   loader.StatusAdded,
+				"kept":        loader.StatusChanged,
+				"removed_one": loader.StatusRemoved,
+			}
+			for _, p := range pairs {
+				want, ok := wantStatuses[p.Key]
+				if !ok {
+					t.Errorf("unexpected key: %q", p.Key)
+					continue
+				}
+				if p.Status != want {
+					t.Errorf("%q: Status = %v, want %v", p.Key, p.Status, want)
+				}
+			}
+		},
+	},
+	{
+		// Nested modules produce dotted keys and are paired
+		// independently. Only the new side has a project — verifies
+		// recursion through ./modules/vpc → ./sg.
+		Name: "recurses_into_children",
+		Custom: func(t *testing.T, pairs []loader.ModuleCallPair) {
+			keys := make([]string, len(pairs))
+			for i, p := range pairs {
+				keys[i] = p.Key
+			}
+			sort.Strings(keys)
+			want := []string{"vpc", "vpc.sg"}
+			if len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] {
+				t.Errorf("keys = %v, want %v", keys, want)
+			}
+		},
+	},
 }
