@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-04-25
+
 ### Documentation
 
 - **README cleanup post-dynamic-blocks merge.** Three stale claims fixed:
@@ -178,7 +180,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/dgr237/tflens/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dgr237/tflens/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dgr237/tflens/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dgr237/tflens/compare/v0.5.0...v0.6.0
