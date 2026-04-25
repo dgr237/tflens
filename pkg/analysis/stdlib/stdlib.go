@@ -10,12 +10,17 @@
 // Most implementations come from cty/function/stdlib, which is the
 // same library Terraform itself uses for these specific functions.
 // Wrapping them here means our evaluation behaviour matches
-// Terraform's exactly for the functions we cover. The two exceptions
-// — `replace` and `coalesce` — diverge from cty's defaults: Terraform
-// dispatches `replace` on whether the search arg is `/regex/`-
-// delimited, and Terraform's `coalesce` skips empty strings, not just
-// nulls. See replace.go and coalesce.go for the wrappers that restore
-// Terraform's contract.
+// Terraform's exactly for the functions we cover. A handful of
+// functions need Terraform-side wrappers because they diverge from
+// cty's defaults or aren't in cty at all:
+//
+//   - replace.go  — Terraform dispatches `/regex/` to a regex impl;
+//     cty's ReplaceFunc is literal-only.
+//   - coalesce.go — Terraform skips empty strings, not just nulls.
+//   - index.go    — cty's IndexFunc returns the element AT a given
+//     key; Terraform's `index` returns the position of a value.
+//   - base64.go   — cty doesn't expose base64 encode/decode at all
+//     (Terraform implements them in lang/funcs).
 //
 // Functions that would need filesystem access (file, fileset,
 // templatefile), non-deterministic state (timestamp, uuid, bcrypt),
@@ -89,6 +94,33 @@ func Functions() map[string]function.Function {
 		// Terraform.
 		"regex":    stdlib.RegexFunc,
 		"regexall": stdlib.RegexAllFunc,
+
+		// Encoders / decoders. JSON round-trip in particular powers a
+		// lot of real-world value-collapse — IAM policies and configs
+		// often switch between an object literal + jsonencode() and a
+		// raw JSON string. base64 covers cloud-init userdata and
+		// similar binary payloads. The hashing/compression base64*
+		// variants (base64gzip, base64sha256, base64sha512) need
+		// crypto state that isn't pure-functional and are out.
+		"jsondecode":   stdlib.JSONDecodeFunc,
+		"jsonencode":   stdlib.JSONEncodeFunc,
+		"csvdecode":    stdlib.CSVDecodeFunc,
+		"base64encode": terraformBase64EncodeFunc,
+		"base64decode": terraformBase64DecodeFunc,
+
+		// Set-algebra helpers. Common in for_each composition where
+		// the iteration set is built from multiple inputs.
+		"setunion":               stdlib.SetUnionFunc,
+		"setintersection":        stdlib.SetIntersectionFunc,
+		"setsubtract":            stdlib.SetSubtractFunc,
+		"setsymmetricdifference": stdlib.SetSymmetricDifferenceFunc,
+		"setproduct":             stdlib.SetProductFunc,
+
+		// List + numeric pickups. `index` needs a Terraform-side
+		// wrapper because cty's IndexFunc is a different function
+		// (returns the element AT a given key); see index.go.
+		"index":    terraformIndexFunc,
+		"parseint": stdlib.ParseIntFunc,
 
 		// Additional collection helpers — same value-collapse story as
 		// the batch-1 collection functions; these are the next tier of

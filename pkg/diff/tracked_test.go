@@ -284,6 +284,18 @@ var trackedCases = []trackedCase{
 		DetailContains: []string{"no effective value change"},
 	},
 	{
+		// Stdlib completion batch (jsonencode): IAM-policy refactor
+		// from raw JSON string → HCL object + jsonencode(). Both
+		// serialise the same key/value pairs in sorted-key order →
+		// effective string identical → Informational, not Breaking.
+		// Most realistic real-world value-collapse use case for the
+		// json family.
+		Name:           "tracked_eval_jsonencode_collapses",
+		Subject:        "local.policy.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
 		Name:           "tracked_literal_value_changed",
 		Subject:        "resource.aws_eks_cluster.this.cluster_version",
 		WantKind:       diff.Breaking,
