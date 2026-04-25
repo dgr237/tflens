@@ -1,0 +1,59 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "module.regions[\"us-east-1\"].aws_vpc.main",
+      "module_address": "module.regions[\"us-east-1\"]",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {
+        "actions": ["update"],
+        "before": {"cidr_block": "10.0.0.0/16"},
+        "after":  {"cidr_block": "10.1.0.0/16"},
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.regions[\"us-west-2\"].aws_vpc.main",
+      "module_address": "module.regions[\"us-west-2\"]",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {
+        "actions": ["update"],
+        "before": {"cidr_block": "10.2.0.0/16"},
+        "after":  {"cidr_block": "10.3.0.0/16"},
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.network.aws_subnet.foo[0]",
+      "module_address": "module.network",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "foo",
+      "index": 0,
+      "change": {
+        "actions": ["update"],
+        "before": {"availability_zone": "us-east-1a"},
+        "after":  {"availability_zone": "us-east-1b"},
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.network.aws_subnet.foo[1]",
+      "module_address": "module.network",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "foo",
+      "index": 1,
+      "change": {
+        "actions": ["no-op"],
+        "before": {},
+        "after": {}
+      }
+    }
+  ]
+}

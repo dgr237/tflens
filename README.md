@@ -193,7 +193,7 @@ Root module:
 **First-cut limitations** (worth knowing before you wire this into CI):
 
 - **Resource matching is by exact address only.** A resource renamed via a `moved {}` block surfaces as a delete + create pair on the plan side rather than a single rename — the static-side diff already detects rename pairs from the source, so the plan-derived noise is harmless but worth understanding.
-- **`count`/`for_each` indices are not yet matched per-instance.** Plan addresses like `aws_subnet.foo[0]` / `aws_subnet.foo["us-east-1"]` resolve to the source-side entity `resource.aws_subnet.foo` regardless of index. Each indexed instance still gets its own Change row, just with the index visible in the Subject.
+- **`count`/`for_each` instances all roll up to the same source-side entity.** Plan addresses like `aws_subnet.foo[0]` / `aws_subnet.foo["us-east-1"]` resolve to the single source-side `resource.aws_subnet.foo` declaration (matching by index-stripped path), but each indexed instance still gets its own Change row with the full plan address — including the index — preserved in the Subject. So `aws_subnet.foo[0]:cidr_block` and `aws_subnet.foo[1]:cidr_block` are visually distinct in the output. Indexed module calls (`module.regions["us-east-1"]`) match the same way: the source-side `module.regions` ModuleNode is the lookup target regardless of how many instances the for_each / count produces.
 - **Plan format versions.** Supports format_version 1.x (Terraform 1.0+). Older plans are rejected with a clear error.
 - **`whatif` and `statediff` don't yet take `--enrich-with-plan`** — only `diff` does. Same machinery would slot in cleanly if useful.
 
