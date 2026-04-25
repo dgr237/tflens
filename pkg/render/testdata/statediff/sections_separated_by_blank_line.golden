@@ -1,0 +1,5 @@
+Resource identity changes vs main:
+  + aws_vpc.main (managed)
+
+Renames (moved block handled — no destroy/recreate):
+  aws_subnet.old → aws_subnet.new

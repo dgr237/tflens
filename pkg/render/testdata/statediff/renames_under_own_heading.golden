@@ -1,0 +1,2 @@
+Renames (moved block handled — no destroy/recreate):
+  module.vpc.aws_subnet.old → module.vpc.aws_subnet.new

@@ -1,0 +1,3 @@
+State drift — addresses in state but not declared in the new tree:
+  ? aws_eip.unused
+  ? aws_subnet.old["a"]

@@ -1,0 +1,6 @@
+Root module:
+  Breaking (1):
+    var.x: removed
+
+Module "vpc": source x → y
+  (no API changes)

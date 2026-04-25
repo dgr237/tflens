@@ -1,0 +1,3 @@
+Root module:
+  Breaking (1):
+    variable.test: required variable added

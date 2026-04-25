@@ -1,0 +1,4 @@
+Resource identity changes vs main:
+  + aws_vpc.main (managed)
+  + module.app.aws_instance.web (managed)
+  - aws_subnet.old (managed)

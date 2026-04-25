@@ -1,0 +1,7 @@
+Value changes that may alter count/for_each expansion:
+  - local.regions
+      old: ["us-east-1", "us-west-2"]
+      new: ["us-east-1"]
+    Affected: aws_vpc.main (for_each)
+      • state instance: aws_vpc.main["us-east-1"]
+      • state instance: aws_vpc.main["us-west-2"]

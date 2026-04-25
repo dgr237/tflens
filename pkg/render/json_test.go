@@ -91,7 +91,7 @@ func TestJSONChangeKindLabels(t *testing.T) {
 // adapter via Inventory. Resource entities emit the canonical
 // "resource.type.name" ID plus separate kind/type/name/pos fields.
 func TestJSONEntityShape(t *testing.T) {
-	mod := inventoryFromSrc(t, `resource "aws_vpc" "main" {}`)
+	mod := moduleFromSrc(t, `resource "aws_vpc" "main" {}`)
 	var b bytes.Buffer
 	jsonRenderer(&b).Inventory(mod)
 
@@ -118,7 +118,7 @@ func TestJSONEntityShape(t *testing.T) {
 // Type field; non-resource/data kinds (variable, local, output) emit
 // no "type" key thanks to omitempty. Verified by inspecting raw JSON.
 func TestJSONEntityDataKindWireFormat(t *testing.T) {
-	mod := inventoryFromSrc(t, `data "aws_caller_identity" "current" {}`)
+	mod := moduleFromSrc(t, `data "aws_caller_identity" "current" {}`)
 	var b bytes.Buffer
 	jsonRenderer(&b).Inventory(mod)
 	s := b.String()
