@@ -62,6 +62,7 @@ var exportCaseNames = []string{
 	"terraform_block",
 	"nested_modules",
 	"resource_attributes",
+	"nested_blocks_eks",
 }
 
 // TestBuildExportNilProjectIsEmpty pins the nil-safety contract: a

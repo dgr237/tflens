@@ -96,10 +96,12 @@ type ExportResource struct {
 	IgnoreChangesText      string                     `json:"ignore_changes_text,omitempty"`
 	ReplaceTriggeredByText string                     `json:"replace_triggered_by_text,omitempty"`
 	Attributes             map[string]ExportAttribute `json:"attributes,omitempty"`
+	Blocks                 map[string][]ExportBlock   `json:"blocks,omitempty"`
 	Location               string                     `json:"location,omitempty"`
-	// Note: nested blocks inside resource bodies (lifecycle is the
-	// only one currently captured into dedicated fields; ebs_block_device,
-	// ingress, dynamic, ...) are still not surfaced. Deferred.
+	// Note: `lifecycle` (already projected into dedicated meta-arg
+	// fields like PreventDestroy / IgnoreChangesText) and `dynamic`
+	// (special generation semantics, deferred) are excluded from
+	// the Blocks map. See pkg/analysis.isResourceMetaBlock.
 }
 
 // ExportAttribute pairs the canonical source text of a resource's
@@ -111,6 +113,17 @@ type ExportResource struct {
 type ExportAttribute struct {
 	Text  string         `json:"text"`
 	Value *ExportCtyJSON `json:"value,omitempty"`
+}
+
+// ExportBlock is one nested block instance — recursive, since blocks
+// can themselves contain blocks (e.g. aws_eks_cluster's
+// `encryption_config { provider { key_arn = ... } }`). Repeated
+// blocks (`ebs_block_device { ... }` × N) appear as multiple entries
+// in the parent's []ExportBlock slice, in source order.
+type ExportBlock struct {
+	Attributes map[string]ExportAttribute `json:"attributes,omitempty"`
+	Blocks     map[string][]ExportBlock   `json:"blocks,omitempty"`
+	Location   string                     `json:"location,omitempty"`
 }
 
 type ExportLocal struct {
@@ -354,7 +367,50 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 			}
 		}
 	}
+	if len(e.BodyBlocks) > 0 {
+		r.Blocks = make(map[string][]ExportBlock, len(e.BodyBlocks))
+		for name, instances := range e.BodyBlocks {
+			out := make([]ExportBlock, 0, len(instances))
+			for _, b := range instances {
+				out = append(out, exportBlock(b, ctx))
+			}
+			r.Blocks[name] = out
+		}
+	}
 	return r
+}
+
+// exportBlock recursively converts a *analysis.BodyBlock into an
+// ExportBlock. Mirrors the parent-resource shape (attributes +
+// nested blocks) so consumers walk one type at every depth.
+func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
+	out := ExportBlock{}
+	if b == nil {
+		return out
+	}
+	if b.Pos.File != "" {
+		out.Location = filepath.Base(b.Pos.File) + ":" + strconv.Itoa(b.Pos.Line)
+	}
+	if len(b.Attrs) > 0 {
+		out.Attributes = make(map[string]ExportAttribute, len(b.Attrs))
+		for name, expr := range b.Attrs {
+			out.Attributes[name] = ExportAttribute{
+				Text:  expr.Text(),
+				Value: evalToExport(expr, ctx),
+			}
+		}
+	}
+	if len(b.Blocks) > 0 {
+		out.Blocks = make(map[string][]ExportBlock, len(b.Blocks))
+		for name, instances := range b.Blocks {
+			children := make([]ExportBlock, 0, len(instances))
+			for _, c := range instances {
+				children = append(children, exportBlock(c, ctx))
+			}
+			out.Blocks[name] = children
+		}
+	}
+	return out
 }
 
 func exportLocal(e analysis.Entity, ctx *hcl.EvalContext) ExportLocal {

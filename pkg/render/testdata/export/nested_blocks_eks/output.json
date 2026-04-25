@@ -1,0 +1,313 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.1.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "nested_blocks_eks",
+    "module": {
+      "variables": [
+        {
+          "name": "cluster_name",
+          "type": "string",
+          "has_default": true,
+          "default_text": "\"prod-eks\"",
+          "default_value": {
+            "type": "string",
+            "value": "prod-eks"
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        },
+        {
+          "name": "k8s_version",
+          "type": "string",
+          "has_default": true,
+          "default_text": "\"1.31\"",
+          "default_value": {
+            "type": "string",
+            "value": "1.31"
+          },
+          "nullable": true,
+          "location": "main.tf:6"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_eks_cluster",
+          "name": "this",
+          "create_before_destroy": true,
+          "attributes": {
+            "name": {
+              "text": "var.cluster_name",
+              "value": {
+                "type": "string",
+                "value": "prod-eks"
+              }
+            },
+            "role_arn": {
+              "text": "aws_iam_role.cluster.arn"
+            },
+            "version": {
+              "text": "var.k8s_version",
+              "value": {
+                "type": "string",
+                "value": "1.31"
+              }
+            }
+          },
+          "blocks": {
+            "access_config": [
+              {
+                "attributes": {
+                  "authentication_mode": {
+                    "text": "\"API\"",
+                    "value": {
+                      "type": "string",
+                      "value": "API"
+                    }
+                  },
+                  "bootstrap_cluster_creator_admin_permissions": {
+                    "text": "true",
+                    "value": {
+                      "type": "bool",
+                      "value": true
+                    }
+                  }
+                },
+                "location": "main.tf:30"
+              }
+            ],
+            "encryption_config": [
+              {
+                "attributes": {
+                  "resources": {
+                    "text": "[\"secrets\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "secrets"
+                      ]
+                    }
+                  }
+                },
+                "blocks": {
+                  "provider": [
+                    {
+                      "attributes": {
+                        "key_arn": {
+                          "text": "aws_kms_key.example.arn"
+                        }
+                      },
+                      "location": "main.tf:25"
+                    }
+                  ]
+                },
+                "location": "main.tf:22"
+              }
+            ],
+            "upgrade_policy": [
+              {
+                "attributes": {
+                  "support_type": {
+                    "text": "\"STANDARD\"",
+                    "value": {
+                      "type": "string",
+                      "value": "STANDARD"
+                    }
+                  }
+                },
+                "location": "main.tf:35"
+              }
+            ],
+            "vpc_config": [
+              {
+                "attributes": {
+                  "endpoint_private_access": {
+                    "text": "true",
+                    "value": {
+                      "type": "bool",
+                      "value": true
+                    }
+                  },
+                  "endpoint_public_access": {
+                    "text": "false",
+                    "value": {
+                      "type": "bool",
+                      "value": false
+                    }
+                  },
+                  "subnet_ids": {
+                    "text": "aws_subnet.example[*].id"
+                  }
+                },
+                "location": "main.tf:16"
+              }
+            ]
+          },
+          "location": "main.tf:11"
+        },
+        {
+          "type": "aws_security_group",
+          "name": "sg",
+          "attributes": {
+            "name": {
+              "text": "format(\"%s-sg\", var.cluster_name)",
+              "value": {
+                "type": "string",
+                "value": "prod-eks-sg"
+              }
+            }
+          },
+          "blocks": {
+            "egress": [
+              {
+                "attributes": {
+                  "cidr_blocks": {
+                    "text": "[\"0.0.0.0/0\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "0.0.0.0/0"
+                      ]
+                    }
+                  },
+                  "from_port": {
+                    "text": "0",
+                    "value": {
+                      "type": "number",
+                      "value": 0
+                    }
+                  },
+                  "protocol": {
+                    "text": "\"-1\"",
+                    "value": {
+                      "type": "string",
+                      "value": "-1"
+                    }
+                  },
+                  "to_port": {
+                    "text": "0",
+                    "value": {
+                      "type": "number",
+                      "value": 0
+                    }
+                  }
+                },
+                "location": "main.tf:61"
+              }
+            ],
+            "ingress": [
+              {
+                "attributes": {
+                  "cidr_blocks": {
+                    "text": "[\"10.0.0.0/8\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "10.0.0.0/8"
+                      ]
+                    }
+                  },
+                  "from_port": {
+                    "text": "443",
+                    "value": {
+                      "type": "number",
+                      "value": 443
+                    }
+                  },
+                  "protocol": {
+                    "text": "\"tcp\"",
+                    "value": {
+                      "type": "string",
+                      "value": "tcp"
+                    }
+                  },
+                  "to_port": {
+                    "text": "443",
+                    "value": {
+                      "type": "number",
+                      "value": 443
+                    }
+                  }
+                },
+                "location": "main.tf:47"
+              },
+              {
+                "attributes": {
+                  "cidr_blocks": {
+                    "text": "[\"10.1.0.0/16\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "10.1.0.0/16"
+                      ]
+                    }
+                  },
+                  "from_port": {
+                    "text": "22",
+                    "value": {
+                      "type": "number",
+                      "value": 22
+                    }
+                  },
+                  "protocol": {
+                    "text": "\"tcp\"",
+                    "value": {
+                      "type": "string",
+                      "value": "tcp"
+                    }
+                  },
+                  "to_port": {
+                    "text": "22",
+                    "value": {
+                      "type": "number",
+                      "value": 22
+                    }
+                  }
+                },
+                "location": "main.tf:54"
+              }
+            ]
+          },
+          "location": "main.tf:44"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_eks_cluster.this": [
+          "variable.cluster_name",
+          "variable.k8s_version"
+        ],
+        "resource.aws_security_group.sg": [
+          "variable.cluster_name"
+        ]
+      }
+    }
+  }
+}

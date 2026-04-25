@@ -93,6 +93,36 @@
               }
             }
           },
+          "blocks": {
+            "filter": [
+              {
+                "attributes": {
+                  "name": {
+                    "text": "\"name\"",
+                    "value": {
+                      "type": "string",
+                      "value": "name"
+                    }
+                  },
+                  "values": {
+                    "text": "[\"ubuntu/*\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "ubuntu/*"
+                      ]
+                    }
+                  }
+                },
+                "location": "main.tf:26"
+              }
+            ]
+          },
           "location": "main.tf:22"
         }
       ],

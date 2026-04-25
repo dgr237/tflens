@@ -94,14 +94,15 @@ type Entity struct {
 	ValidationConditions    []string
 	PreconditionConditions  []string
 	PostconditionConditions []string
-	ValueExpr               *Expr            // outputs: the value expression
-	ProviderExpr            *Expr            // resource/data: value of `provider` attribute
-	ModuleArgs              map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
-	BodyAttrs               map[string]*Expr // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
-	LocalExpr               *Expr            // locals: the local's value expression
-	ForEachExpr             *Expr            // resource/data/module: value of `for_each`
-	CountExpr               *Expr            // resource/data/module: value of `count`
-	DependsOnExpr           *Expr            // resource/data/module/output: value of `depends_on`
+	ValueExpr               *Expr                   // outputs: the value expression
+	ProviderExpr            *Expr                   // resource/data: value of `provider` attribute
+	ModuleArgs              map[string]*Expr        // module blocks: argument-name → expression (excludes meta-args)
+	BodyAttrs               map[string]*Expr        // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
+	BodyBlocks              map[string][]*BodyBlock // resource/data blocks: nested-block name → instances (excludes lifecycle + dynamic)
+	LocalExpr               *Expr                   // locals: the local's value expression
+	ForEachExpr             *Expr                   // resource/data/module: value of `for_each`
+	CountExpr               *Expr                   // resource/data/module: value of `count`
+	DependsOnExpr           *Expr                   // resource/data/module/output: value of `depends_on`
 
 	// Lifecycle block (resources only)
 	PreventDestroy         bool  // `prevent_destroy = true`
@@ -524,6 +525,7 @@ func collectEntities(m *Module, file *File) {
 				e := Entity{Kind: KindResource, Type: block.Labels[0], Name: block.Labels[1], Pos: posFromRange(block.DefRange())}
 				scanMetaArgs(&e, block.Body, file.Source)
 				scanBodyAttrs(&e, block.Body, file.Source)
+				scanBodyBlocks(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "data":
@@ -531,6 +533,7 @@ func collectEntities(m *Module, file *File) {
 				e := Entity{Kind: KindData, Type: block.Labels[0], Name: block.Labels[1], Pos: posFromRange(block.DefRange())}
 				scanMetaArgs(&e, block.Body, file.Source)
 				scanBodyAttrs(&e, block.Body, file.Source)
+				scanBodyBlocks(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "variable":
@@ -795,6 +798,18 @@ func isModuleMetaArg(name string) bool {
 	return false
 }
 
+// BodyBlock is one nested block instance inside a resource or data
+// body — recursively, since blocks can themselves contain blocks
+// (e.g. `encryption_config { provider { ... } }` on aws_eks_cluster).
+// Maps both follow the same convention as Entity.BodyAttrs / BodyBlocks:
+// attribute-name → expression, block-name → list of instances (always
+// a list so consumers don't need to switch on single-vs-repeated).
+type BodyBlock struct {
+	Attrs  map[string]*Expr
+	Blocks map[string][]*BodyBlock
+	Pos    token.Position
+}
+
 // isResourceMetaArg reports whether a named attribute on a resource or
 // data block is a Terraform-reserved meta-argument rather than a
 // regular configuration attribute. Used by scanBodyAttrs to filter
@@ -808,12 +823,30 @@ func isResourceMetaArg(name string) bool {
 	return false
 }
 
+// isResourceMetaBlock reports whether a nested block name is a
+// Terraform-reserved meta-block on a resource or data body. We skip
+// these in scanBodyBlocks because their semantics aren't "regular
+// nested config":
+//   - lifecycle: already projected into dedicated Entity fields
+//     (PreventDestroy, IgnoreChangesExpr, ...) so emitting under
+//     blocks too would just duplicate.
+//   - dynamic: special-cased syntax (`dynamic "ingress" { for_each = ... content { ... } }`)
+//     that generates the named block at plan time. Capturing it as a
+//     plain block with label "ingress" would mislead converters into
+//     thinking they have a static ingress block. Deferred to a
+//     separate pass that exposes the for_each + content shape.
+func isResourceMetaBlock(name string) bool {
+	switch name {
+	case "lifecycle", "dynamic":
+		return true
+	}
+	return false
+}
+
 // scanBodyAttrs populates e.BodyAttrs with every direct attribute on a
-// resource or data block that isn't a meta-argument. Nested blocks
-// (lifecycle, dynamic, ebs_block_device, ingress, ...) are NOT
-// captured here — only flat name=expression attributes. Meta-args
-// already live on dedicated Entity fields (CountExpr, ForEachExpr,
-// etc.) so we exclude them to avoid duplication.
+// resource or data block that isn't a meta-argument. Meta-args already
+// live on dedicated Entity fields (CountExpr, ForEachExpr, etc.) so
+// we exclude them to avoid duplication.
 func scanBodyAttrs(e *Entity, body *hclsyntax.Body, src []byte) {
 	if e.BodyAttrs == nil {
 		e.BodyAttrs = map[string]*Expr{}
@@ -824,6 +857,47 @@ func scanBodyAttrs(e *Entity, body *hclsyntax.Body, src []byte) {
 		}
 		e.BodyAttrs[attr.Name] = &Expr{E: attr.Expr, Source: src}
 	}
+}
+
+// scanBodyBlocks populates e.BodyBlocks with every nested block on a
+// resource or data body except meta-blocks (lifecycle, dynamic — see
+// isResourceMetaBlock). Same shape as scanBodyAttrs but recursive:
+// the BodyBlock returned by buildBodyBlock has its own Attrs + Blocks
+// so arbitrary nesting (`encryption_config { provider { key_arn = ... } }`)
+// is preserved.
+func scanBodyBlocks(e *Entity, body *hclsyntax.Body, src []byte) {
+	if e.BodyBlocks == nil {
+		e.BodyBlocks = map[string][]*BodyBlock{}
+	}
+	for _, child := range body.Blocks {
+		if isResourceMetaBlock(child.Type) {
+			continue
+		}
+		e.BodyBlocks[child.Type] = append(e.BodyBlocks[child.Type], buildBodyBlock(child, src))
+	}
+}
+
+// buildBodyBlock recursively converts an hclsyntax.Block into a
+// BodyBlock, capturing every flat attribute and recursing into every
+// nested block. No meta-arg/meta-block filtering happens here —
+// nested-block bodies don't have meta-args in the resource sense
+// (count/for_each only apply at the top-level resource block).
+func buildBodyBlock(b *hclsyntax.Block, src []byte) *BodyBlock {
+	bb := &BodyBlock{
+		Attrs:  map[string]*Expr{},
+		Blocks: map[string][]*BodyBlock{},
+		Pos:    posFromRange(b.DefRange()),
+	}
+	if b.Body == nil {
+		return bb
+	}
+	for _, attr := range sortedAttrs(b.Body) {
+		bb.Attrs[attr.Name] = &Expr{E: attr.Expr, Source: src}
+	}
+	for _, child := range b.Body.Blocks {
+		bb.Blocks[child.Type] = append(bb.Blocks[child.Type], buildBodyBlock(child, src))
+	}
+	return bb
 }
 
 // scanMetaArgs sets meta-argument and lifecycle fields on e by inspecting the
