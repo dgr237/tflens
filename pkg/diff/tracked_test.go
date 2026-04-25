@@ -256,6 +256,24 @@ var trackedCases = []trackedCase{
 		DetailContains: []string{"value"},
 	},
 	{
+		// Stdlib batch 2 (lower): refactor lowercases a constant via
+		// lower() instead of typing the canonical form. Effective
+		// string identical → Informational, not Breaking.
+		Name:           "tracked_eval_lower_collapses",
+		Subject:        "local.region.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
+		// Stdlib batch 2 (format): same string assembled via format()
+		// rather than inlined. Effective value unchanged →
+		// Informational. Verifies %s + %d formatters round-trip.
+		Name:           "tracked_eval_format_collapses",
+		Subject:        "local.image.value",
+		WantKind:       diff.Informational,
+		DetailContains: []string{"no effective value change"},
+	},
+	{
 		Name:           "tracked_literal_value_changed",
 		Subject:        "resource.aws_eks_cluster.this.cluster_version",
 		WantKind:       diff.Breaking,

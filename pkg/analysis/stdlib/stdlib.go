@@ -7,14 +7,20 @@
 // what's in vs. out. Adding a new batch of functions is a single
 // edit to Functions().
 //
-// All implementations come from cty/function/stdlib, which is the
+// Most implementations come from cty/function/stdlib, which is the
 // same library Terraform itself uses for these specific functions.
 // Wrapping them here means our evaluation behaviour matches
-// Terraform's exactly for the functions we cover. Functions that
-// would need filesystem access (file, fileset, templatefile),
-// non-deterministic state (timestamp, uuid, bcrypt), or full
-// evaluator catch-and-retry semantics (can, try) are intentionally
-// excluded so the curated set stays evaluation-pure.
+// Terraform's exactly for the functions we cover. The two exceptions
+// — `replace` and `coalesce` — diverge from cty's defaults: Terraform
+// dispatches `replace` on whether the search arg is `/regex/`-
+// delimited, and Terraform's `coalesce` skips empty strings, not just
+// nulls. See replace.go and coalesce.go for the wrappers that restore
+// Terraform's contract.
+//
+// Functions that would need filesystem access (file, fileset,
+// templatefile), non-deterministic state (timestamp, uuid, bcrypt),
+// or full evaluator catch-and-retry semantics (can, try) are
+// intentionally excluded so the curated set stays evaluation-pure.
 package stdlib
 
 import (
@@ -51,5 +57,45 @@ func Functions() map[string]function.Function {
 		"element":  stdlib.ElementFunc,
 		"flatten":  stdlib.FlattenFunc,
 		"distinct": stdlib.DistinctFunc,
+
+		// String functions. `replace` needs a Terraform-side wrapper
+		// because the literal-vs-regex dispatch (`/pattern/` triggers
+		// regex mode) lives above cty's literal-only ReplaceFunc.
+		"upper":      stdlib.UpperFunc,
+		"lower":      stdlib.LowerFunc,
+		"title":      stdlib.TitleFunc,
+		"join":       stdlib.JoinFunc,
+		"split":      stdlib.SplitFunc,
+		"format":     stdlib.FormatFunc,
+		"formatlist": stdlib.FormatListFunc,
+		"replace":    terraformReplaceFunc,
+		"trim":       stdlib.TrimFunc,
+		"trimspace":  stdlib.TrimSpaceFunc,
+		"trimprefix": stdlib.TrimPrefixFunc,
+		"trimsuffix": stdlib.TrimSuffixFunc,
+		"chomp":      stdlib.ChompFunc,
+		"indent":     stdlib.IndentFunc,
+		"substr":     stdlib.SubstrFunc,
+
+		// Additional collection helpers — same value-collapse story as
+		// the batch-1 collection functions; these are the next tier of
+		// commonly-used Terraform-stdlib pure functions.
+		"sort":         stdlib.SortFunc,
+		"reverse":      stdlib.ReverseListFunc,
+		"slice":        stdlib.SliceFunc,
+		"chunklist":    stdlib.ChunklistFunc,
+		"compact":      stdlib.CompactFunc,
+		"coalesce":     terraformCoalesceFunc,
+		"coalescelist": stdlib.CoalesceListFunc,
+		"zipmap":       stdlib.ZipmapFunc,
+		"range":        stdlib.RangeFunc,
+
+		// Numeric functions.
+		"abs":   stdlib.AbsoluteFunc,
+		"min":   stdlib.MinFunc,
+		"max":   stdlib.MaxFunc,
+		"floor": stdlib.FloorFunc,
+		"ceil":  stdlib.CeilFunc,
+		"pow":   stdlib.PowFunc,
 	}
 }

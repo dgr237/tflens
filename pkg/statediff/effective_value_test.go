@@ -68,6 +68,18 @@ var effectiveValueCases = []effectiveValueCase{
 		Name:        "length_change_still_flags",
 		WantFlagged: true,
 	},
+	{
+		// Stdlib batch 2 (lower): canonical form vs lower("US-EAST-1")
+		// — same effective string. Local reaches for_each but no
+		// SensitiveChange should fire.
+		Name: "lower_collapses",
+	},
+	{
+		// Stdlib batch 2 (format): same string assembled via
+		// format("ec2-%s-v%d", "small", 3) vs literal. Effective value
+		// identical → suppressed.
+		Name: "format_collapses",
+	},
 }
 
 func loadEffectiveValueFixture(t *testing.T, caseName, side string) *loader.Project {
