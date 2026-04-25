@@ -1,0 +1,81 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: stacks.platform.example.org
+spec:
+  group: platform.example.org
+  names:
+    kind: Stack
+    plural: stacks
+  claimNames:
+    kind: StackClaim
+    plural: stacksclaim
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  properties:
+                    cluster_name:
+                      type: string
+                      default: demo
+                    k8s_version:
+                      type: string
+                      default: 1.31
+              required:
+                - parameters
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: stacks.platform.example.org
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: Stack
+  resources:
+    - name: this
+      base:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: Cluster
+        spec:
+          forProvider:
+            accessConfig:
+              authenticationMode: API
+              bootstrapClusterCreatorAdminPermissions: true
+            vpcConfig:
+              endpointPrivateAccess: true
+              endpointPublicAccess: false
+              subnetIds:
+                - subnet-aaaa
+                - subnet-bbbb
+      patches:
+        - fromFieldPath: spec.parameters.cluster_name
+          toFieldPath: spec.forProvider.name
+        - _TODO: "Cross-resource ref to 'aws_iam_role.cluster.arn': pick a Crossplane reference style (named ResourceRef on the consuming managed resource, or MatchControllerRef, or an external-name annotation). The placeholder below sets the field to a static empty string so the YAML is valid; replace with the appropriate reference."
+          fromFieldPath: spec.parameters._TODO_cross_resource_ref
+          toFieldPath: spec.forProvider.roleArn
+        - fromFieldPath: spec.parameters.k8s_version
+          toFieldPath: spec.forProvider.version
+    - name: cluster
+      base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Role
+        spec:
+          forProvider:
+            assumeRolePolicy: "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}"
+      patches:
+        - fromFieldPath: spec.parameters.cluster_name
+          toFieldPath: spec.forProvider.name
+          transforms:
+            - type: string
+              string:
+                fmt: %s-eks-role

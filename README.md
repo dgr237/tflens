@@ -497,7 +497,23 @@ Downstream tools that translate Terraform configurations into other provisioning
 
 ### Worked example
 
-[`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) is an end-to-end POC consuming the export JSON to emit a [kro](https://kro.run) `ResourceGraphDefinition` targeting [AWS Controllers for Kubernetes (ACK)](https://aws-controllers-k8s.github.io/community/) custom resources. ~250 LOC of stdlib-only Python (`generator.py`) covering: variable refs → `${schema.spec.X}`, cross-resource ARN refs → `${resources.foo.status.ackResourceMetadata.arn}` (ACK convention), `format()` template expansion → CEL string concat, `jsonencode` → kro's `json.marshal` CEL function (or literal JSON when statically resolvable), nested blocks → recursive YAML, snake_case → camelCase attribute renames. Read the bundled `README.md` for the full translation model, the subtleties the POC handles (parameterisation vs static eval, the HCL bare-identifier-key gotcha), and an effort estimate for productionising similar converters for crossplane / Pulumi / CDK for Terraform.
+Three end-to-end POCs consume the export JSON and emit different target shapes. The orthogonality of orchestration layer × managed-resource provider is deliberate — picking different combinations validates that the export schema isn't implicitly shaped to any one target:
+
+| POC | Orchestration | Managed Resources |
+| --- | --- | --- |
+| [`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) | kro RGD | ACK (`<service>.services.k8s.aws/v1alpha1`) |
+| [`docs/export-to-crossplane/`](./docs/export-to-crossplane/) | Crossplane Composition + XRD | Upbound provider-aws (`<service>.aws.upbound.io/v1beta1`) |
+| [`docs/export-to-kro-crossplane/`](./docs/export-to-kro-crossplane/) | kro RGD | Upbound provider-aws |
+
+Comparing them shows the same export JSON producing very different shapes:
+
+- Variable refs become **CEL `${schema.spec.X}` substitutions** (kro POCs) or **declarative `patches` with `fromFieldPath`** (Crossplane POC).
+- Cross-resource refs become **`${resources.foo.status.<convention>.arn}` traversals** (kro) or **explicit `ResourceRef` / `MatchControllerRef` policy** (Crossplane).
+- `format()` calls become **CEL string concat** (kro) or a **`transforms: [{type: string, ...}]` patch entry** (Crossplane).
+- Dynamic blocks become **CEL `.map()` inline** (kro) or **Composition Functions** (Crossplane, TODO).
+- ARN paths follow the target's convention: ACK puts it at `status.ackResourceMetadata.arn`, Upbound at `status.atProvider.arn`.
+
+The two kro POCs (ACK vs Upbound) are 95% identical — ~50 LOC of mapping-table and constant deltas separate them. That isolation is the schema's job, and the existence of three POCs validates it works as intended. Each bundled README documents the translation model, subtleties, and effort estimates for productionisation.
 
 ### Shape stability
 
