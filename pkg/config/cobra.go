@@ -2,16 +2,20 @@ package config
 
 import "github.com/spf13/cobra"
 
-// FromCommand reads every recognised tflens flag from cmd. Flags not
-// registered on this subcommand silently default to the zero value —
-// Settings is a union; callers populate the cmd-derived fields (Path,
-// OnlyName) themselves after this returns.
+// FromCommand reads every recognised tflens flag from cmd plus its
+// stdout/stderr writers, then applies any Option funcs the caller
+// supplied to fold in cmd-derived fields like Path and OnlyName.
+// Flags not registered on this subcommand silently default to the
+// zero value — Settings is a union; subcommands populate only the
+// fields relevant to them.
 //
 // The flag-name strings live here exactly once. Subcommands that
 // register a new flag should add a line here so its value flows into
 // Settings rather than being read ad-hoc with cmd.Flags().GetX.
-func FromCommand(cmd *cobra.Command) Settings {
-	return Settings{
+func FromCommand(cmd *cobra.Command, opts ...Option) Settings {
+	s := Settings{
+		Out:       cmd.OutOrStdout(),
+		Err:       cmd.ErrOrStderr(),
 		Offline:   getBool(cmd, "offline"),
 		JSON:      getString(cmd, "format") == "json",
 		BaseRef:   getString(cmd, "ref"),
@@ -19,6 +23,10 @@ func FromCommand(cmd *cobra.Command) Settings {
 		Write:     getBool(cmd, "write"),
 		Check:     getBool(cmd, "check"),
 	}
+	for _, opt := range opts {
+		opt(&s)
+	}
+	return s
 }
 
 // getBool returns the bool value of the named flag, or false when the

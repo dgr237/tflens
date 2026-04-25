@@ -32,8 +32,7 @@ The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
 → main → master.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s := config.FromCommand(cmd)
-		s.Path = pathArg(args, 0)
+		s := config.FromCommand(cmd, config.WithPath(pathArg(args, 0)))
 		if err := resolveAutoBaseRef(&s); err != nil {
 			return err
 		}
@@ -54,7 +53,7 @@ func runDiffRef(s config.Settings) error {
 	}
 	defer cleanup()
 	results, rootChanges, breaking := diff.AnalyzeProjects(oldProj, newProj)
-	render.New(s.JSON, os.Stdout).Diff(s.BaseRef, s.Path, results, rootChanges)
+	render.New(s).Diff(s.BaseRef, s.Path, results, rootChanges)
 	if breaking > 0 {
 		os.Exit(1)
 	}

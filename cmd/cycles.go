@@ -14,9 +14,7 @@ var cyclesCmd = &cobra.Command{
 	Short: "Detect and print dependency cycles (exits non-zero if any found)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		s := config.FromCommand(cmd)
-		s.Path = args[0]
-		runCycles(s)
+		runCycles(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -25,9 +23,9 @@ func init() {
 }
 
 func runCycles(s config.Settings) {
-	mod := mustLoadModule(s.Path)
+	mod := mustLoadModule(s)
 	cycles := mod.Cycles()
-	render.New(s.JSON, os.Stdout).Cycles(cycles)
+	render.New(s).Cycles(cycles)
 	if len(cycles) > 0 {
 		os.Exit(1)
 	}

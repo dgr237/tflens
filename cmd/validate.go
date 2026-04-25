@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -26,9 +25,7 @@ local submodules (including those resolved via .terraform/modules/modules.json
 after 'terraform init') are cross-validated.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		s := config.FromCommand(cmd)
-		s.Path = args[0]
-		runValidate(s)
+		runValidate(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -41,17 +38,17 @@ func runValidate(s config.Settings) {
 	if err != nil {
 		fatalf("%v", err)
 	}
-	printFileErrs(fileErrs)
+	printFileErrs(s, fileErrs)
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
 	// Errors go to stderr so they don't pollute pipes; the success
-	// message (and the JSON envelope) go to stdout.
-	var w io.Writer = os.Stdout
+	// message (and the JSON envelope) stay on stdout. Mutate the
+	// local Settings copy so render.New picks up the right writer.
 	if total > 0 && !s.JSON {
-		w = os.Stderr
+		s.Out = s.Err
 	}
-	render.New(s.JSON, w).Validate(refErrs, crossErrs, typeErrs)
+	render.New(s).Validate(refErrs, crossErrs, typeErrs)
 	if total > 0 {
 		os.Exit(1)
 	}

@@ -5,9 +5,11 @@
 //
 // The cobra dependency lives in FromCommand (cobra.go) and is the
 // single point where flag-name strings are interpreted. Subcommands
-// build a Settings at the top of their RunE and pass it (or just the
-// fields they need) to the run* helpers.
+// build a Settings at the top of their RunE — usually with one or two
+// Option helpers (see options.go) — and pass it to the run* helpers.
 package config
+
+import "io"
 
 // RefAutoKeyword is the user-facing keyword that triggers base-ref
 // auto-detection (e.g. `tflens diff --ref auto`). When BaseRef equals
@@ -15,15 +17,23 @@ package config
 // concrete ref before continuing.
 const RefAutoKeyword = "auto"
 
-// Settings is the union of every flag (and a few positional args) that
-// tflens subcommands read. Each subcommand only populates the fields
-// relevant to it; flags not registered on the active command silently
-// remain at their zero value.
+// Settings is the union of every flag (and a few positional /
+// cmd-derived values) that tflens subcommands read. Each subcommand
+// only populates the fields relevant to it; flags not registered on
+// the active command silently remain at their zero value.
 //
 // Construct with FromCommand for production use, or build a Settings
 // literal directly for tests — the type is a plain struct with no
 // cobra dependency.
 type Settings struct {
+	// Out is where rendered output goes (renderer-driven success
+	// path; cobra's OutOrStdout). Defaults to os.Stdout.
+	Out io.Writer
+	// Err is where warnings + error sections go (FileError prints,
+	// validate's "errors found" branch; cobra's ErrOrStderr).
+	// Defaults to os.Stderr.
+	Err io.Writer
+
 	// Global flags
 
 	// Offline disables registry + git resolvers; only local paths and
@@ -49,7 +59,7 @@ type Settings struct {
 	// formatted.
 	Check bool
 
-	// Positional / cmd-derived
+	// Positional / cmd-derived (set via Option helpers in options.go)
 
 	// Path is the workspace path the subcommand operates on. Defaulted
 	// to "." by most subcommands when no positional arg is supplied.

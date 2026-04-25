@@ -1,11 +1,10 @@
 package render
 
 import (
-	"io"
-
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/statediff"
 )
@@ -67,13 +66,16 @@ type Renderer interface {
 	FmtRenderer
 }
 
-// New returns the renderer matching s.JSON / cmd's chosen output
-// format. w is where the rendered output goes — typically os.Stdout
-// for the success path; cmd swaps to os.Stderr for the validate
-// "errors found" branch.
-func New(jsonMode bool, w io.Writer) Renderer {
-	if jsonMode {
-		return &JSONRenderer{W: w}
+// New returns the renderer matching s.JSON. The Settings supplies
+// both the output writer (s.Out) and the format choice — callers
+// don't need to pass them separately.
+//
+// validate's "errors found" branch flips s.Out to s.Err on a copy of
+// Settings before calling New, so the renderer's text output lands
+// on stderr without complicating this constructor.
+func New(s config.Settings) Renderer {
+	if s.JSON {
+		return &JSONRenderer{W: s.Out}
 	}
-	return &ConsoleRenderer{W: w}
+	return &ConsoleRenderer{W: s.Out}
 }

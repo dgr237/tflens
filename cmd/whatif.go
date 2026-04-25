@@ -37,11 +37,11 @@ The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
 → main → master.`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s := config.FromCommand(cmd)
-		s.Path = pathArg(args, 0)
+		opts := []config.Option{config.WithPath(pathArg(args, 0))}
 		if len(args) == 2 {
-			s.OnlyName = args[1]
+			opts = append(opts, config.WithOnlyName(args[1]))
 		}
+		s := config.FromCommand(cmd, opts...)
 		if err := resolveAutoBaseRef(&s); err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ func runWhatifRef(s config.Settings) error {
 	if filtered {
 		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", s.OnlyName, s.BaseRef)
 	}
-	render.New(s.JSON, os.Stdout).Whatif(s.BaseRef, s.Path, calls)
+	render.New(s).Whatif(s.BaseRef, s.Path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
 	}

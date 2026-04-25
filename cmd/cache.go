@@ -38,8 +38,7 @@ var cacheInfoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render.New(config.FromCommand(cmd).JSON, os.Stdout).
-			CacheInfo(c.Root(), entries, bytes)
+		render.New(config.FromCommand(cmd)).CacheInfo(c.Root(), entries, bytes)
 		return nil
 	},
 }
@@ -56,7 +55,7 @@ trusts its own contents as immutable, re-fetching requires clearing).`,
 		if err != nil {
 			return err
 		}
-		r := render.New(config.FromCommand(cmd).JSON, os.Stdout)
+		r := render.New(config.FromCommand(cmd))
 		root := c.Root()
 		info, err := os.Stat(root)
 		if err != nil {

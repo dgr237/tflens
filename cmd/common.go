@@ -35,17 +35,17 @@ func resolveAutoBaseRef(s *config.Settings) error {
 }
 
 // mustLoadModule loads a single .tf file or a directory of .tf files
-// via loader.LoadAny. File-level parse errors are printed as warnings
-// to stderr; a top-level I/O failure (missing path, unreadable inode)
-// is fatal. The returned module may be nil only when LoadAny itself
-// errored — file-level partial-parse results still produce a usable
-// module.
-func mustLoadModule(path string) *analysis.Module {
-	mod, fileErrs, err := loader.LoadAny(path)
+// via loader.LoadAny using s.Path. File-level parse errors are
+// printed as warnings to s.Err; a top-level I/O failure (missing
+// path, unreadable inode) is fatal. The returned module may be nil
+// only when LoadAny itself errored — file-level partial-parse results
+// still produce a usable module.
+func mustLoadModule(s config.Settings) *analysis.Module {
+	mod, fileErrs, err := loader.LoadAny(s.Path)
 	if err != nil {
 		fatalf("%v", err)
 	}
-	printFileErrs(fileErrs)
+	printFileErrs(s, fileErrs)
 	if mod == nil {
 		os.Exit(1)
 	}

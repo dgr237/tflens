@@ -26,9 +26,7 @@ already formatted, or prints the path and exits 1 when not formatted
 Comments and blank lines are preserved.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		s := config.FromCommand(cmd)
-		s.Path = args[0]
-		runFmt(s)
+		runFmt(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -59,13 +57,13 @@ func runFmt(s config.Settings) {
 	// will silently produce garbage on broken input.
 	p := hclparse.NewParser()
 	if _, diags := p.ParseHCL(src, s.Path); diags.HasErrors() {
-		// JSON path goes to stdout (machine-readable envelope);
-		// text path stays on stderr to keep it out of pipes.
-		w := os.Stderr
-		if s.JSON {
-			w = os.Stdout
+		// Text-mode parse errors stay on stderr to keep stdout pipe-
+		// safe. The JSON envelope goes to stdout as usual.
+		errSettings := s
+		if !s.JSON {
+			errSettings.Out = s.Err
 		}
-		render.New(s.JSON, w).FmtParseErrors(diags)
+		render.New(errSettings).FmtParseErrors(diags)
 		os.Exit(1)
 	}
 
@@ -74,7 +72,7 @@ func runFmt(s config.Settings) {
 	switch {
 	case s.Check:
 		if string(src) != formatted {
-			fmt.Println(s.Path)
+			fmt.Fprintln(s.Out, s.Path)
 			os.Exit(1)
 		}
 	case s.Write:
@@ -85,6 +83,6 @@ func runFmt(s config.Settings) {
 			fatalf("writing %s: %v", s.Path, err)
 		}
 	default:
-		fmt.Print(formatted)
+		fmt.Fprint(s.Out, formatted)
 	}
 }

@@ -3,26 +3,34 @@ package render_test
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
-// TestNewSelectsImplementation: New(false, w) returns a ConsoleRenderer
-// (verified by the human-readable "No cycles detected.\n" baseline);
-// New(true, w) returns a JSONRenderer (verified by the parseable
-// JSON envelope shape).
+// settingsFor returns a minimal Settings literal for renderer tests:
+// the supplied writer for both Out and Err, and the JSON flag set.
+// Lets tests construct the renderer without standing up a cobra
+// command.
+func settingsFor(jsonMode bool, w *bytes.Buffer) config.Settings {
+	return config.Settings{Out: w, Err: w, JSON: jsonMode}
+}
+
+// TestNewSelectsImplementation: New(s) returns a ConsoleRenderer when
+// s.JSON=false (verified by the human-readable "No cycles detected.\n"
+// baseline) and a JSONRenderer when s.JSON=true (verified by the
+// parseable JSON envelope shape).
 func TestNewSelectsImplementation(t *testing.T) {
 	var b bytes.Buffer
-	render.New(false, &b).Cycles(nil)
+	render.New(settingsFor(false, &b)).Cycles(nil)
 	if got := b.String(); got != "No cycles detected.\n" {
 		t.Errorf("console output = %q, want %q", got, "No cycles detected.\n")
 	}
 
 	b.Reset()
-	render.New(true, &b).Cycles(nil)
+	render.New(settingsFor(true, &b)).Cycles(nil)
 	var got struct {
 		Cycles [][]string `json:"cycles"`
 	}
@@ -48,7 +56,7 @@ func TestRendererCompositeSatisfiedByBothImpls(t *testing.T) {
 // never null.
 func TestJSONRendererImpactNilAffectedBecomesEmptyArray(t *testing.T) {
 	var b bytes.Buffer
-	render.New(true, &b).Impact("variable.x", nil)
+	render.New(settingsFor(true, &b)).Impact("variable.x", nil)
 	if !strings.Contains(b.String(), `"affected": []`) {
 		t.Errorf("expected `\"affected\": []`; got:\n%s", b.String())
 	}
@@ -60,7 +68,7 @@ func TestJSONRendererImpactNilAffectedBecomesEmptyArray(t *testing.T) {
 // uniformly.
 func TestJSONRendererCacheAlreadyEmptyMatchesCacheInfoShape(t *testing.T) {
 	var b bytes.Buffer
-	render.New(true, &b).CacheAlreadyEmpty("/tmp/cache")
+	render.New(settingsFor(true, &b)).CacheAlreadyEmpty("/tmp/cache")
 	var got struct {
 		Path    string `json:"path"`
 		Entries int    `json:"entries"`
@@ -73,7 +81,3 @@ func TestJSONRendererCacheAlreadyEmptyMatchesCacheInfoShape(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
-
-// _ keeps os in scope in case future tests want to exercise the
-// renderer against os.Stdout directly; harmless otherwise.
-var _ = os.Stdout

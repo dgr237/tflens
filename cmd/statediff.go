@@ -41,8 +41,7 @@ provider schemas and expression evaluation — run 'terraform plan' for
 that. statediff is a static hazard detector, not a plan replacement.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		s := config.FromCommand(cmd)
-		s.Path = pathArg(args, 0)
+		s := config.FromCommand(cmd, config.WithPath(pathArg(args, 0)))
 		if err := resolveAutoBaseRef(&s); err != nil {
 			return err
 		}
@@ -69,7 +68,7 @@ func runStatediff(s config.Settings) error {
 	}
 	result := statediff.Analyze(oldProj, newProj, state)
 	result.BaseRef, result.Path = s.BaseRef, s.Path
-	render.New(s.JSON, os.Stdout).Statediff(&result)
+	render.New(s).Statediff(&result)
 	if result.FlaggedCount() > 0 {
 		os.Exit(1)
 	}

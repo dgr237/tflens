@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
@@ -14,9 +12,7 @@ var unusedCmd = &cobra.Command{
 	Short: "List entities that nothing in the module references",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		s := config.FromCommand(cmd)
-		s.Path = args[0]
-		runUnused(s)
+		runUnused(config.FromCommand(cmd, config.WithPath(args[0])))
 	},
 }
 
@@ -25,6 +21,5 @@ func init() {
 }
 
 func runUnused(s config.Settings) {
-	mod := mustLoadModule(s.Path)
-	render.New(s.JSON, os.Stdout).Unused(mod.Unreferenced())
+	render.New(s).Unused(mustLoadModule(s).Unreferenced())
 }

@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -143,6 +144,76 @@ func TestFromCommandDefaultsWhenNoArgs(t *testing.T) {
 		}
 		if s.BaseRef != config.RefAutoKeyword {
 			t.Errorf("BaseRef default = %q, want %q", s.BaseRef, config.RefAutoKeyword)
+		}
+		return nil
+	}
+	if err := c.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+// TestFromCommandCapturesWriters: cobra exposes per-command writers
+// via OutOrStdout / ErrOrStderr that tests can swap out. FromCommand
+// must propagate both into Settings so render.New picks the right
+// destination without the cmd having to thread them separately.
+func TestFromCommandCapturesWriters(t *testing.T) {
+	c := newCmd()
+	var out, errBuf bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errBuf)
+	c.SetArgs([]string{})
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		s := config.FromCommand(cmd)
+		if s.Out != &out {
+			t.Errorf("Out = %v, want overridden buffer", s.Out)
+		}
+		if s.Err != &errBuf {
+			t.Errorf("Err = %v, want overridden buffer", s.Err)
+		}
+		return nil
+	}
+	if err := c.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+// TestFromCommandAppliesOptions: WithPath / WithOnlyName run after
+// flag parsing and override (or set, when the field has no flag) the
+// matching Settings field. Confirms the options-pattern dispatch.
+func TestFromCommandAppliesOptions(t *testing.T) {
+	c := newCmd()
+	c.SetArgs([]string{})
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		s := config.FromCommand(cmd,
+			config.WithPath("/some/path"),
+			config.WithOnlyName("vpc"),
+		)
+		if s.Path != "/some/path" {
+			t.Errorf("Path = %q, want /some/path", s.Path)
+		}
+		if s.OnlyName != "vpc" {
+			t.Errorf("OnlyName = %q, want vpc", s.OnlyName)
+		}
+		return nil
+	}
+	if err := c.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+// TestOptionsLastWriterWins: when the same field is set by multiple
+// options, the later one wins. Pin this so callers composing options
+// from helper funcs can rely on left-to-right precedence.
+func TestOptionsLastWriterWins(t *testing.T) {
+	c := newCmd()
+	c.SetArgs([]string{})
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		s := config.FromCommand(cmd,
+			config.WithPath("first"),
+			config.WithPath("second"),
+		)
+		if s.Path != "second" {
+			t.Errorf("Path = %q, want last-wins 'second'", s.Path)
 		}
 		return nil
 	}
