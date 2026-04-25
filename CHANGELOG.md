@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Fixed
+
+- **Worktree leak on the CI-gating exit path of `diff` / `whatif` / `statediff`.** Each subcommand had `defer cleanup()` followed by `os.Exit(1)` on the breaking-changes / direct-impact / flagged-resource path. Because `os.Exit` skips deferred funcs, every CI invocation that found something would orphan a multi-MB temporary git worktree under `/tmp/tflens-ref-*`. Run `cleanup()` explicitly before `os.Exit` so the success path's defer remains the cleanup hook for early-error returns while the exit-1 path drains it directly.
+
 ### Changed (internal)
 
 - **`analysis.Module` getters are now nil-safe.** `Backend`, `RequiredVersion`, `RequiredProviders`, `Moved`, `RemovedDeclared`, `Validate`, `ModuleSource`, `ModuleVersion`, `ModuleOutputReferences`, `Entities`, `Filter`, `HasEntity`, `EntityByID`, `TrackedAttributes`, `EvalContext`, and `GatherRefsFromExpr` now return their zero value (or an empty map / nil slice) when called on a nil receiver instead of panicking. Lets `pkg/diff.Diff(nil, nil)` and `AnalyzeProjects(nil, nil)` work as no-ops, which the cmd layer relies on when one side of a comparison has no root module.

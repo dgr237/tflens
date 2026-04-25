@@ -55,6 +55,10 @@ func runDiffRef(s config.Settings) error {
 	results, rootChanges, breaking := diff.AnalyzeProjects(oldProj, newProj)
 	render.New(s).Diff(s.BaseRef, s.Path, results, rootChanges)
 	if breaking > 0 {
+		// os.Exit skips the deferred cleanup, so run it explicitly
+		// to avoid leaking the temporary git worktree on every
+		// CI-gating run that finds breaking changes.
+		cleanup()
 		os.Exit(1)
 	}
 	return nil

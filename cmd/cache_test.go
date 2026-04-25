@@ -48,4 +48,3 @@ func TestCacheStatsMissingRootIsZero(t *testing.T) {
 		t.Errorf("missing root: got entries=%d bytes=%d, want 0 0", entries, bytes)
 	}
 }
-

@@ -70,6 +70,10 @@ func runStatediff(s config.Settings) error {
 	result.BaseRef, result.Path = s.BaseRef, s.Path
 	render.New(s).Statediff(&result)
 	if result.FlaggedCount() > 0 {
+		// os.Exit skips the deferred cleanup, so run it explicitly
+		// to avoid leaking the temporary git worktree on every
+		// CI-gating run that flags resources.
+		cleanup()
 		os.Exit(1)
 	}
 	return nil

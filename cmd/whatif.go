@@ -71,6 +71,10 @@ func runWhatifRef(s config.Settings) error {
 	}
 	render.New(s).Whatif(s.BaseRef, s.Path, calls)
 	if totalImpact > 0 {
+		// os.Exit skips the deferred cleanup, so run it explicitly
+		// to avoid leaking the temporary git worktree on every
+		// CI-gating run that finds direct impact.
+		cleanup()
 		os.Exit(1)
 	}
 	return nil
