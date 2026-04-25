@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Documentation
+
+- **README "What it does NOT catch" → condition semantics.** Previous wording said `validation`/`precondition`/`postcondition` block contents "are not evaluated" and "the conditions themselves are opaque" — overselling the limitation. The condition text IS captured and diffed (a changed/added/removed condition surfaces as Informational), it's just the boolean outcome that isn't evaluated. Tightened the bullet so it accurately reflects what the diff actually does.
+
 ## [0.4.0] — 2026-04-25
 
 ### Changed
