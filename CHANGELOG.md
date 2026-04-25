@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/export-to-crossplane/` — second worked-example POC for the export prototype.** Sibling to the existing kro/ACK POC: same input fixture, different target. Consumes the export JSON to emit a Crossplane `Composition` + `CompositeResourceDefinition` (XRD) targeting the Upbound `provider-aws` managed resources. ~350 LOC of stdlib-only Python translates: Terraform variables → XRD `spec.parameters` schema; variable refs → declarative `patches` with `fromFieldPath`; `format("%s-y", var.X)` → patch with a `string` transform; nested blocks → `spec.forProvider.<camelCased>` recursively; static `jsonencode` round-trips to a literal JSON string in the resource base. Cross-resource refs (e.g. `aws_iam_role.cluster.arn`) are deliberately TODO'd — Crossplane has several ref mechanisms (named `ResourceRef`, `MatchControllerRef`, external-name annotations) and picking wrong silently produces working-looking-but-incorrect output. Dynamic blocks point at Composition Functions (`function-go-templating` / `function-patch-and-transform`) since classic Compositions can't iterate. The bundled README contrasts kro vs Crossplane on every translation axis (variable-substitution CEL vs declarative patches, ref-via-traversal vs explicit-policy refs, function calls via CEL vs a transforms vocabulary, iteration via `.map()` vs Composition Functions) — the side-by-side validates that the export schema is target-portable rather than implicitly kro-shaped.
+
 ## [0.9.0] — 2026-04-25
 
 ### Added
