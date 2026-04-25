@@ -31,6 +31,25 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
+// 0.4.0-prototype closes the last two "still deferred" items from
+// the prototype's documented gap list:
+//
+//   - terraform.providers: top-level `provider "X" { alias = "...",
+//     ... }` blocks now appear under terraform.providers (distinct
+//     from required_providers, which is the version-constraint side).
+//     Each entry carries Type, Alias?, and the per-attribute Config
+//     map. Resources point at non-default instances via the existing
+//     `provider` meta-arg → `provider = aws.east` matches the entry
+//     with Type=aws + Alias=east.
+//
+//   - validation/precondition/postcondition body contents:
+//     ExportVariable.Validations, ExportOutput.Preconditions /
+//     Postconditions, ExportResource.Preconditions / Postconditions
+//     each become a list of {condition, error_message?} entries
+//     (each is a full {text, value?, ast?} expression triple).
+//     Replaces the previous count + condition-text-list shape that
+//     diff used internally for change detection.
+//
 // 0.3.0-prototype added dynamic_blocks: a recursive
 // `{<name>: [{for_each, iterator?, content}, ...]}` map alongside
 // the static blocks map on every resource/data body and on every
@@ -44,7 +63,7 @@ import (
 // wherever an HCL expression appears in the export. Schema bumped
 // from 0.1.0-prototype because the *_text string fields were
 // removed in favour of nested objects.
-const ExportSchemaVersion = "0.3.0-prototype"
+const ExportSchemaVersion = "0.4.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -75,24 +94,38 @@ type ExportModule struct {
 }
 
 type ExportVariable struct {
-	Name        string            `json:"name"`
-	Type        string            `json:"type,omitempty"`
-	HasDefault  bool              `json:"has_default"`
-	Default     *ExportExpression `json:"default,omitempty"`
-	Sensitive   bool              `json:"sensitive,omitempty"`
-	Ephemeral   bool              `json:"ephemeral,omitempty"`
-	Nullable    bool              `json:"nullable"`
-	Validations int               `json:"validation_count,omitempty"`
-	Location    string            `json:"location,omitempty"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type,omitempty"`
+	HasDefault  bool                   `json:"has_default"`
+	Default     *ExportExpression      `json:"default,omitempty"`
+	Sensitive   bool                   `json:"sensitive,omitempty"`
+	Ephemeral   bool                   `json:"ephemeral,omitempty"`
+	Nullable    bool                   `json:"nullable"`
+	Validations []ExportConditionBlock `json:"validations,omitempty"`
+	Location    string                 `json:"location,omitempty"`
 }
 
 type ExportOutput struct {
-	Name      string            `json:"name"`
-	Value     *ExportExpression `json:"value,omitempty"`
-	Sensitive bool              `json:"sensitive,omitempty"`
-	Ephemeral bool              `json:"ephemeral,omitempty"`
-	DependsOn *ExportExpression `json:"depends_on,omitempty"`
-	Location  string            `json:"location,omitempty"`
+	Name           string                 `json:"name"`
+	Value          *ExportExpression      `json:"value,omitempty"`
+	Sensitive      bool                   `json:"sensitive,omitempty"`
+	Ephemeral      bool                   `json:"ephemeral,omitempty"`
+	DependsOn      *ExportExpression      `json:"depends_on,omitempty"`
+	Preconditions  []ExportConditionBlock `json:"preconditions,omitempty"`
+	Postconditions []ExportConditionBlock `json:"postconditions,omitempty"`
+	Location       string                 `json:"location,omitempty"`
+}
+
+// ExportConditionBlock is one validation / precondition / postcondition
+// block surfaced under the entity that declared it. Both Condition and
+// ErrorMessage use the standard {text, value?, ast?} shape so consumers
+// (converters, generators, schema validators) can decide whether to
+// translate the boolean check into the target's native validation
+// primitive or keep the source text.
+type ExportConditionBlock struct {
+	Condition    *ExportExpression `json:"condition,omitempty"`
+	ErrorMessage *ExportExpression `json:"error_message,omitempty"`
+	Location     string            `json:"location,omitempty"`
 }
 
 type ExportResource struct {
@@ -108,6 +141,8 @@ type ExportResource struct {
 	ReplaceTriggeredBy  *ExportExpression               `json:"replace_triggered_by,omitempty"`
 	Attributes          map[string]ExportExpression     `json:"attributes,omitempty"`
 	Blocks              map[string][]ExportBlock        `json:"blocks,omitempty"`
+	Preconditions       []ExportConditionBlock          `json:"preconditions,omitempty"`
+	Postconditions      []ExportConditionBlock          `json:"postconditions,omitempty"`
 	DynamicBlocks       map[string][]ExportDynamicBlock `json:"dynamic_blocks,omitempty"`
 	Location            string                          `json:"location,omitempty"`
 	// Note: `lifecycle` is excluded from Blocks because its meta-arg
@@ -207,12 +242,30 @@ type ExportTerraform struct {
 	RequiredVersion   string                       `json:"required_version,omitempty"`
 	RequiredProviders map[string]ExportProviderReq `json:"required_providers,omitempty"`
 	Backend           *ExportBackend               `json:"backend,omitempty"`
+	// Providers is the list of top-level `provider "X" { ... }` blocks
+	// in source order — distinct from required_providers (the version
+	// declarations). Each entry carries Type, Alias?, and the
+	// per-attribute Config map. Resources select non-default instances
+	// via the existing `provider` meta-arg → `provider = aws.east`
+	// matches Type=aws + Alias=east.
+	Providers []ExportProvider `json:"providers,omitempty"`
 }
 
 type ExportProviderReq struct {
 	Source             string `json:"source,omitempty"`
 	VersionConstraint  string `json:"version_constraint,omitempty"`
 	ConfigurationAlias string `json:"configuration_alias,omitempty"`
+}
+
+// ExportProvider is one top-level `provider "X" { ... }` block.
+// Alias is empty for the default instance. Config holds the per-
+// attribute body (excluding `alias`, which is promoted to its own
+// field) as the standard {text, value?, ast?} expression triple.
+type ExportProvider struct {
+	Type     string                      `json:"type"`
+	Alias    string                      `json:"alias,omitempty"`
+	Config   map[string]ExportExpression `json:"config,omitempty"`
+	Location string                      `json:"location,omitempty"`
 }
 
 type ExportBackend struct {
@@ -333,7 +386,7 @@ func exportModule(m *analysis.Module) ExportModule {
 			out.Dependencies[e.ID()] = sorted
 		}
 	}
-	out.Terraform = exportTerraform(m)
+	out.Terraform = exportTerraform(m, ctx)
 	out.Tracked = exportTrackedAttributes(m, ctx)
 
 	// Stable per-section ordering — converters depend on deterministic output.
@@ -383,7 +436,7 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 		Sensitive:   e.Sensitive,
 		Ephemeral:   e.Ephemeral,
 		Nullable:    !e.NonNullable,
-		Validations: e.Validations,
+		Validations: exportConditionBlocks(e.Validations, ctx),
 		Location:    e.Location(),
 	}
 	if e.DeclaredType != nil {
@@ -395,13 +448,39 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 
 func exportOutput(e analysis.Entity, ctx *hcl.EvalContext) ExportOutput {
 	return ExportOutput{
-		Name:      e.Name,
-		Value:     exprToExport(e.ValueExpr, ctx),
-		Sensitive: e.Sensitive,
-		Ephemeral: e.Ephemeral,
-		DependsOn: exprToExport(e.DependsOnExpr, ctx),
-		Location:  e.Location(),
+		Name:           e.Name,
+		Value:          exprToExport(e.ValueExpr, ctx),
+		Sensitive:      e.Sensitive,
+		Ephemeral:      e.Ephemeral,
+		DependsOn:      exprToExport(e.DependsOnExpr, ctx),
+		Preconditions:  exportConditionBlocks(e.Preconditions, ctx),
+		Postconditions: exportConditionBlocks(e.Postconditions, ctx),
+		Location:       e.Location(),
 	}
+}
+
+// exportConditionBlocks converts the analysis-side ConditionBlock
+// slice into the wire-format ExportConditionBlock list. Both inner
+// expressions go through exprToExport so consumers get the same
+// {text, value?, ast?} triple they get for every other expression in
+// the export. Nil/empty input → nil output (so the omitempty tag
+// drops the whole field).
+func exportConditionBlocks(blocks []analysis.ConditionBlock, ctx *hcl.EvalContext) []ExportConditionBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]ExportConditionBlock, len(blocks))
+	for i, b := range blocks {
+		entry := ExportConditionBlock{
+			Condition:    exprToExport(b.Condition, ctx),
+			ErrorMessage: exprToExport(b.ErrorMessage, ctx),
+		}
+		if b.Pos.File != "" {
+			entry.Location = filepath.Base(b.Pos.File) + ":" + strconv.Itoa(b.Pos.Line)
+		}
+		out[i] = entry
+	}
+	return out
 }
 
 func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
@@ -416,6 +495,8 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 		CreateBeforeDestroy: e.CreateBeforeDestroy,
 		IgnoreChanges:       exprToExport(e.IgnoreChangesExpr, ctx),
 		ReplaceTriggeredBy:  exprToExport(e.ReplaceTriggeredByExpr, ctx),
+		Preconditions:       exportConditionBlocks(e.Preconditions, ctx),
+		Postconditions:      exportConditionBlocks(e.Postconditions, ctx),
 		Location:            e.Location(),
 	}
 	if len(e.BodyAttrs) > 0 {
@@ -536,7 +617,7 @@ func exportModuleCall(e analysis.Entity, m *analysis.Module, ctx *hcl.EvalContex
 	return c
 }
 
-func exportTerraform(m *analysis.Module) ExportTerraform {
+func exportTerraform(m *analysis.Module, ctx *hcl.EvalContext) ExportTerraform {
 	t := ExportTerraform{
 		RequiredVersion: m.RequiredVersion(),
 	}
@@ -551,6 +632,22 @@ func exportTerraform(m *analysis.Module) ExportTerraform {
 	}
 	if b := m.Backend(); b != nil {
 		t.Backend = &ExportBackend{Type: b.Type}
+	}
+	if provs := m.Providers(); len(provs) > 0 {
+		t.Providers = make([]ExportProvider, 0, len(provs))
+		for _, p := range provs {
+			ep := ExportProvider{Type: p.Type, Alias: p.Alias}
+			if p.Pos.File != "" {
+				ep.Location = filepath.Base(p.Pos.File) + ":" + strconv.Itoa(p.Pos.Line)
+			}
+			if len(p.Config) > 0 {
+				ep.Config = make(map[string]ExportExpression, len(p.Config))
+				for name, expr := range p.Config {
+					ep.Config[name] = *exprToExport(expr, ctx)
+				}
+			}
+			t.Providers = append(t.Providers, ep)
+		}
 	}
 	return t
 }

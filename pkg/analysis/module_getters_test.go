@@ -181,10 +181,11 @@ var moduleGettersCases = []moduleGettersCase{
 				t.Errorf("nil Expr.Pos() = %+v, want zero", pos)
 			}
 			// validation/precondition/postcondition conditions: each should
-			// have one entry whose canonical text is the condition expression.
-			// Confirms blockCondition() ran for all three sub-block kinds.
-			if got := sizeVar.ValidationConditions; len(got) != 1 || got[0] != "var.size > 0" {
-				t.Errorf("ValidationConditions = %v, want [var.size > 0]", got)
+			// have one entry whose canonical condition text matches the
+			// declared expression. Post-migration the field is a structured
+			// []ConditionBlock — assertions go through ConditionText().
+			if got := sizeVar.Validations; len(got) != 1 || got[0].ConditionText() != "var.size > 0" {
+				t.Errorf("Validations = %v, want one block with text [var.size > 0]", got)
 			}
 			var web *analysis.Entity
 			for _, e := range m.Filter(analysis.KindResource) {
@@ -195,11 +196,11 @@ var moduleGettersCases = []moduleGettersCase{
 			if web == nil {
 				t.Fatal("missing resource.aws_instance.web")
 			}
-			if got := web.PreconditionConditions; len(got) != 1 || got[0] != "var.size <= 100" {
-				t.Errorf("PreconditionConditions = %v, want [var.size <= 100]", got)
+			if got := web.Preconditions; len(got) != 1 || got[0].ConditionText() != "var.size <= 100" {
+				t.Errorf("Preconditions = %v, want one block with text [var.size <= 100]", got)
 			}
-			if got := web.PostconditionConditions; len(got) != 1 || got[0] != `self.id != ""` {
-				t.Errorf(`PostconditionConditions = %v, want [self.id != ""]`, got)
+			if got := web.Postconditions; len(got) != 1 || got[0].ConditionText() != `self.id != ""` {
+				t.Errorf(`Postconditions = %v, want one block with text [self.id != ""]`, got)
 			}
 		},
 	},

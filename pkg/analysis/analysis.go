@@ -71,39 +71,39 @@ func (e *Expr) Pos() token.Position {
 
 // Entity is a single named thing declared in a Terraform module.
 type Entity struct {
-	Kind           EntityKind
-	Type           string // non-empty for resource and data source
-	Name           string
-	Pos            token.Position // source location of the declaration
-	DeclaredType   *TFType        // parsed type constraint; non-nil only for variables
-	HasDefault     bool           // variables: a default value was declared
-	DefaultExpr    *Expr          // variables: the default value expression
-	HasCount       bool           // resource/data/module: count meta-argument used
-	HasForEach     bool           // resource/data/module: for_each meta-argument used
-	NonNullable    bool           // variables: `nullable = false` explicitly set
-	Sensitive      bool           // variables/outputs: `sensitive = true` set
-	Ephemeral      bool           // variables/outputs: `ephemeral = true` (Terraform 1.10+)
-	Validations    int            // variables: number of `validation {}` blocks
-	Preconditions  int            // variables/outputs/resources: number of precondition blocks
-	Postconditions int            // variables/outputs/resources: number of postcondition blocks
-
-	// Canonical text of every block's `condition` attribute, in source
-	// order. Used by pkg/diff to detect content changes that count
-	// comparisons miss (e.g. one validation removed and another added with
-	// a different condition — both leaving the count unchanged).
-	ValidationConditions    []string
-	PreconditionConditions  []string
-	PostconditionConditions []string
-	ValueExpr               *Expr                          // outputs: the value expression
-	ProviderExpr            *Expr                          // resource/data: value of `provider` attribute
-	ModuleArgs              map[string]*Expr               // module blocks: argument-name → expression (excludes meta-args)
-	BodyAttrs               map[string]*Expr               // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
-	BodyBlocks              map[string][]*BodyBlock        // resource/data blocks: static nested-block name → instances (excludes lifecycle + dynamic)
-	BodyDynamicBlocks       map[string][]*BodyDynamicBlock // resource/data blocks: dynamic-block name → instances (each with for_each + iterator + content)
-	LocalExpr               *Expr                          // locals: the local's value expression
-	ForEachExpr             *Expr                          // resource/data/module: value of `for_each`
-	CountExpr               *Expr                          // resource/data/module: value of `count`
-	DependsOnExpr           *Expr                          // resource/data/module/output: value of `depends_on`
+	Kind         EntityKind
+	Type         string // non-empty for resource and data source
+	Name         string
+	Pos          token.Position // source location of the declaration
+	DeclaredType *TFType        // parsed type constraint; non-nil only for variables
+	HasDefault   bool           // variables: a default value was declared
+	DefaultExpr  *Expr          // variables: the default value expression
+	HasCount     bool           // resource/data/module: count meta-argument used
+	HasForEach   bool           // resource/data/module: for_each meta-argument used
+	NonNullable  bool           // variables: `nullable = false` explicitly set
+	Sensitive    bool           // variables/outputs: `sensitive = true` set
+	Ephemeral    bool           // variables/outputs: `ephemeral = true` (Terraform 1.10+)
+	// Validations / Preconditions / Postconditions capture every
+	// `validation {}` / `precondition {}` / `postcondition {}` block
+	// declared on this entity, in source order. Each carries the
+	// condition expression AND (when present) the error_message
+	// expression — both as full *Expr so downstream consumers (export,
+	// diff) get text + value + AST without re-parsing. Counts are
+	// derived from len() and condition-text comparison goes through
+	// ConditionTexts() for diff's multiset detection.
+	Validations       []ConditionBlock               // variables only
+	Preconditions     []ConditionBlock               // variables / outputs / resources
+	Postconditions    []ConditionBlock               // variables / outputs / resources
+	ValueExpr         *Expr                          // outputs: the value expression
+	ProviderExpr      *Expr                          // resource/data: value of `provider` attribute
+	ModuleArgs        map[string]*Expr               // module blocks: argument-name → expression (excludes meta-args)
+	BodyAttrs         map[string]*Expr               // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
+	BodyBlocks        map[string][]*BodyBlock        // resource/data blocks: static nested-block name → instances (excludes lifecycle + dynamic)
+	BodyDynamicBlocks map[string][]*BodyDynamicBlock // resource/data blocks: dynamic-block name → instances (each with for_each + iterator + content)
+	LocalExpr         *Expr                          // locals: the local's value expression
+	ForEachExpr       *Expr                          // resource/data/module: value of `for_each`
+	CountExpr         *Expr                          // resource/data/module: value of `count`
+	DependsOnExpr     *Expr                          // resource/data/module/output: value of `depends_on`
 
 	// Lifecycle block (resources only)
 	PreventDestroy         bool  // `prevent_destroy = true`
@@ -157,6 +157,65 @@ type ProviderRequirement struct {
 	Version string
 }
 
+// ConditionBlock captures one `validation {}` / `precondition {}` /
+// `postcondition {}` block. Condition is the body's `condition`
+// expression; ErrorMessage is the optional `error_message` expression
+// (only meaningful for `validation` blocks per Terraform's spec, but
+// captured uniformly here so downstream consumers iterate one shape).
+// Both are nil-safe — Expr.Text() returns "" for a nil receiver.
+type ConditionBlock struct {
+	Condition    *Expr
+	ErrorMessage *Expr
+	Pos          token.Position
+}
+
+// ConditionText returns the canonical (hclwrite-formatted) text of the
+// condition expression, or "" when Condition is nil. Equivalent to
+// the per-block string entry the previous shape stored directly; kept
+// as a method so consumers don't need to know the expression machinery.
+func (c ConditionBlock) ConditionText() string {
+	return c.Condition.Text()
+}
+
+// conditionTexts collects ConditionText from every block in the slice.
+// Used by pkg/diff for its multiset text-equality comparison —
+// preserves the old shape's interface so the comparison logic stays
+// unchanged across the type migration.
+func conditionTexts(blocks []ConditionBlock) []string {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]string, len(blocks))
+	for i, b := range blocks {
+		out[i] = b.ConditionText()
+	}
+	return out
+}
+
+// ConditionTexts is the exported counterpart of conditionTexts —
+// callable from pkg/diff which lives in a separate package. Returns
+// the canonical text of every block's condition expression, in source
+// order. nil for an empty slice (matches the previous field shape).
+func ConditionTexts(blocks []ConditionBlock) []string {
+	return conditionTexts(blocks)
+}
+
+// Provider captures one top-level `provider "X" { ... }` block —
+// the actual instance, distinct from the `required_providers { X = {
+// source, version } }` declaration. Type is the provider label
+// ("aws", "google"); Alias is the optional `alias = "..."` value
+// (empty when not set). Config holds the canonical text of every
+// flat attribute in the body (excluding `alias`, which is promoted
+// to a dedicated field), keyed by attribute name. Resources
+// referencing a non-default instance use the meta-arg
+// `provider = aws.east`, where `east` matches Provider.Alias.
+type Provider struct {
+	Type   string
+	Alias  string
+	Config map[string]*Expr
+	Pos    token.Position
+}
+
 // Module is the analysis result for one Terraform module (one directory).
 type Module struct {
 	entities          []Entity
@@ -171,6 +230,11 @@ type Module struct {
 	requiredVersion   string
 	requiredProviders map[string]ProviderRequirement
 	backend           *Backend
+	// providers captures every top-level `provider "X" { ... }` block,
+	// in source order. Multiple entries with the same Type but
+	// different Alias model the multi-region / multi-account pattern
+	// (`provider "aws" { alias = "east", region = "us-east-1" }`).
+	providers []Provider
 
 	// moduleOutputRefs is the set of output names referenced via
 	// module.<callName>.<outputName> traversals anywhere in this module's
@@ -238,6 +302,21 @@ func (m *Module) RequiredProviders() map[string]ProviderRequirement {
 	for k, v := range m.requiredProviders {
 		out[k] = v
 	}
+	return out
+}
+
+// Providers returns the top-level `provider "X" { ... }` instances
+// declared in this module, in source order. Distinct from
+// RequiredProviders, which is only the `required_providers { }`
+// declarations under terraform { }; Providers captures the actual
+// configured instances (with their alias + per-attribute config) that
+// resources select via the `provider = X.alias` meta-arg. Nil-safe.
+func (m *Module) Providers() []Provider {
+	if m == nil {
+		return nil
+	}
+	out := make([]Provider, len(m.providers))
+	copy(out, m.providers)
 	return out
 }
 
@@ -594,8 +673,36 @@ func collectEntities(m *Module, file *File) {
 			}
 		case "terraform":
 			scanTerraformBlock(m, block.Body, file.Source)
+		case "provider":
+			if len(block.Labels) == 1 {
+				scanProviderBlock(m, block, file.Source)
+			}
 		}
 	}
+}
+
+// scanProviderBlock reads one top-level `provider "X" { ... }` block
+// into a Provider entry on the module. The `alias` attribute is
+// promoted to Provider.Alias; everything else lands in Config keyed by
+// attribute name.
+func scanProviderBlock(m *Module, block *hclsyntax.Block, src []byte) {
+	p := Provider{
+		Type:   block.Labels[0],
+		Config: map[string]*Expr{},
+		Pos:    posFromRange(block.DefRange()),
+	}
+	if block.Body != nil {
+		for _, attr := range sortedAttrs(block.Body) {
+			if attr.Name == "alias" {
+				if s, ok := constantString(attr.Expr); ok {
+					p.Alias = s
+				}
+				continue
+			}
+			p.Config[attr.Name] = &Expr{E: attr.Expr, Source: src}
+		}
+	}
+	m.providers = append(m.providers, p)
 }
 
 // variableEntity builds an Entity for a variable block. If both a type
@@ -634,14 +741,11 @@ func variableEntity(block *hclsyntax.Block, src []byte) (Entity, *TypeCheckError
 	for _, b := range block.Body.Blocks {
 		switch b.Type {
 		case "validation":
-			e.Validations++
-			e.ValidationConditions = append(e.ValidationConditions, blockCondition(b, src))
+			e.Validations = append(e.Validations, buildConditionBlock(b, src))
 		case "precondition":
-			e.Preconditions++
-			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(b, src))
+			e.Preconditions = append(e.Preconditions, buildConditionBlock(b, src))
 		case "postcondition":
-			e.Postconditions++
-			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(b, src))
+			e.Postconditions = append(e.Postconditions, buildConditionBlock(b, src))
 		}
 	}
 
@@ -678,28 +782,32 @@ func outputEntity(block *hclsyntax.Block, src []byte) Entity {
 	for _, b := range block.Body.Blocks {
 		switch b.Type {
 		case "precondition":
-			e.Preconditions++
-			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(b, src))
+			e.Preconditions = append(e.Preconditions, buildConditionBlock(b, src))
 		case "postcondition":
-			e.Postconditions++
-			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(b, src))
+			e.Postconditions = append(e.Postconditions, buildConditionBlock(b, src))
 		}
 	}
 	return e
 }
 
-// blockCondition returns the canonical text of a validation/precondition/
-// postcondition block's `condition` attribute, or "" when the block has no
-// condition attribute.
-func blockCondition(b *hclsyntax.Block, src []byte) string {
+// buildConditionBlock parses a validation / precondition / postcondition
+// block into a structured ConditionBlock. Both `condition` and
+// `error_message` attributes are captured as full *Expr so downstream
+// consumers (export, diff) get text + value + AST without having to
+// re-parse. The text-comparison contract pkg/diff relies on goes
+// through ConditionBlock.ConditionText() / ConditionTexts().
+func buildConditionBlock(b *hclsyntax.Block, src []byte) ConditionBlock {
+	cb := ConditionBlock{Pos: posFromRange(b.DefRange())}
 	if b.Body == nil {
-		return ""
+		return cb
 	}
-	attr, ok := b.Body.Attributes["condition"]
-	if !ok {
-		return ""
+	if attr, ok := b.Body.Attributes["condition"]; ok {
+		cb.Condition = &Expr{E: attr.Expr, Source: src}
 	}
-	return (&Expr{E: attr.Expr, Source: src}).Text()
+	if attr, ok := b.Body.Attributes["error_message"]; ok {
+		cb.ErrorMessage = &Expr{E: attr.Expr, Source: src}
+	}
+	return cb
 }
 
 // scanTerraformBlock reads the attributes and sub-blocks of a top-level
@@ -1037,11 +1145,9 @@ func scanLifecycleBlock(e *Entity, body *hclsyntax.Body, src []byte) {
 	for _, child := range body.Blocks {
 		switch child.Type {
 		case "precondition":
-			e.Preconditions++
-			e.PreconditionConditions = append(e.PreconditionConditions, blockCondition(child, src))
+			e.Preconditions = append(e.Preconditions, buildConditionBlock(child, src))
 		case "postcondition":
-			e.Postconditions++
-			e.PostconditionConditions = append(e.PostconditionConditions, blockCondition(child, src))
+			e.Postconditions = append(e.Postconditions, buildConditionBlock(child, src))
 		}
 	}
 }

@@ -4,6 +4,16 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens export` — closes the last two "still deferred" items (schema 0.4.0-prototype).**
+
+  - **`terraform.providers`** — top-level `provider "X" { alias = "...", ... }` blocks now appear under `terraform.providers` as a list (distinct from `required_providers`, which is the version-constraint side). Each entry carries `type`, optional `alias`, and a `config` map of every flat attribute as the standard `{text, value?, ast?}` expression triple. Resources select non-default instances via the existing `provider` meta-arg → `provider = aws.east` matches the entry with `type=aws` + `alias=east`. New `pkg/analysis.Provider` type + `Module.Providers()` getter (nil-safe per the project convention). New `provider_aliases` golden fixture exercises the default + aliased + multi-attribute-config cases.
+
+  - **`validations` / `preconditions` / `postconditions`** — `validation {}`, `precondition {}`, and `postcondition {}` block bodies are now surfaced as structured lists on `ExportVariable` (validations only), `ExportOutput` (pre/postconditions), and `ExportResource` (pre/postconditions). Each entry has `condition` and optional `error_message` as full `{text, value?, ast?}` expression triples — converters can translate the boolean check into the target's native validation primitive (kro CEL validators, Crossplane CompositionRevision policies, …) or surface the source text. Replaces the previous `validation_count` integer + internal canonical-text list with a single richer field per kind. `pkg/analysis.Entity` migrated from `Validations int` + `ValidationConditions []string` to `Validations []ConditionBlock`; same for pre/postconditions. `pkg/diff` switched to `analysis.ConditionTexts(blocks)` for its multiset comparison (text-equality contract preserved). New `condition_blocks` golden fixture exercises validation blocks on a variable, lifecycle precondition+postcondition on a resource, and an output-side precondition.
+
+  Schema bumped 0.3.0-prototype → 0.4.0-prototype. The README's "Not yet emitted" list shrinks from three items to one (`lifecycle` excluded by design — its meta-args land on the parent resource, its nested pre/postconditions land in the new fields).
+
 ## [0.9.1] — 2026-04-25
 
 ### Added
