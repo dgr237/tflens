@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-25
+
 ### Fixed
 
 - **`writeFile` in tarball extraction silently swallowed `Close()` errors.** A deferred `f.Close()` after `io.Copy` ignored the close-flush error, so an OS-level buffered-write failure (out of disk during cache populate, network filesystem hiccup) could leave a truncated module file in the cache that subsequent `tflens` runs would parse as valid HCL. Now closes explicitly and surfaces both copy + close errors.
@@ -119,7 +121,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/dgr237/tflens/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/dgr237/tflens/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dgr237/tflens/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/dgr237/tflens/compare/v0.1.2...v0.1.3
