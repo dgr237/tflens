@@ -1,0 +1,3 @@
+locals {
+  out = keys({ "z" = 1, "a" = 2, "m" = 3 })
+}

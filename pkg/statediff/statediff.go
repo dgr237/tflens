@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
@@ -323,21 +324,37 @@ func collectSensitiveCandidates(oldMod, newMod *analysis.Module) []valueChange {
 	return out
 }
 
-func diffValues(kind string, oldV, newV map[string]string) []valueChange {
+// diffValues pairs same-named entries from oldV and newV and emits
+// one valueChange per real difference. Comparison is text-first
+// (cheap, conservative); when texts differ but BOTH sides evaluated
+// to a cty.Value cleanly, value equality is the tiebreaker — text-
+// different / value-identical pairs are suppressed (e.g. a literal
+// list compared to sort() of the same elements).
+//
+// When evaluation isn't possible on either side (references
+// something outside the EvalContext, uses an out-of-stdlib function),
+// the value-equality check is skipped and the conservative text-only
+// behaviour applies. That keeps the false-positive bias intact for
+// expressions tflens can't reason about statically.
+func diffValues(kind string, oldV, newV map[string]valueRef) []valueChange {
 	var out []valueChange
-	for name, oldText := range oldV {
-		newText, ok := newV[name]
+	for name, old := range oldV {
+		neu, ok := newV[name]
 		if !ok {
-			out = append(out, valueChange{kind: kind, name: name, oldText: oldText})
+			out = append(out, valueChange{kind: kind, name: name, oldText: old.text})
 			continue
 		}
-		if oldText != newText {
-			out = append(out, valueChange{kind: kind, name: name, oldText: oldText, newText: newText})
+		if old.text == neu.text {
+			continue
 		}
+		if old.ok && neu.ok && analysis.ValueEquivalent(old.val, neu.val) {
+			continue
+		}
+		out = append(out, valueChange{kind: kind, name: name, oldText: old.text, newText: neu.text})
 	}
-	for name, newText := range newV {
+	for name, neu := range newV {
 		if _, ok := oldV[name]; !ok {
-			out = append(out, valueChange{kind: kind, name: name, newText: newText})
+			out = append(out, valueChange{kind: kind, name: name, newText: neu.text})
 		}
 	}
 	return out
@@ -398,32 +415,60 @@ func mergeSensitive(out *[]SensitiveChange, modPath string, cand valueChange, r 
 	})
 }
 
-func localsMap(m *analysis.Module) map[string]string {
-	out := map[string]string{}
+// valueRef pairs an expression's canonical text with its
+// statically-evaluated cty.Value (when evaluation succeeds). The
+// text is what diffValues compares first; the value enables a
+// secondary equality check that suppresses false positives when
+// text differs but the effective value doesn't (e.g.
+// `["a","b"]` vs `sort(["b","a"])`).
+//
+// ok is false when the expression couldn't be evaluated cleanly —
+// references something not in the EvalContext, uses a Terraform
+// function not in the curated stdlib set, etc. In that case
+// diffValues falls back to text-only comparison (the conservative
+// path: flag the change if texts differ).
+type valueRef struct {
+	text string
+	val  cty.Value
+	ok   bool
+}
+
+func localsMap(m *analysis.Module) map[string]valueRef {
+	out := map[string]valueRef{}
 	if m == nil {
 		return out
 	}
+	ctx := m.EvalContext()
 	for _, e := range m.Filter(analysis.KindLocal) {
-		if e.LocalExpr == nil {
-			out[e.Name] = ""
-			continue
+		ref := valueRef{}
+		if e.LocalExpr != nil {
+			ref.text = e.LocalExpr.Text()
+			if v, diags := e.LocalExpr.E.Value(ctx); !diags.HasErrors() {
+				ref.val = v
+				ref.ok = true
+			}
 		}
-		out[e.Name] = e.LocalExpr.Text()
+		out[e.Name] = ref
 	}
 	return out
 }
 
-func variableDefaultsMap(m *analysis.Module) map[string]string {
-	out := map[string]string{}
+func variableDefaultsMap(m *analysis.Module) map[string]valueRef {
+	out := map[string]valueRef{}
 	if m == nil {
 		return out
 	}
+	ctx := m.EvalContext()
 	for _, e := range m.Filter(analysis.KindVariable) {
-		if e.DefaultExpr == nil {
-			out[e.Name] = ""
-			continue
+		ref := valueRef{}
+		if e.DefaultExpr != nil {
+			ref.text = e.DefaultExpr.Text()
+			if v, diags := e.DefaultExpr.E.Value(ctx); !diags.HasErrors() {
+				ref.val = v
+				ref.ok = true
+			}
 		}
-		out[e.Name] = e.DefaultExpr.Text()
+		out[e.Name] = ref
 	}
 	return out
 }

@@ -1,0 +1,3 @@
+locals {
+  out = element(["a", "b", "c"], 1)
+}
