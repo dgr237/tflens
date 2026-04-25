@@ -146,7 +146,9 @@ func walkNode(n *ModuleNode, fn func(*ModuleNode) bool) {
 }
 
 // LoadProject loads the root module at rootDir and recursively loads any
-// child modules whose directories can be resolved.
+// child modules whose directories can be resolved using only the local-
+// path + .terraform/modules/modules.json resolvers (no network). For
+// network resolution use Loader.Project.
 func LoadProject(rootDir string) (*Project, []FileError, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -162,11 +164,13 @@ func LoadProject(rootDir string) (*Project, []FileError, error) {
 		})
 	}
 	chain := resolver.NewChain(manifestResolver, resolver.NewLocalResolver())
-	return LoadProjectWith(absRoot, chain, allErrors)
+	return loadProjectWith(absRoot, chain, allErrors)
 }
 
-// LoadProjectWith is LoadProject with an injected resolver.
-func LoadProjectWith(rootDir string, r resolver.Resolver, seedErrors []FileError) (*Project, []FileError, error) {
+// loadProjectWith is LoadProject with an injected resolver. Internal
+// — used by LoadProject and Loader.Project to share the recursive
+// loading core. External callers compose via Loader instead.
+func loadProjectWith(rootDir string, r resolver.Resolver, seedErrors []FileError) (*Project, []FileError, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving root path: %w", err)

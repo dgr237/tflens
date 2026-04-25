@@ -57,7 +57,7 @@ func init() {
 }
 
 func runStatediff(s config.Settings) error {
-	oldProj, newProj, cleanup, err := loader.LoadProjectsForDiff(s.Path, s.BaseRef, s.Offline)
+	oldProj, newProj, cleanup, err := loader.New(s).ProjectsForDiff(s.Path, s.BaseRef)
 	if err != nil {
 		return err
 	}

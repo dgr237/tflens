@@ -10,7 +10,7 @@ import (
 	"github.com/dgr237/tflens/pkg/resolver"
 )
 
-// PrepareWorktree stages a git worktree checked out at baseRef so the
+// prepareWorktree stages a git worktree checked out at baseRef so the
 // caller can load it as a second workspace alongside the working
 // tree. workspace is the caller's "current" workspace — typically
 // cwd on a feature branch. baseRef can be any ref `git rev-parse`
@@ -26,7 +26,10 @@ import (
 // names (RUNNER~1 vs runneradmin) and macOS /private/var symlinks,
 // both of which cause git and Go to disagree about the canonical
 // path form.
-func PrepareWorktree(workspace, baseRef string) (oldDir string, cleanup func(), err error) {
+//
+// Internal — called by loadProjectAtRef. External callers use
+// Loader.ProjectsForDiff which composes this with the project load.
+func prepareWorktree(workspace, baseRef string) (oldDir string, cleanup func(), err error) {
 	wsAbs, err := filepath.Abs(workspace)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolving workspace path: %w", err)
@@ -94,19 +97,18 @@ func ResolveAutoRef(workspace string) (string, error) {
 	return "", fmt.Errorf("could not auto-detect base ref (tried @{upstream}, origin/HEAD, main, master); pass an explicit ref")
 }
 
-// LoadProjectAtRef stages a worktree at baseRef and loads the project
-// inside it using the supplied resolver. Convenience wrapper around
-// PrepareWorktree + LoadProjectWith — the common shape every diff /
-// whatif / statediff command needs for the "old" side of a comparison.
+// loadProjectAtRef stages a worktree at baseRef and loads the project
+// inside it using the supplied resolver. Internal — used by
+// Loader.ProjectsForDiff to load the "old" side of a comparison.
 //
 // Returns the loaded project and the cleanup func. Cleanup MUST be
 // deferred to remove the temporary worktree.
-func LoadProjectAtRef(workspace, baseRef string, r resolver.Resolver) (*Project, func(), error) {
-	oldDir, cleanup, err := PrepareWorktree(workspace, baseRef)
+func loadProjectAtRef(workspace, baseRef string, r resolver.Resolver) (*Project, func(), error) {
+	oldDir, cleanup, err := prepareWorktree(workspace, baseRef)
 	if err != nil {
 		return nil, nil, err
 	}
-	proj, _, err := LoadProjectWith(oldDir, r, nil)
+	proj, _, err := loadProjectWith(oldDir, r, nil)
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("loading workspace at %s: %w", baseRef, err)

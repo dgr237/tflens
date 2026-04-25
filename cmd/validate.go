@@ -34,7 +34,7 @@ func init() {
 }
 
 func runValidate(s config.Settings) {
-	mod, crossErrs, fileErrs, err := loader.LoadForValidate(s.Path, s.Offline)
+	mod, crossErrs, fileErrs, err := loader.New(s).ForValidate(s.Path)
 	if err != nil {
 		fatalf("%v", err)
 	}

@@ -60,7 +60,7 @@ func init() {
 // restricts to that one call name; otherwise every call that differs
 // is simulated.
 func runWhatifRef(s config.Settings) error {
-	oldProj, newProj, cleanup, err := loader.LoadProjectsForDiff(s.Path, s.BaseRef, s.Offline)
+	oldProj, newProj, cleanup, err := loader.New(s).ProjectsForDiff(s.Path, s.BaseRef)
 	if err != nil {
 		return err
 	}

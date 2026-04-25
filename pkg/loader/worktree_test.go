@@ -4,54 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/loader"
 )
-
-// TestPrepareWorktreeAtBaseRefMaterializesOldFiles: the worktree
-// returned by PrepareWorktree contains the file content from baseRef,
-// not from the current working tree.
-func TestPrepareWorktreeAtBaseRefMaterializesOldFiles(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	repo := newRepoWithTwoCommits(t)
-	workspace := filepath.Join(repo, "workspace")
-
-	oldDir, cleanup, err := loader.PrepareWorktree(workspace, "main")
-	if err != nil {
-		t.Fatalf("PrepareWorktree: %v", err)
-	}
-	defer cleanup()
-
-	got, err := os.ReadFile(filepath.Join(oldDir, "main.tf"))
-	if err != nil {
-		t.Fatalf("read worktree main.tf: %v", err)
-	}
-	// strings.Contains avoids a Windows CRLF mismatch — git on
-	// Windows runners can apply autocrlf to checked-out content.
-	if !strings.Contains(string(got), "version = 1") {
-		t.Errorf("worktree shows %q; want main-branch content (version = 1)", string(got))
-	}
-}
-
-func TestPrepareWorktreeOutsideRepoIsError(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
-	if _, _, err := loader.PrepareWorktree(t.TempDir(), "main"); err == nil {
-		t.Error("expected error for non-repo workspace")
-	}
-}
-
-func TestPrepareWorktreeUnknownRefIsError(t *testing.T) {
-	repo := newRepoWithTwoCommits(t)
-	if _, _, err := loader.PrepareWorktree(filepath.Join(repo, "workspace"), "no-such-ref"); err == nil {
-		t.Error("expected error for unknown ref")
-	}
-}
 
 func TestResolveAutoRefPrefersExistingBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

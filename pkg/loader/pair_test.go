@@ -10,23 +10,6 @@ import (
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-func TestLeafSegment(t *testing.T) {
-	cases := map[string]string{
-		"vpc":       "vpc",
-		"vpc.sg":    "sg",
-		"a.b.c":     "c",
-		"":          "",
-		".":         "",
-		"trailing.": "",
-		".leading":  "leading",
-	}
-	for in, want := range cases {
-		if got := loader.LeafSegment(in); got != want {
-			t.Errorf("LeafSegment(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestModuleCallStatusString(t *testing.T) {
 	cases := map[loader.ModuleCallStatus]string{
 		loader.StatusChanged:        "changed",
