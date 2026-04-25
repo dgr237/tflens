@@ -70,6 +70,20 @@ ACK_MAPPING = {
             "encryption_config": "encryptionConfig",
         },
     },
+    "aws_security_group": {
+        "apiVersion": "ec2.services.k8s.aws/v1alpha1",
+        "kind": "SecurityGroup",
+        "attr_renames": {
+            "name": "name",
+            "description": "description",
+            "vpc_id": "vpcID",
+        },
+        "block_renames": {
+            "ingress": "ingressRules",
+            "egress": "egressRules",
+            "tags": "tags",
+        },
+    },
 }
 
 # Standard ACK convention: every ACK resource exposes its AWS ARN under
@@ -317,7 +331,104 @@ def emit_block(block, mapping):
             out[renamed] = emit_block(instances[0], mapping)
         else:
             out[renamed] = [emit_block(b, mapping) for b in instances]
+    for name, instances in (block.get("dynamic_blocks") or {}).items():
+        renamed = block_renames.get(name, to_camel(name))
+        # Multiple dynamic blocks with the same name? Concatenate their
+        # CEL expressions. The single-instance case is the common one.
+        out[renamed] = [emit_dynamic(d, name, mapping) for d in instances]
+        if len(out[renamed]) == 1:
+            out[renamed] = out[renamed][0]
     return out
+
+
+def emit_dynamic(d, block_label, mapping):
+    """Translate one dynamic-block instance into a kro for-each
+    expression. The shape is a CEL list comprehension that maps the
+    for_each source through a content template — rendering each
+    iteration's content body with the iterator-variable references
+    rewritten to CEL list-element refs.
+
+    A real kro emitter would use a richer for-each primitive; this POC
+    produces a CEL .map() expression that's at least syntactically
+    well-formed and shape-correct."""
+    iterator = d.get("iterator") or block_label
+    for_each_cel = expr_to_cel(d["for_each"]["ast"]) if d.get("for_each", {}).get("ast") \
+        else expr_to_emit(d.get("for_each"))
+    content_template = render_content_with_iterator(d.get("content", {}), iterator, mapping)
+    # Result: a placeholder showing the iterator variable + template.
+    # In production: emit a kro for-each block (kro.run/v1alpha1
+    # supports `forEach` per-resource) instead of folding into CEL.
+    return {
+        "_kro_for_each": "${" + for_each_cel + "}",
+        "_kro_iterator_alias": iterator,
+        "_template": content_template,
+    }
+
+
+def render_content_with_iterator(content, iterator, mapping):
+    """Render a dynamic-block content template, knowing that any
+    scope_traversal whose root matches `iterator` is an iteration
+    variable (not a stale reference). Falls back to standard block
+    rendering for everything else."""
+    out = {}
+    for name, expr in (content.get("attributes") or {}).items():
+        out[to_camel(name)] = expr_to_emit_with_iterator(expr, iterator)
+    block_renames = (mapping or {}).get("block_renames", {})
+    for name, instances in (content.get("blocks") or {}).items():
+        renamed = block_renames.get(name, to_camel(name))
+        if len(instances) == 1:
+            out[renamed] = render_content_with_iterator(instances[0], iterator, mapping)
+        else:
+            out[renamed] = [render_content_with_iterator(b, iterator, mapping) for b in instances]
+    return out
+
+
+def expr_to_emit_with_iterator(expr, iterator):
+    """Like expr_to_emit but rewrites references through the iterator
+    variable into CEL list-element refs. `<iterator>.value.field`
+    becomes `item.field` (using `item` as the canonical CEL iteration
+    variable for readability)."""
+    if expr is None:
+        return None
+    if "ast" in expr and ast_has_iterator_ref(expr["ast"], iterator):
+        return "${" + ast_to_cel_with_iterator(expr["ast"], iterator) + "}"
+    return expr_to_emit(expr)
+
+
+def ast_has_iterator_ref(ast, iterator):
+    if not isinstance(ast, dict):
+        return False
+    if ast.get("node") == "scope_traversal":
+        steps = ast.get("traversal") or []
+        if steps and steps[0].get("step") == "root" and steps[0].get("name") == iterator:
+            return True
+    for v in ast.values():
+        if isinstance(v, dict) and ast_has_iterator_ref(v, iterator):
+            return True
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict) and ast_has_iterator_ref(item, iterator):
+                    return True
+    return False
+
+
+def ast_to_cel_with_iterator(ast, iterator):
+    """Custom CEL emit that rewrites <iterator>.value.X → item.X
+    (and <iterator>.key → item_key). Falls through to expr_to_cel for
+    everything else."""
+    if isinstance(ast, dict) and ast.get("node") == "scope_traversal":
+        steps = ast.get("traversal") or []
+        if steps and steps[0].get("step") == "root" and steps[0].get("name") == iterator:
+            rest = steps[1:]
+            # iterator.value.X.Y... → item.X.Y...
+            if rest and rest[0].get("step") == "attr" and rest[0].get("name") == "value":
+                tail = ".".join(s["name"] for s in rest[1:] if s["step"] == "attr")
+                return "item" + (("." + tail) if tail else "")
+            # iterator.key → item_key
+            if rest and rest[0].get("step") == "attr" and rest[0].get("name") == "key":
+                return "item_key"
+            return "item"
+    return expr_to_cel(ast)
 
 
 def emit_resource(res):
@@ -345,6 +456,11 @@ def emit_resource(res):
             spec[renamed] = emit_block(instances[0], mapping)
         else:
             spec[renamed] = [emit_block(b, mapping) for b in instances]
+
+    for name, instances in (res.get("dynamic_blocks") or {}).items():
+        renamed = block_renames.get(name, to_camel(name))
+        rendered = [emit_dynamic(d, name, mapping) for d in instances]
+        spec[renamed] = rendered if len(rendered) > 1 else rendered[0]
 
     return {
         "id": res["name"],

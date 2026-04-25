@@ -31,6 +31,12 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
+// 0.3.0-prototype added dynamic_blocks: a recursive
+// `{<name>: [{for_each, iterator?, content}, ...]}` map alongside
+// the static blocks map on every resource/data body and on every
+// nested block. Pure addition (no field renames) but the schema is
+// bumped so consumers can detect the new surface.
+//
 // 0.2.0-prototype unified every expression-bearing field (count,
 // for_each, depends_on, lifecycle, module-call arguments, locals,
 // outputs, variable defaults, …) under the same {text, value?, ast?}
@@ -38,7 +44,7 @@ import (
 // wherever an HCL expression appears in the export. Schema bumped
 // from 0.1.0-prototype because the *_text string fields were
 // removed in favour of nested objects.
-const ExportSchemaVersion = "0.2.0-prototype"
+const ExportSchemaVersion = "0.3.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -90,23 +96,26 @@ type ExportOutput struct {
 }
 
 type ExportResource struct {
-	Type                string                      `json:"type"`
-	Name                string                      `json:"name"`
-	Provider            *ExportExpression           `json:"provider,omitempty"`
-	Count               *ExportExpression           `json:"count,omitempty"`
-	ForEach             *ExportExpression           `json:"for_each,omitempty"`
-	DependsOn           *ExportExpression           `json:"depends_on,omitempty"`
-	PreventDestroy      bool                        `json:"prevent_destroy,omitempty"`
-	CreateBeforeDestroy bool                        `json:"create_before_destroy,omitempty"`
-	IgnoreChanges       *ExportExpression           `json:"ignore_changes,omitempty"`
-	ReplaceTriggeredBy  *ExportExpression           `json:"replace_triggered_by,omitempty"`
-	Attributes          map[string]ExportExpression `json:"attributes,omitempty"`
-	Blocks              map[string][]ExportBlock    `json:"blocks,omitempty"`
-	Location            string                      `json:"location,omitempty"`
-	// Note: `lifecycle` (already projected into dedicated meta-arg
-	// fields like PreventDestroy / IgnoreChanges) and `dynamic`
-	// (special generation semantics, deferred) are excluded from
-	// the Blocks map. See pkg/analysis.isResourceMetaBlock.
+	Type                string                          `json:"type"`
+	Name                string                          `json:"name"`
+	Provider            *ExportExpression               `json:"provider,omitempty"`
+	Count               *ExportExpression               `json:"count,omitempty"`
+	ForEach             *ExportExpression               `json:"for_each,omitempty"`
+	DependsOn           *ExportExpression               `json:"depends_on,omitempty"`
+	PreventDestroy      bool                            `json:"prevent_destroy,omitempty"`
+	CreateBeforeDestroy bool                            `json:"create_before_destroy,omitempty"`
+	IgnoreChanges       *ExportExpression               `json:"ignore_changes,omitempty"`
+	ReplaceTriggeredBy  *ExportExpression               `json:"replace_triggered_by,omitempty"`
+	Attributes          map[string]ExportExpression     `json:"attributes,omitempty"`
+	Blocks              map[string][]ExportBlock        `json:"blocks,omitempty"`
+	DynamicBlocks       map[string][]ExportDynamicBlock `json:"dynamic_blocks,omitempty"`
+	Location            string                          `json:"location,omitempty"`
+	// Note: `lifecycle` is excluded from Blocks because its meta-arg
+	// attributes are projected into dedicated parent-resource fields
+	// (PreventDestroy / IgnoreChanges / …). `dynamic` blocks are
+	// surfaced separately in DynamicBlocks rather than Blocks because
+	// their semantics are different — they generate the named block
+	// at plan time from a for_each iteration over a content template.
 }
 
 // ExportExpression is the shared shape for every HCL expression that
@@ -141,10 +150,41 @@ type ExportExpression struct {
 // `encryption_config { provider { key_arn = ... } }`). Repeated
 // blocks (`ebs_block_device { ... }` × N) appear as multiple entries
 // in the parent's []ExportBlock slice, in source order.
+//
+// DynamicBlocks captures `dynamic "<name>" { ... }` nested inside
+// this block, so dynamic-inside-static (or dynamic-inside-dynamic
+// via Content) recurses uniformly.
 type ExportBlock struct {
-	Attributes map[string]ExportExpression `json:"attributes,omitempty"`
-	Blocks     map[string][]ExportBlock    `json:"blocks,omitempty"`
-	Location   string                      `json:"location,omitempty"`
+	Attributes    map[string]ExportExpression     `json:"attributes,omitempty"`
+	Blocks        map[string][]ExportBlock        `json:"blocks,omitempty"`
+	DynamicBlocks map[string][]ExportDynamicBlock `json:"dynamic_blocks,omitempty"`
+	Location      string                          `json:"location,omitempty"`
+}
+
+// ExportDynamicBlock is one `dynamic "<name>" { for_each = ...,
+// iterator = ..., content { ... } }` instance. The block label (the
+// "<name>" part) is the key in the parent's DynamicBlocks map and
+// names the block type to generate at plan time.
+//
+// ForEach is the iteration source as an ExportExpression — the same
+// {text, value?, ast?} shape used everywhere else, so converters
+// can translate references to var.X / local.Y / resource.foo here.
+//
+// Iterator is the per-iteration variable name. When omitted in the
+// source it defaults to the block label — emitted as empty here so
+// consumers can choose whether to fold the default in. The content
+// body's expressions reference iterator.value / iterator.key, so
+// converters need this to map those refs to the target language's
+// iteration variable.
+//
+// Content is the template body, reusing ExportBlock so dynamic-
+// inside-dynamic (and static-inside-dynamic) work via the same
+// recursion.
+type ExportDynamicBlock struct {
+	ForEach  *ExportExpression `json:"for_each,omitempty"`
+	Iterator string            `json:"iterator,omitempty"`
+	Content  ExportBlock       `json:"content"`
+	Location string            `json:"location,omitempty"`
 }
 
 type ExportLocal struct {
@@ -394,6 +434,16 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 			r.Blocks[name] = out
 		}
 	}
+	if len(e.BodyDynamicBlocks) > 0 {
+		r.DynamicBlocks = make(map[string][]ExportDynamicBlock, len(e.BodyDynamicBlocks))
+		for name, instances := range e.BodyDynamicBlocks {
+			out := make([]ExportDynamicBlock, 0, len(instances))
+			for _, d := range instances {
+				out = append(out, exportDynamicBlock(d, ctx))
+			}
+			r.DynamicBlocks[name] = out
+		}
+	}
 	return r
 }
 
@@ -423,6 +473,39 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 			}
 			out.Blocks[name] = children
 		}
+	}
+	if len(b.DynamicBlocks) > 0 {
+		out.DynamicBlocks = make(map[string][]ExportDynamicBlock, len(b.DynamicBlocks))
+		for name, instances := range b.DynamicBlocks {
+			children := make([]ExportDynamicBlock, 0, len(instances))
+			for _, d := range instances {
+				children = append(children, exportDynamicBlock(d, ctx))
+			}
+			out.DynamicBlocks[name] = children
+		}
+	}
+	return out
+}
+
+// exportDynamicBlock converts a *analysis.BodyDynamicBlock into the
+// wire-format ExportDynamicBlock. Content recurses through exportBlock
+// so dynamic-inside-static and dynamic-inside-dynamic both work.
+//
+// The for_each expression goes through exprToExport like every other
+// HCL expression (text + value + AST), even when it would resolve
+// statically — converters need the structural shape to translate
+// to the target system's iteration primitive (kro for-each, crossplane
+// composition, …).
+func exportDynamicBlock(d *analysis.BodyDynamicBlock, ctx *hcl.EvalContext) ExportDynamicBlock {
+	out := ExportDynamicBlock{
+		ForEach:  exprToExport(d.ForEach, ctx),
+		Iterator: d.Iterator,
+	}
+	if d.Pos.File != "" {
+		out.Location = filepath.Base(d.Pos.File) + ":" + strconv.Itoa(d.Pos.Line)
+	}
+	if d.Content != nil {
+		out.Content = exportBlock(d.Content, ctx)
 	}
 	return out
 }

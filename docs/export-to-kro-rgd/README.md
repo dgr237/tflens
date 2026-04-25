@@ -45,6 +45,7 @@ The generator implements roughly this mapping:
 | snake_case attribute name | camelCase (ACK convention; some attrs renamed via the per-resource `attr_renames` table) |
 | `nested_block { ... }` | `nestedBlock: { ... }` (recursive) |
 | repeated `block { ... } × N` | `block: [ {...}, {...}, ... ]` |
+| `dynamic "name" { for_each = X, content { ... } }` | `name: { _kro_for_each: ${X}, _kro_iterator_alias: …, _template: { … with iterator refs rewritten as ${item.field} … } }` (placeholder shape — kro's actual for-each primitive substitutes here) |
 | `output "X" { value = ... }` | `spec.schema.status.X` (best-effort) |
 
 Anything not statically resolvable becomes a `${...}` CEL expression — the generator walks the `ast` field on every export expression and emits the equivalent CEL.
@@ -72,6 +73,25 @@ ACK exposes every resource's AWS ARN at the standard path `status.ackResourceMet
 ### `format()` template expansion
 
 `format("%s-eks-role", var.cluster_name)` expands into a CEL string-concat expression: `(schema.spec.cluster_name + "-eks-role")`. The generator only handles `%s` and `%d` on literal-string templates — production converters would either expand the full printf grammar or call into a CEL helper function.
+
+### Dynamic blocks
+
+`dynamic "name" { for_each = ..., iterator = ..., content { ... } }` blocks are surfaced separately from static blocks in the export's `dynamic_blocks` field. Each instance carries:
+
+- `for_each` as a full `{text, value?, ast?}` expression (so converters get the AST for translation)
+- `iterator` (empty when the source omitted it; consumers default to the block label)
+- `content` as a recursive `ExportBlock` whose attribute expressions reference the iterator variable via `<iterator>.value.X` / `<iterator>.key`
+
+The generator's `emit_dynamic` maps these to a placeholder kro for-each shape and walks the content with `ast_to_cel_with_iterator`, rewriting iterator references (e.g. `ingress.value.from_port` → `${item.from_port}`) so the per-iteration template is self-contained.
+
+Try it:
+
+```bash
+./tflens export pkg/render/testdata/export/dynamic_blocks | \
+    python3 docs/export-to-kro-rgd/generator.py
+```
+
+A real kro emitter would substitute kro's actual for-each primitive (which lives at the resource level rather than nested inside an attribute) for the placeholder `_kro_for_each` keys. The shape demonstrates that everything the converter needs (the source set, the iterator name, the per-iteration template with the iterator references rewritten) is present in the export.
 
 ### `jsonencode` round-trip
 
