@@ -497,12 +497,23 @@ Downstream tools that translate Terraform configurations into other provisioning
 
 ### Worked example
 
-Two end-to-end POCs consume the export JSON and emit different target shapes:
+Three end-to-end POCs consume the export JSON and emit different target shapes. The orthogonality of orchestration layer × managed-resource provider is deliberate — picking different combinations validates that the export schema isn't implicitly shaped to any one target:
 
-- [`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) — emits a [kro](https://kro.run) `ResourceGraphDefinition` targeting [AWS Controllers for Kubernetes (ACK)](https://aws-controllers-k8s.github.io/community/) custom resources. Variable refs become `${schema.spec.X}` CEL substitutions, cross-resource ARN refs become `${resources.foo.status.ackResourceMetadata.arn}` (ACK convention), `format()` becomes CEL string concat, `jsonencode` becomes kro's `json.marshal` (or a literal JSON string when statically resolvable), nested blocks become recursive YAML, dynamic blocks become CEL `.map()`. ~300 LOC of stdlib-only Python.
-- [`docs/export-to-crossplane/`](./docs/export-to-crossplane/) — emits a Crossplane [`Composition`](https://docs.crossplane.io/latest/concepts/compositions/) + [`CompositeResourceDefinition`](https://docs.crossplane.io/latest/concepts/composite-resource-definitions/) targeting the [Upbound provider-aws](https://marketplace.upbound.io/providers/upbound/provider-aws) managed resources. Variable refs become declarative `patches` with `fromFieldPath`, `format()` becomes a `transforms: [{type: string, string: {fmt: ...}}]` patch entry, cross-resource refs are deliberately TODO'd (Crossplane has multiple ref mechanisms), dynamic blocks point at Composition Functions. ~350 LOC of stdlib-only Python.
+| POC | Orchestration | Managed Resources |
+| --- | --- | --- |
+| [`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) | kro RGD | ACK (`<service>.services.k8s.aws/v1alpha1`) |
+| [`docs/export-to-crossplane/`](./docs/export-to-crossplane/) | Crossplane Composition + XRD | Upbound provider-aws (`<service>.aws.upbound.io/v1beta1`) |
+| [`docs/export-to-kro-crossplane/`](./docs/export-to-kro-crossplane/) | kro RGD | Upbound provider-aws |
 
-The two POCs share the same input fixture (an EKS cluster + IAM role) so reading them side-by-side shows the same export JSON producing two substantially different output shapes — variable-substitution CEL vs declarative patch wiring, ref-via-traversal vs explicit-policy refs, function calls translated via CEL vs a transforms vocabulary. Each bundled README documents the translation model, the subtleties the POC handles, and an effort estimate for productionisation.
+Comparing them shows the same export JSON producing very different shapes:
+
+- Variable refs become **CEL `${schema.spec.X}` substitutions** (kro POCs) or **declarative `patches` with `fromFieldPath`** (Crossplane POC).
+- Cross-resource refs become **`${resources.foo.status.<convention>.arn}` traversals** (kro) or **explicit `ResourceRef` / `MatchControllerRef` policy** (Crossplane).
+- `format()` calls become **CEL string concat** (kro) or a **`transforms: [{type: string, ...}]` patch entry** (Crossplane).
+- Dynamic blocks become **CEL `.map()` inline** (kro) or **Composition Functions** (Crossplane, TODO).
+- ARN paths follow the target's convention: ACK puts it at `status.ackResourceMetadata.arn`, Upbound at `status.atProvider.arn`.
+
+The two kro POCs (ACK vs Upbound) are 95% identical — ~50 LOC of mapping-table and constant deltas separate them. That isolation is the schema's job, and the existence of three POCs validates it works as intended. Each bundled README documents the translation model, subtleties, and effort estimates for productionisation.
 
 ### Shape stability
 
