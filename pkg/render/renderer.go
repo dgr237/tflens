@@ -66,16 +66,20 @@ type Renderer interface {
 	FmtRenderer
 }
 
-// New returns the renderer matching s.JSON. The Settings supplies
-// both the output writer (s.Out) and the format choice — callers
-// don't need to pass them separately.
+// New returns the renderer matching s.Markdown / s.JSON, defaulting
+// to console. The Settings supplies both the output writer (s.Out)
+// and the format choice — callers don't need to pass them separately.
 //
 // validate's "errors found" branch flips s.Out to s.Err on a copy of
 // Settings before calling New, so the renderer's text output lands
 // on stderr without complicating this constructor.
 func New(s config.Settings) Renderer {
-	if s.JSON {
+	switch {
+	case s.Markdown:
+		return &MarkdownRenderer{W: s.Out}
+	case s.JSON:
 		return &JSONRenderer{W: s.Out}
+	default:
+		return &ConsoleRenderer{W: s.Out}
 	}
-	return &ConsoleRenderer{W: s.Out}
 }

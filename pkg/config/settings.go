@@ -42,6 +42,12 @@ type Settings struct {
 	// JSON is true when --format=json was given. Subcommands switch
 	// from human-readable rendering to a structured envelope.
 	JSON bool
+	// Markdown is true when --format=markdown was given. The renderer
+	// emits GitHub-flavoured markdown suitable for sticky-commenting on
+	// a PR. Like JSON, the output is a single stream — warnings stay on
+	// stdout rather than splitting to stderr — so the whole document
+	// can be piped into `gh pr comment` or similar.
+	Markdown bool
 
 	// Per-subcommand flags
 

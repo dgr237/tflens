@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`--format markdown` — GitHub-flavoured markdown rendering for `diff` / `whatif` / `statediff` / `validate`.** Emits severity badges (🔴 Breaking / 🟡 Non-breaking / 🔵 Informational), collapsible `<details>` sections per module call (open-by-default when the section contains any Breaking change or, for whatif, when the call has direct impact on the caller), inline code-fenced file:line locations, and quoted-block fix hints. Designed for sticky-commenting on PRs (`gh pr comment $PR --body-file -`) and GitHub Actions step summaries (`>> $GITHUB_STEP_SUMMARY`). Single-stream output (warnings stay on stdout, mirroring `--format json`) so the whole document is pipeable. Implemented as `MarkdownRenderer` in `pkg/render/markdown.go` satisfying the existing `Renderer` interface composite — `render.New(s)` dispatches on the new `config.Settings.Markdown` flag. Other subcommands (`cycles`, `deps`, `impact`, `inventory`, `unused`, `cache *`, `fmt`'s parse-error surface) get terse markdown impls so the interface stays satisfied; the rich PR-comment treatment is reserved for the four primary surfaces. 8 golden cases under `pkg/render/testdata/markdown/<case>.golden.md` pin the per-surface output shape (no-changes baselines, mixed-kind diff with fix hints, whatif with direct impact + API diff, statediff with adds/removes/renames + sensitive-change/state orphans, validate mixed errors).
+
 ## [0.8.1] — 2026-04-25
 
 ### Documentation

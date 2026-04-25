@@ -58,9 +58,9 @@ func runFmt(s config.Settings) {
 	p := hclparse.NewParser()
 	if _, diags := p.ParseHCL(src, s.Path); diags.HasErrors() {
 		// Text-mode parse errors stay on stderr to keep stdout pipe-
-		// safe. The JSON envelope goes to stdout as usual.
+		// safe. JSON and markdown go to stdout (single pipeable stream).
 		errSettings := s
-		if !s.JSON {
+		if !s.JSON && !s.Markdown {
 			errSettings.Out = s.Err
 		}
 		render.New(errSettings).FmtParseErrors(diags)

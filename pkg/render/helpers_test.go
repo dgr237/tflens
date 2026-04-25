@@ -26,6 +26,14 @@ func jsonRenderer(w io.Writer) render.Renderer {
 	return render.New(config.Settings{Out: w, JSON: true})
 }
 
+// markdownRenderer returns a markdown-mode render.Renderer that
+// writes to w. Pairs with the per-case .golden.md files under
+// testdata/markdown/ for golden-style assertion of the rendered
+// output.
+func markdownRenderer(w io.Writer) render.Renderer {
+	return render.New(config.Settings{Out: w, Markdown: true})
+}
+
 // moduleFromSrc builds an analysis.Module from inline HCL. Used by
 // the json_test wire-format pinning tests where the input is a
 // one-line resource / data declaration that doesn't justify a
