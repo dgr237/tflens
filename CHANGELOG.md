@@ -4,6 +4,14 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens export` — `dynamic_blocks` field captures `dynamic "name" { for_each = ..., content { ... } }` constructs (schema 0.3.0-prototype).** New `dynamic_blocks: { <name>: [ { for_each, iterator?, content }, ... ] }` field on every `ExportResource` and `ExportBlock` — recursive, so dynamic-inside-static (and dynamic-inside-dynamic) work uniformly. `for_each` is a full `{text, value?, ast?}` expression; `iterator` carries the explicit name when set (defaulting to the block label otherwise); `content` is a recursive `ExportBlock`. Closes the gap that previously made the export unusable for the AWS-security-group / IAM-policy / EKS-node-group patterns (where `dynamic` blocks dominate). `pkg/analysis` gains `BodyDynamicBlock` + `Entity.BodyDynamicBlocks` + `BodyBlock.DynamicBlocks` for symmetric recursion at every depth. Schema bumped from 0.2.0-prototype to 0.3.0-prototype to signal the new field surface (pure addition — no existing fields renamed). New `dynamic_blocks` golden fixture exercises both default-iterator (`dynamic "ingress"` → iterator name `ingress`) and explicit-iterator (`dynamic "egress" { iterator = rule }`) cases plus a sibling static block.
+
+### Changed
+
+- **kro/ACK POC generator — dynamic-block emit + `aws_security_group` mapping.** The bundled `docs/export-to-kro-rgd/` POC now translates dynamic blocks into the actual kro CEL `.map()` form (matching the pattern in [`examples/aws/aws-accounts-factory/01-network-stack.yaml`](https://github.com/kubernetes-sigs/kro/blob/main/examples/aws/aws-accounts-factory/01-network-stack.yaml) in the kro repo: `${publicSubnets.map(s, s.status.subnetID)}`). Iterator references inside the per-iteration template (`ingress.value.from_port`) get rewritten to `${item.from_port}` via a recursive AST walker (`ast_to_cel_with_iterator`) that descends into compound nodes — so iterator refs buried inside `format(...)` / binary ops / conditionals / templates also rewrite correctly. The fixture grew an `aws_security_group.cluster_sg` resource with `dynamic "ingress"` so the bundled `sample-output.yaml` demonstrates the feature end-to-end.
+
 ## [0.7.0] — 2026-04-25
 
 ### Added

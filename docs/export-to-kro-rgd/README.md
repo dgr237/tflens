@@ -45,6 +45,7 @@ The generator implements roughly this mapping:
 | snake_case attribute name | camelCase (ACK convention; some attrs renamed via the per-resource `attr_renames` table) |
 | `nested_block { ... }` | `nestedBlock: { ... }` (recursive) |
 | repeated `block { ... } × N` | `block: [ {...}, {...}, ... ]` |
+| `dynamic "name" { for_each = X, content { ... } }` | `name: ${X.map(item, { "k": item.field, ... })}` — CEL `.map()` over the source list with the per-iteration template inlined as a CEL object literal. Iterator references (`<iterator>.value.field`) are rewritten to `item.field`. Real kro form (matches `examples/aws/aws-accounts-factory/01-network-stack.yaml`). |
 | `output "X" { value = ... }` | `spec.schema.status.X` (best-effort) |
 
 Anything not statically resolvable becomes a `${...}` CEL expression — the generator walks the `ast` field on every export expression and emits the equivalent CEL.
@@ -72,6 +73,24 @@ ACK exposes every resource's AWS ARN at the standard path `status.ackResourceMet
 ### `format()` template expansion
 
 `format("%s-eks-role", var.cluster_name)` expands into a CEL string-concat expression: `(schema.spec.cluster_name + "-eks-role")`. The generator only handles `%s` and `%d` on literal-string templates — production converters would either expand the full printf grammar or call into a CEL helper function.
+
+### Dynamic blocks
+
+`dynamic "name" { for_each = ..., iterator = ..., content { ... } }` blocks are surfaced separately from static blocks in the export's `dynamic_blocks` field. Each instance carries:
+
+- `for_each` as a full `{text, value?, ast?}` expression
+- `iterator` (empty when the source omitted it; consumers default to the block label)
+- `content` as a recursive `ExportBlock` whose attribute expressions reference the iterator variable via `<iterator>.value.X` / `<iterator>.key`
+
+The generator's `emit_dynamic` translates one dynamic block into a CEL `.map()` expression over the for_each source, with the per-iteration content body inlined as a CEL object literal. Iterator references are rewritten via `ast_to_cel_with_iterator`: `ingress.value.from_port` → `item.from_port`, etc.
+
+This matches the actual kro RGD pattern used in real-world examples (see [`examples/aws/aws-accounts-factory/01-network-stack.yaml`](https://github.com/kubernetes-sigs/kro/blob/main/examples/aws/aws-accounts-factory/01-network-stack.yaml) in the kro repo: `publicSubnetIds: ${publicSubnets.map(s, s.status.subnetID)}`). For the security-group fixture in this directory the result is:
+
+```yaml
+ingressRules: "${schema.spec.ingress_rules.map(item, {\"cidrBlocks\": item.cidrs, \"fromPort\": item.from_port, \"protocol\": \"tcp\", \"toPort\": item.to_port})}"
+```
+
+Note: kro's `.map()` is intended for list iteration. Map-typed `for_each` (`for_each = { a = "x", b = "y" }` exposing `.key` and `.value`) would need a different translation — kro doesn't have a direct equivalent of Terraform's map iteration, and a converter would either rewrite to a list-of-objects or generate one CEL expression per known key. The POC handles the list-of-objects case (the common one); map iteration is left as future work.
 
 ### `jsonencode` round-trip
 

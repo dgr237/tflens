@@ -94,15 +94,16 @@ type Entity struct {
 	ValidationConditions    []string
 	PreconditionConditions  []string
 	PostconditionConditions []string
-	ValueExpr               *Expr                   // outputs: the value expression
-	ProviderExpr            *Expr                   // resource/data: value of `provider` attribute
-	ModuleArgs              map[string]*Expr        // module blocks: argument-name → expression (excludes meta-args)
-	BodyAttrs               map[string]*Expr        // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
-	BodyBlocks              map[string][]*BodyBlock // resource/data blocks: nested-block name → instances (excludes lifecycle + dynamic)
-	LocalExpr               *Expr                   // locals: the local's value expression
-	ForEachExpr             *Expr                   // resource/data/module: value of `for_each`
-	CountExpr               *Expr                   // resource/data/module: value of `count`
-	DependsOnExpr           *Expr                   // resource/data/module/output: value of `depends_on`
+	ValueExpr               *Expr                          // outputs: the value expression
+	ProviderExpr            *Expr                          // resource/data: value of `provider` attribute
+	ModuleArgs              map[string]*Expr               // module blocks: argument-name → expression (excludes meta-args)
+	BodyAttrs               map[string]*Expr               // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
+	BodyBlocks              map[string][]*BodyBlock        // resource/data blocks: static nested-block name → instances (excludes lifecycle + dynamic)
+	BodyDynamicBlocks       map[string][]*BodyDynamicBlock // resource/data blocks: dynamic-block name → instances (each with for_each + iterator + content)
+	LocalExpr               *Expr                          // locals: the local's value expression
+	ForEachExpr             *Expr                          // resource/data/module: value of `for_each`
+	CountExpr               *Expr                          // resource/data/module: value of `count`
+	DependsOnExpr           *Expr                          // resource/data/module/output: value of `depends_on`
 
 	// Lifecycle block (resources only)
 	PreventDestroy         bool  // `prevent_destroy = true`
@@ -526,6 +527,7 @@ func collectEntities(m *Module, file *File) {
 				scanMetaArgs(&e, block.Body, file.Source)
 				scanBodyAttrs(&e, block.Body, file.Source)
 				scanBodyBlocks(&e, block.Body, file.Source)
+				scanBodyDynamicBlocks(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "data":
@@ -534,6 +536,7 @@ func collectEntities(m *Module, file *File) {
 				scanMetaArgs(&e, block.Body, file.Source)
 				scanBodyAttrs(&e, block.Body, file.Source)
 				scanBodyBlocks(&e, block.Body, file.Source)
+				scanBodyDynamicBlocks(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "variable":
@@ -804,10 +807,34 @@ func isModuleMetaArg(name string) bool {
 // Maps both follow the same convention as Entity.BodyAttrs / BodyBlocks:
 // attribute-name → expression, block-name → list of instances (always
 // a list so consumers don't need to switch on single-vs-repeated).
+//
+// DynamicBlocks captures `dynamic "<name>" { for_each = ..., content { ... } }`
+// nested inside this block, so dynamic-inside-static (or dynamic-inside-
+// dynamic) recurses uniformly.
 type BodyBlock struct {
-	Attrs  map[string]*Expr
-	Blocks map[string][]*BodyBlock
-	Pos    token.Position
+	Attrs         map[string]*Expr
+	Blocks        map[string][]*BodyBlock
+	DynamicBlocks map[string][]*BodyDynamicBlock
+	Pos           token.Position
+}
+
+// BodyDynamicBlock is one `dynamic "<name>" { ... }` block. The block
+// label (the "<name>" part) is the key in the parent's DynamicBlocks
+// map — it names the block type that the dynamic statement generates
+// at plan time. Iterator defaults to that name unless an explicit
+// `iterator = X` attribute overrides it; the content body's
+// expressions reference iterator.value / iterator.key, so converters
+// translating to other systems need to know the iterator name to map
+// those refs to the target language's iteration variable.
+//
+// Content holds the body inside the `content { ... }` block —
+// reusing BodyBlock so dynamic-inside-dynamic and static-inside-
+// dynamic both work via the same recursion.
+type BodyDynamicBlock struct {
+	ForEach  *Expr
+	Iterator string // empty when not explicitly set; consumers default to the block label
+	Content  *BodyBlock
+	Pos      token.Position
 }
 
 // isResourceMetaArg reports whether a named attribute on a resource or
@@ -859,12 +886,11 @@ func scanBodyAttrs(e *Entity, body *hclsyntax.Body, src []byte) {
 	}
 }
 
-// scanBodyBlocks populates e.BodyBlocks with every nested block on a
-// resource or data body except meta-blocks (lifecycle, dynamic — see
-// isResourceMetaBlock). Same shape as scanBodyAttrs but recursive:
-// the BodyBlock returned by buildBodyBlock has its own Attrs + Blocks
-// so arbitrary nesting (`encryption_config { provider { key_arn = ... } }`)
-// is preserved.
+// scanBodyBlocks populates e.BodyBlocks with every static nested block
+// on a resource or data body except meta-blocks (lifecycle, dynamic —
+// see isResourceMetaBlock). Dynamic blocks go into e.BodyDynamicBlocks
+// via scanBodyDynamicBlocks instead, since they have a different shape
+// (for_each + iterator + content).
 func scanBodyBlocks(e *Entity, body *hclsyntax.Body, src []byte) {
 	if e.BodyBlocks == nil {
 		e.BodyBlocks = map[string][]*BodyBlock{}
@@ -877,16 +903,38 @@ func scanBodyBlocks(e *Entity, body *hclsyntax.Body, src []byte) {
 	}
 }
 
+// scanBodyDynamicBlocks populates e.BodyDynamicBlocks with every
+// `dynamic "<name>" { for_each = ..., iterator = ..., content { ... } }`
+// block on a resource or data body. Malformed dynamic blocks (missing
+// label, missing content) are silently skipped — the diff/whatif/
+// validate paths report those via type-checking; the export's job is
+// to surface what's well-formed for converters.
+func scanBodyDynamicBlocks(e *Entity, body *hclsyntax.Body, src []byte) {
+	if e.BodyDynamicBlocks == nil {
+		e.BodyDynamicBlocks = map[string][]*BodyDynamicBlock{}
+	}
+	for _, child := range body.Blocks {
+		if child.Type != "dynamic" {
+			continue
+		}
+		if d, name := buildDynamicBlock(child, src); d != nil {
+			e.BodyDynamicBlocks[name] = append(e.BodyDynamicBlocks[name], d)
+		}
+	}
+}
+
 // buildBodyBlock recursively converts an hclsyntax.Block into a
 // BodyBlock, capturing every flat attribute and recursing into every
-// nested block. No meta-arg/meta-block filtering happens here —
-// nested-block bodies don't have meta-args in the resource sense
-// (count/for_each only apply at the top-level resource block).
+// nested block. Dynamic blocks inside this body are split out into
+// the BodyBlock's own DynamicBlocks map, so dynamic-inside-static
+// nesting (e.g. `vpc_config { dynamic "subnet_config" { ... } }`)
+// is preserved.
 func buildBodyBlock(b *hclsyntax.Block, src []byte) *BodyBlock {
 	bb := &BodyBlock{
-		Attrs:  map[string]*Expr{},
-		Blocks: map[string][]*BodyBlock{},
-		Pos:    posFromRange(b.DefRange()),
+		Attrs:         map[string]*Expr{},
+		Blocks:        map[string][]*BodyBlock{},
+		DynamicBlocks: map[string][]*BodyDynamicBlock{},
+		Pos:           posFromRange(b.DefRange()),
 	}
 	if b.Body == nil {
 		return bb
@@ -895,9 +943,52 @@ func buildBodyBlock(b *hclsyntax.Block, src []byte) *BodyBlock {
 		bb.Attrs[attr.Name] = &Expr{E: attr.Expr, Source: src}
 	}
 	for _, child := range b.Body.Blocks {
+		if child.Type == "dynamic" {
+			if d, name := buildDynamicBlock(child, src); d != nil {
+				bb.DynamicBlocks[name] = append(bb.DynamicBlocks[name], d)
+			}
+			continue
+		}
 		bb.Blocks[child.Type] = append(bb.Blocks[child.Type], buildBodyBlock(child, src))
 	}
 	return bb
+}
+
+// buildDynamicBlock parses a `dynamic "<label>" { for_each = ...,
+// iterator = ..., content { ... } }` block. Returns the parsed
+// BodyDynamicBlock plus the label (which the caller uses as the map
+// key in DynamicBlocks). Returns (nil, "") for malformed dynamic
+// blocks — exactly one label is required and a content sub-block is
+// required by Terraform's parser, but we tolerate missing pieces by
+// skipping rather than panicking.
+func buildDynamicBlock(b *hclsyntax.Block, src []byte) (*BodyDynamicBlock, string) {
+	if len(b.Labels) != 1 || b.Body == nil {
+		return nil, ""
+	}
+	d := &BodyDynamicBlock{Pos: posFromRange(b.DefRange())}
+	for _, attr := range sortedAttrs(b.Body) {
+		switch attr.Name {
+		case "for_each":
+			d.ForEach = &Expr{E: attr.Expr, Source: src}
+		case "iterator":
+			// Terraform requires the iterator value to be a bare
+			// identifier (parsed as a single-step ScopeTraversalExpr).
+			// Pull the name out; ignore anything else (the parser
+			// would have caught a non-identifier upstream).
+			if trav, ok := attr.Expr.(*hclsyntax.ScopeTraversalExpr); ok && len(trav.Traversal) == 1 {
+				if root, ok := trav.Traversal[0].(hcl.TraverseRoot); ok {
+					d.Iterator = root.Name
+				}
+			}
+		}
+	}
+	for _, child := range b.Body.Blocks {
+		if child.Type == "content" {
+			d.Content = buildBodyBlock(child, src)
+			break // Terraform allows only one content block
+		}
+	}
+	return d, b.Labels[0]
 }
 
 // scanMetaArgs sets meta-argument and lifecycle fields on e by inspecting the

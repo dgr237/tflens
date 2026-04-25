@@ -8,6 +8,7 @@ spec:
     kind: ConvertedFromTerraform
     spec:
       cluster_name: "string | default=\"demo\""
+      ingress_rules: "string | default=[{\"cidrs\": [\"10.0.0.0/8\"], \"from_port\": 443, \"to_port\": 443}, {\"cidrs\": [\"10.1.0.0/16\"], \"from_port\": 22, \"to_port\": 22}]"
       k8s_version: "string | default=\"1.31\""
     status:
       cluster_endpoint: "${resources.this.status.endpoint}"
@@ -40,3 +41,19 @@ spec:
         spec:
           assumeRolePolicyDocument: "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}"
           name: "${(schema.spec.cluster_name + \"-eks-role\")}"
+    - id: cluster_sg
+      template:
+        apiVersion: ec2.services.k8s.aws/v1alpha1
+        kind: SecurityGroup
+        metadata:
+          name: "${(schema.spec.cluster_name + \"-cluster-sg\")}"
+        spec:
+          description: EKS cluster ingress rules
+          name: "${(schema.spec.cluster_name + \"-cluster-sg\")}"
+          egressRules:
+            cidrBlocks:
+              - 0.0.0.0/0
+            fromPort: 0
+            protocol: -1
+            toPort: 0
+          ingressRules: "${schema.spec.ingress_rules.map(item, {\"cidrBlocks\": item.cidrs, \"fromPort\": item.from_port, \"protocol\": \"tcp\", \"toPort\": item.to_port})}"

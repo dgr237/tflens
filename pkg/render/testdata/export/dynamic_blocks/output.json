@@ -1,0 +1,551 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.3.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "dynamic_blocks",
+    "module": {
+      "variables": [
+        {
+          "name": "ingress_rules",
+          "type": "list(object(...))",
+          "has_default": true,
+          "default": {
+            "text": "[\n  { from_port = 443, to_port = 443, cidrs = [\"10.0.0.0/8\"] },\n  { from_port = 22, to_port = 22, cidrs = [\"10.1.0.0/16\"] },\n]",
+            "value": {
+              "type": [
+                "tuple",
+                [
+                  [
+                    "object",
+                    {
+                      "cidrs": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "from_port": "number",
+                      "to_port": "number"
+                    }
+                  ],
+                  [
+                    "object",
+                    {
+                      "cidrs": [
+                        "tuple",
+                        [
+                          "string"
+                        ]
+                      ],
+                      "from_port": "number",
+                      "to_port": "number"
+                    }
+                  ]
+                ]
+              ],
+              "value": [
+                {
+                  "cidrs": [
+                    "10.0.0.0/8"
+                  ],
+                  "from_port": 443,
+                  "to_port": 443
+                },
+                {
+                  "cidrs": [
+                    "10.1.0.0/16"
+                  ],
+                  "from_port": 22,
+                  "to_port": 22
+                }
+              ]
+            },
+            "ast": {
+              "elements": [
+                {
+                  "items": [
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "from_port"
+                        }
+                      },
+                      "value": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "number",
+                          "value": 443
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "to_port"
+                        }
+                      },
+                      "value": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "number",
+                          "value": 443
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "cidrs"
+                        }
+                      },
+                      "value": {
+                        "elements": [
+                          {
+                            "node": "literal_value",
+                            "value": {
+                              "type": "string",
+                              "value": "10.0.0.0/8"
+                            }
+                          }
+                        ],
+                        "node": "tuple_cons"
+                      }
+                    }
+                  ],
+                  "node": "object_cons"
+                },
+                {
+                  "items": [
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "from_port"
+                        }
+                      },
+                      "value": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "number",
+                          "value": 22
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "to_port"
+                        }
+                      },
+                      "value": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "number",
+                          "value": 22
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "cidrs"
+                        }
+                      },
+                      "value": {
+                        "elements": [
+                          {
+                            "node": "literal_value",
+                            "value": {
+                              "type": "string",
+                              "value": "10.1.0.0/16"
+                            }
+                          }
+                        ],
+                        "node": "tuple_cons"
+                      }
+                    }
+                  ],
+                  "node": "object_cons"
+                }
+              ],
+              "node": "tuple_cons"
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_security_group",
+          "name": "sg",
+          "attributes": {
+            "name": {
+              "text": "\"demo\"",
+              "value": {
+                "type": "string",
+                "value": "demo"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "demo"
+                }
+              }
+            }
+          },
+          "blocks": {
+            "tags": [
+              {
+                "attributes": {
+                  "Name": {
+                    "text": "\"demo\"",
+                    "value": {
+                      "type": "string",
+                      "value": "demo"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "demo"
+                      }
+                    }
+                  }
+                },
+                "location": "main.tf:43"
+              }
+            ]
+          },
+          "dynamic_blocks": {
+            "egress": [
+              {
+                "for_each": {
+                  "text": "var.ingress_rules",
+                  "value": {
+                    "type": [
+                      "tuple",
+                      [
+                        [
+                          "object",
+                          {
+                            "cidrs": [
+                              "tuple",
+                              [
+                                "string"
+                              ]
+                            ],
+                            "from_port": "number",
+                            "to_port": "number"
+                          }
+                        ],
+                        [
+                          "object",
+                          {
+                            "cidrs": [
+                              "tuple",
+                              [
+                                "string"
+                              ]
+                            ],
+                            "from_port": "number",
+                            "to_port": "number"
+                          }
+                        ]
+                      ]
+                    ],
+                    "value": [
+                      {
+                        "cidrs": [
+                          "10.0.0.0/8"
+                        ],
+                        "from_port": 443,
+                        "to_port": 443
+                      },
+                      {
+                        "cidrs": [
+                          "10.1.0.0/16"
+                        ],
+                        "from_port": 22,
+                        "to_port": 22
+                      }
+                    ]
+                  },
+                  "ast": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "ingress_rules",
+                        "step": "attr"
+                      }
+                    ]
+                  }
+                },
+                "iterator": "rule",
+                "content": {
+                  "attributes": {
+                    "cidr_blocks": {
+                      "text": "rule.value.cidrs",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "rule",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "cidrs",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    },
+                    "from_port": {
+                      "text": "rule.value.from_port",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "rule",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "from_port",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    },
+                    "protocol": {
+                      "text": "\"tcp\"",
+                      "value": {
+                        "type": "string",
+                        "value": "tcp"
+                      },
+                      "ast": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "tcp"
+                        }
+                      }
+                    },
+                    "to_port": {
+                      "text": "rule.value.to_port",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "rule",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "to_port",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "location": "main.tf:33"
+                },
+                "location": "main.tf:30"
+              }
+            ],
+            "ingress": [
+              {
+                "for_each": {
+                  "text": "var.ingress_rules",
+                  "value": {
+                    "type": [
+                      "tuple",
+                      [
+                        [
+                          "object",
+                          {
+                            "cidrs": [
+                              "tuple",
+                              [
+                                "string"
+                              ]
+                            ],
+                            "from_port": "number",
+                            "to_port": "number"
+                          }
+                        ],
+                        [
+                          "object",
+                          {
+                            "cidrs": [
+                              "tuple",
+                              [
+                                "string"
+                              ]
+                            ],
+                            "from_port": "number",
+                            "to_port": "number"
+                          }
+                        ]
+                      ]
+                    ],
+                    "value": [
+                      {
+                        "cidrs": [
+                          "10.0.0.0/8"
+                        ],
+                        "from_port": 443,
+                        "to_port": 443
+                      },
+                      {
+                        "cidrs": [
+                          "10.1.0.0/16"
+                        ],
+                        "from_port": 22,
+                        "to_port": 22
+                      }
+                    ]
+                  },
+                  "ast": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "ingress_rules",
+                        "step": "attr"
+                      }
+                    ]
+                  }
+                },
+                "content": {
+                  "attributes": {
+                    "cidr_blocks": {
+                      "text": "ingress.value.cidrs",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "ingress",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "cidrs",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    },
+                    "from_port": {
+                      "text": "ingress.value.from_port",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "ingress",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "from_port",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    },
+                    "protocol": {
+                      "text": "\"tcp\"",
+                      "value": {
+                        "type": "string",
+                        "value": "tcp"
+                      },
+                      "ast": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "tcp"
+                        }
+                      }
+                    },
+                    "to_port": {
+                      "text": "ingress.value.to_port",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "ingress",
+                            "step": "root"
+                          },
+                          {
+                            "name": "value",
+                            "step": "attr"
+                          },
+                          {
+                            "name": "to_port",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "location": "main.tf:19"
+                },
+                "location": "main.tf:17"
+              }
+            ]
+          },
+          "location": "main.tf:13"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_security_group.sg": [
+          "variable.ingress_rules"
+        ]
+      }
+    }
+  }
+}
