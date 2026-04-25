@@ -3,6 +3,7 @@ package diff
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/plan"
@@ -80,7 +81,15 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 			continue
 		}
 		entityID := rc.EntityID()
-		_, exists := projectEntities[matchKey(rc.ModuleAddress, entityID)]
+		// Strip count/for_each indices from each module segment when
+		// looking up the source-side entity — the source-side module
+		// tree has one node per module CALL, not per instance, so
+		// `module.foo[0].aws_vpc.main` and `module.foo[1].aws_vpc.main`
+		// both need to find the same `module.foo`. Resource indices
+		// (the trailing `[idx]` on the resource itself) are already
+		// stripped by EntityID(), which goes through the entity's
+		// canonical ID without index decoration.
+		_, exists := projectEntities[matchKey(stripIndices(rc.ModuleAddress), entityID)]
 
 		switch {
 		case rc.Change.IsCreate():
@@ -229,6 +238,41 @@ func buildEntityIndex(p *loader.Project) map[string]bool {
 // so the encoding is unambiguous without per-character escaping.
 func matchKey(modulePath, entityID string) string {
 	return modulePath + "|" + entityID
+}
+
+// stripIndices removes count/for_each `[idx]` suffixes from each
+// segment of a Terraform module path. Plan addresses include indices
+// when a module call uses `count` or `for_each` (e.g.
+// `module.regions["us-east-1"].aws_vpc.main`); the source-side module
+// tree has a single ModuleNode per module CALL regardless of how many
+// instances it expands to, so the lookup needs to drop the indices to
+// find the match.
+//
+// Implementation: walk the string once, copying everything except
+// content between `[` and `]`. Stays single-pass and avoids regexp
+// for a hot-path helper.
+func stripIndices(modulePath string) string {
+	if modulePath == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(modulePath))
+	depth := 0
+	for i := 0; i < len(modulePath); i++ {
+		switch modulePath[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				b.WriteByte(modulePath[i])
+			}
+		}
+	}
+	return b.String()
 }
 
 // modulePathFromNode returns the dotted path of a module node from

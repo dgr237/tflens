@@ -1,12 +1,14 @@
 package diff_test
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/plan"
 )
 
@@ -126,6 +128,96 @@ func TestEnrichFromPlanCreateAndDelete(t *testing.T) {
 	}
 	if createEntry.Kind != diff.Informational {
 		t.Errorf("create summary Kind = %v, want Informational", createEntry.Kind)
+	}
+}
+
+// TestEnrichFromPlanIndexedAddresses pins the per-instance matching
+// behaviour: plan addresses with module count/for_each indices
+// (`module.regions["us-east-1"]`) and resource count/for_each indices
+// (`aws_subnet.foo[0]`) both produce one Change per instance with the
+// full address preserved in Subject — but the source-side entity
+// lookup uses the index-stripped path so multiple plan instances
+// resolve to the same source-side resource without spurious
+// "no matching source-side entity" hints.
+//
+// The fixture has 4 ResourceChanges: 2 instances of an indexed module
+// + 2 indices of an indexed resource (one no-op, one update). After
+// enrichment we expect 3 attribute-delta entries (the no-op is
+// filtered) with the full plan address preserved as Subject prefix.
+func TestEnrichFromPlanIndexedAddresses(t *testing.T) {
+	p := planFixture(t, "indexed_module.json")
+	out := diff.EnrichFromPlan(nil, p, nil)
+
+	if got, want := len(out), 3; got != want {
+		t.Fatalf("len(out) = %d, want %d; got %+v", got, want, out)
+	}
+
+	// Pin: each entry's Subject preserves the full plan address
+	// (with index) so reviewers can tell instances apart, even
+	// though the source-side lookup happens against the index-
+	// stripped path.
+	wantSubjects := map[string]bool{
+		`module.regions["us-east-1"].aws_vpc.main:cidr_block`: true,
+		`module.regions["us-west-2"].aws_vpc.main:cidr_block`: true,
+		`module.network.aws_subnet.foo[0]:availability_zone`:  true,
+	}
+	for _, c := range out {
+		if !wantSubjects[c.Subject] {
+			t.Errorf("unexpected Subject %q", c.Subject)
+		}
+		delete(wantSubjects, c.Subject)
+	}
+	for missing := range wantSubjects {
+		t.Errorf("missing expected Subject %q", missing)
+	}
+}
+
+// TestEnrichFromPlanIndexedModuleResolvesAgainstRealProject is the
+// end-to-end version of the indexed-address test: it builds a real
+// project tree (with an indexed module call) and confirms that plan
+// addresses with `module.X[idx]` segments resolve to the source-side
+// `module.X` entity — i.e. the index-stripping in matchKey actually
+// works against a real ModuleNode index (not just the synthetic nil
+// project the other tests use).
+//
+// Specifically: without the fix, every indexed-module entry in the
+// plan would generate a "(no matching source-side entity — plan may
+// be stale)" hint because the source tree doesn't have indexed
+// nodes. With the fix the hint is absent.
+func TestEnrichFromPlanIndexedModuleResolvesAgainstRealProject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`
+module "regions" {
+  source   = "./regions"
+  for_each = toset(["us-east-1", "us-west-2"])
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	regionsDir := filepath.Join(dir, "regions")
+	if err := os.MkdirAll(regionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regionsDir, "main.tf"), []byte(`
+resource "aws_vpc" "main" {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	p := planFixture(t, "indexed_module.json")
+	out := diff.EnrichFromPlan(nil, p, proj)
+
+	// None of the entries should contain the "no matching source-side
+	// entity" hint — the indexed-module addresses resolve against
+	// `module.regions` (no index) in the source-side tree.
+	for _, c := range out {
+		if strings.Contains(c.Detail, "no matching source-side entity") {
+			t.Errorf("unexpected stale-plan hint on %q: %s", c.Subject, c.Detail)
+		}
 	}
 }
 
