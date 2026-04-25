@@ -97,6 +97,7 @@ type Entity struct {
 	ValueExpr               *Expr            // outputs: the value expression
 	ProviderExpr            *Expr            // resource/data: value of `provider` attribute
 	ModuleArgs              map[string]*Expr // module blocks: argument-name → expression (excludes meta-args)
+	BodyAttrs               map[string]*Expr // resource/data blocks: attribute-name → expression (excludes meta-args + nested blocks)
 	LocalExpr               *Expr            // locals: the local's value expression
 	ForEachExpr             *Expr            // resource/data/module: value of `for_each`
 	CountExpr               *Expr            // resource/data/module: value of `count`
@@ -522,12 +523,14 @@ func collectEntities(m *Module, file *File) {
 			if len(block.Labels) == 2 {
 				e := Entity{Kind: KindResource, Type: block.Labels[0], Name: block.Labels[1], Pos: posFromRange(block.DefRange())}
 				scanMetaArgs(&e, block.Body, file.Source)
+				scanBodyAttrs(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "data":
 			if len(block.Labels) == 2 {
 				e := Entity{Kind: KindData, Type: block.Labels[0], Name: block.Labels[1], Pos: posFromRange(block.DefRange())}
 				scanMetaArgs(&e, block.Body, file.Source)
+				scanBodyAttrs(&e, block.Body, file.Source)
 				m.addEntity(e)
 			}
 		case "variable":
@@ -790,6 +793,37 @@ func isModuleMetaArg(name string) bool {
 		return true
 	}
 	return false
+}
+
+// isResourceMetaArg reports whether a named attribute on a resource or
+// data block is a Terraform-reserved meta-argument rather than a
+// regular configuration attribute. Used by scanBodyAttrs to filter
+// the meta-args (which are already captured into dedicated Entity
+// fields) out of the generic attribute map.
+func isResourceMetaArg(name string) bool {
+	switch name {
+	case "count", "for_each", "provider", "depends_on":
+		return true
+	}
+	return false
+}
+
+// scanBodyAttrs populates e.BodyAttrs with every direct attribute on a
+// resource or data block that isn't a meta-argument. Nested blocks
+// (lifecycle, dynamic, ebs_block_device, ingress, ...) are NOT
+// captured here — only flat name=expression attributes. Meta-args
+// already live on dedicated Entity fields (CountExpr, ForEachExpr,
+// etc.) so we exclude them to avoid duplication.
+func scanBodyAttrs(e *Entity, body *hclsyntax.Body, src []byte) {
+	if e.BodyAttrs == nil {
+		e.BodyAttrs = map[string]*Expr{}
+	}
+	for _, attr := range sortedAttrs(body) {
+		if isResourceMetaArg(attr.Name) {
+			continue
+		}
+		e.BodyAttrs[attr.Name] = &Expr{E: attr.Expr, Source: src}
+	}
 }
 
 // scanMetaArgs sets meta-argument and lifecycle fields on e by inspecting the

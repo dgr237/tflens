@@ -1,0 +1,110 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.1.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "resource_attributes",
+    "module": {
+      "variables": [
+        {
+          "name": "env",
+          "type": "string",
+          "has_default": true,
+          "default_text": "\"prod\"",
+          "default_value": {
+            "type": "string",
+            "value": "prod"
+          },
+          "nullable": true,
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_instance",
+          "name": "web",
+          "create_before_destroy": true,
+          "attributes": {
+            "ami": {
+              "text": "\"ami-0c55b159cbfafe1f0\"",
+              "value": {
+                "type": "string",
+                "value": "ami-0c55b159cbfafe1f0"
+              }
+            },
+            "instance_type": {
+              "text": "var.size"
+            },
+            "monitoring": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            "tags": {
+              "text": "{\n  Name = \"web\"\n  Env  = var.env\n  Tier = format(\"%s-frontend\", var.env)\n}",
+              "value": {
+                "type": [
+                  "object",
+                  {
+                    "Env": "string",
+                    "Name": "string",
+                    "Tier": "string"
+                  }
+                ],
+                "value": {
+                  "Env": "prod",
+                  "Name": "web",
+                  "Tier": "prod-frontend"
+                }
+              }
+            }
+          },
+          "location": "main.tf:6"
+        }
+      ],
+      "data_sources": [
+        {
+          "type": "aws_ami",
+          "name": "latest",
+          "attributes": {
+            "most_recent": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            },
+            "owners": {
+              "text": "[\"amazon\"]",
+              "value": {
+                "type": [
+                  "tuple",
+                  [
+                    "string"
+                  ]
+                ],
+                "value": [
+                  "amazon"
+                ]
+              }
+            }
+          },
+          "location": "main.tf:22"
+        }
+      ],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_instance.web": [
+          "variable.env"
+        ]
+      }
+    }
+  }
+}

@@ -480,7 +480,7 @@ tflens export [path]
 
 `path` defaults to cwd. Walks the project tree (root + all resolvable child modules) and emits a single JSON document containing the enriched entity model that tflens has built up internally:
 
-- **Per module**: variables (with parsed type constraint, default text + evaluated value, sensitivity flags, validation count), outputs, resources + data sources (type/name + every meta-arg: `count`, `for_each`, `depends_on`, `provider`, lifecycle), locals (text + evaluated value), module calls (source, version, full argument map as text), the `terraform { }` block (required version, required providers, backend type), and `# tflens:track` markers.
+- **Per module**: variables (with parsed type constraint, default text + evaluated value, sensitivity flags, validation count), outputs, resources + data sources (type/name + every meta-arg: `count`, `for_each`, `depends_on`, `provider`, lifecycle, **plus a per-attribute map** — each flat attribute on the body emits `{text, value?}` where `value` is the cty-marshalled JSON when the curated stdlib can resolve it and is omitted otherwise), locals (text + evaluated value), module calls (source, version, full argument map as text), the `terraform { }` block (required version, required providers, backend type), and `# tflens:track` markers.
 - **Dependency graph**: adjacency map of canonical entity IDs.
 - **Project tree**: child modules nested under `root.children.<call-name>` recursively, with the original `source` string preserved.
 
@@ -500,7 +500,7 @@ The shape is versioned via the `schema_version` field. While `_experimental: tru
 
 Deferred until a converter author asks — adding fields is cheap; reverting them after they ship is expensive:
 
-- **Per-attribute resource bodies.** Currently only the meta-args (`count`, `for_each`, `depends_on`, `provider`, lifecycle) are exposed. Arbitrary attributes (`cidr_block = "10.0.0.0/16"`) aren't yet captured on `analysis.Entity`.
+- **Nested blocks inside resource bodies.** Flat attributes (`cidr_block`, `tags`, `monitoring`, …) are captured into `attributes`, but nested blocks like `ebs_block_device { ... }`, `ingress { ... }`, `dynamic { ... }`, and the inner `filter { ... }` blocks of data sources are not yet surfaced. `lifecycle` is the one exception (its meta-arg attributes are folded into the parent resource).
 - **Validation/precondition/postcondition block contents.** Counts are exposed; the condition expressions themselves are not.
 - **Dynamic block bodies.** `dynamic "ingress" { for_each = ... }` block contents are opaque.
 - **Provider alias graph.** Multiple `provider` declarations with `alias = ...` aren't separately surfaced.

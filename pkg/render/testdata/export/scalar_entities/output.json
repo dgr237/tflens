@@ -50,6 +50,15 @@
         {
           "type": "aws_ami",
           "name": "latest",
+          "attributes": {
+            "most_recent": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            }
+          },
           "location": "main.tf:16"
         }
       ],

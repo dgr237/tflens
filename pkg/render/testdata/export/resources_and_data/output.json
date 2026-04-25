@@ -36,6 +36,15 @@
         {
           "type": "aws_ami",
           "name": "ubuntu",
+          "attributes": {
+            "most_recent": {
+              "text": "true",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            }
+          },
           "location": "main.tf:17"
         },
         {

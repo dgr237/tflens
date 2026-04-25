@@ -85,20 +85,32 @@ type ExportOutput struct {
 }
 
 type ExportResource struct {
-	Type                   string `json:"type"`
-	Name                   string `json:"name"`
-	Provider               string `json:"provider,omitempty"`
-	CountText              string `json:"count_text,omitempty"`
-	ForEachText            string `json:"for_each_text,omitempty"`
-	DependsOnText          string `json:"depends_on_text,omitempty"`
-	PreventDestroy         bool   `json:"prevent_destroy,omitempty"`
-	CreateBeforeDestroy    bool   `json:"create_before_destroy,omitempty"`
-	IgnoreChangesText      string `json:"ignore_changes_text,omitempty"`
-	ReplaceTriggeredByText string `json:"replace_triggered_by_text,omitempty"`
-	Location               string `json:"location,omitempty"`
-	// Note: per-attribute resource body (e.g. cidr_block = "10.0.0.0/16")
-	// is not yet captured on analysis.Entity. Deferred until a
-	// converter author needs it.
+	Type                   string                     `json:"type"`
+	Name                   string                     `json:"name"`
+	Provider               string                     `json:"provider,omitempty"`
+	CountText              string                     `json:"count_text,omitempty"`
+	ForEachText            string                     `json:"for_each_text,omitempty"`
+	DependsOnText          string                     `json:"depends_on_text,omitempty"`
+	PreventDestroy         bool                       `json:"prevent_destroy,omitempty"`
+	CreateBeforeDestroy    bool                       `json:"create_before_destroy,omitempty"`
+	IgnoreChangesText      string                     `json:"ignore_changes_text,omitempty"`
+	ReplaceTriggeredByText string                     `json:"replace_triggered_by_text,omitempty"`
+	Attributes             map[string]ExportAttribute `json:"attributes,omitempty"`
+	Location               string                     `json:"location,omitempty"`
+	// Note: nested blocks inside resource bodies (lifecycle is the
+	// only one currently captured into dedicated fields; ebs_block_device,
+	// ingress, dynamic, ...) are still not surfaced. Deferred.
+}
+
+// ExportAttribute pairs the canonical source text of a resource's
+// attribute with its statically-evaluated cty value when one can be
+// resolved. Same shape as locals/variables — converters that need a
+// clean structured value get one for literal-heavy attributes (`tags = { Name = "web" }`),
+// while expressions referencing data sources or computed attributes
+// fall back to the text-only form.
+type ExportAttribute struct {
+	Text  string         `json:"text"`
+	Value *ExportCtyJSON `json:"value,omitempty"`
 }
 
 type ExportLocal struct {
@@ -229,9 +241,9 @@ func exportModule(m *analysis.Module) ExportModule {
 		case analysis.KindOutput:
 			out.Outputs = append(out.Outputs, exportOutput(e, ctx))
 		case analysis.KindResource:
-			out.Resources = append(out.Resources, exportResource(e))
+			out.Resources = append(out.Resources, exportResource(e, ctx))
 		case analysis.KindData:
-			out.DataSources = append(out.DataSources, exportResource(e))
+			out.DataSources = append(out.DataSources, exportResource(e, ctx))
 		case analysis.KindLocal:
 			out.Locals = append(out.Locals, exportLocal(e, ctx))
 		case analysis.KindModule:
@@ -307,7 +319,7 @@ func exportOutput(e analysis.Entity, ctx *hcl.EvalContext) ExportOutput {
 	return o
 }
 
-func exportResource(e analysis.Entity) ExportResource {
+func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 	r := ExportResource{
 		Type:                e.Type,
 		Name:                e.Name,
@@ -332,6 +344,15 @@ func exportResource(e analysis.Entity) ExportResource {
 	}
 	if e.ReplaceTriggeredByExpr != nil {
 		r.ReplaceTriggeredByText = e.ReplaceTriggeredByExpr.Text()
+	}
+	if len(e.BodyAttrs) > 0 {
+		r.Attributes = make(map[string]ExportAttribute, len(e.BodyAttrs))
+		for name, expr := range e.BodyAttrs {
+			r.Attributes[name] = ExportAttribute{
+				Text:  expr.Text(),
+				Value: evalToExport(expr, ctx),
+			}
+		}
 	}
 	return r
 }
