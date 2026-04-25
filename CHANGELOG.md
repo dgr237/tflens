@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-04-25
+
 ### Added
 
 - **`tflens export` — `dynamic_blocks` field captures `dynamic "name" { for_each = ..., content { ... } }` constructs (schema 0.3.0-prototype).** New `dynamic_blocks: { <name>: [ { for_each, iterator?, content }, ... ] }` field on every `ExportResource` and `ExportBlock` — recursive, so dynamic-inside-static (and dynamic-inside-dynamic) work uniformly. `for_each` is a full `{text, value?, ast?}` expression; `iterator` carries the explicit name when set (defaulting to the block label otherwise); `content` is a recursive `ExportBlock`. Closes the gap that previously made the export unusable for the AWS-security-group / IAM-policy / EKS-node-group patterns (where `dynamic` blocks dominate). `pkg/analysis` gains `BodyDynamicBlock` + `Entity.BodyDynamicBlocks` + `BodyBlock.DynamicBlocks` for symmetric recursion at every depth. Schema bumped from 0.2.0-prototype to 0.3.0-prototype to signal the new field surface (pure addition — no existing fields renamed). New `dynamic_blocks` golden fixture exercises both default-iterator (`dynamic "ingress"` → iterator name `ingress`) and explicit-iterator (`dynamic "egress" { iterator = rule }`) cases plus a sibling static block.
@@ -169,7 +171,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dgr237/tflens/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dgr237/tflens/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dgr237/tflens/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dgr237/tflens/compare/v0.4.1...v0.5.0
