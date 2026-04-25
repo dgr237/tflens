@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-25
+
 ### Changed
 
 - **Terraform stdlib functions wired into `Module.EvalContext`** (issue #16, batch 1). New `pkg/analysis/stdlib` subpackage exposes `Functions()` returning the 16-function curated set: 6 type-conversion (`toset`, `tolist`, `tomap`, `tostring`, `tonumber`, `tobool`) + 10 core collection (`length`, `concat`, `merge`, `keys`, `values`, `lookup`, `contains`, `element`, `flatten`, `distinct`). All implementations come from `cty/function/stdlib` so behaviour matches Terraform exactly. Callers (tracked-attribute diff in `pkg/diff/tracked.go`, sensitive-local detection in `pkg/statediff`) now suppress false positives where text differs but the evaluated value matches — e.g. `local.regions = ["a","b"]` vs `local.regions = distinct(["a","b"])` no longer flags as a change. New `analysis.ValueEquivalent` helper bridges cty's strict Tuple↔List↔Set distinction via JSON marshalling so the type difference between a literal tuple and a function-returned list doesn't defeat the equivalence check. Per-function table tests under `pkg/analysis/stdlib/testdata/<func>/main.tf` (19 cases) plus end-to-end statediff suppression tests under `pkg/statediff/testdata/effective_value_collapse/<case>/{main,feature}/main.tf` (4 cases) and tracked-attribute end-to-end tests under `pkg/diff/testdata/tracked_eval_*` (3 cases) — all confirming both the suppression for value-identical changes AND that real value differences still flag.
@@ -125,7 +127,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dgr237/tflens/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/dgr237/tflens/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/dgr237/tflens/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/dgr237/tflens/compare/v0.1.3...v0.2.0
