@@ -265,6 +265,42 @@ var stdlibCases = []stdlibCase{
 			cty.NumberIntVal(1), cty.NumberIntVal(2), cty.NumberIntVal(3),
 		}),
 	},
+
+	// Regex family — return-type shape dispatches on the pattern's
+	// capture-group structure (no groups → string, unnamed → tuple,
+	// named → object). Pin all three shapes so future cty upgrades
+	// can't silently change the contract.
+	{
+		// No capture groups → returns the matched substring as a string.
+		Name: "regex_no_groups",
+		Want: cty.StringVal("abc"),
+	},
+	{
+		// Unnamed groups → returns a tuple of the captured substrings,
+		// in declaration order. The match itself ($0) is NOT included
+		// when groups are present.
+		Name: "regex_unnamed_groups",
+		Want: cty.TupleVal([]cty.Value{
+			cty.StringVal("abc"), cty.StringVal("123"),
+		}),
+	},
+	{
+		// Named groups → returns an object keyed by group name. Same
+		// "no $0" rule as unnamed groups.
+		Name: "regex_named_groups",
+		Want: cty.ObjectVal(map[string]cty.Value{
+			"word": cty.StringVal("abc"),
+			"num":  cty.StringVal("123"),
+		}),
+	},
+	{
+		// regexall returns every non-overlapping match as a list (not
+		// tuple) — element type is uniform.
+		Name: "regexall",
+		Want: cty.ListVal([]cty.Value{
+			cty.StringVal("abc"), cty.StringVal("def"), cty.StringVal("ghi"),
+		}),
+	},
 }
 
 // TestFunctionsReturnsExpectedSet pins the public surface — the
@@ -280,6 +316,7 @@ func TestFunctionsReturnsExpectedSet(t *testing.T) {
 		"chomp", "indent", "substr",
 		"sort", "reverse", "slice", "chunklist", "compact",
 		"coalesce", "coalescelist", "zipmap", "range",
+		"regex", "regexall",
 		"abs", "min", "max", "floor", "ceil", "pow",
 	}
 	got := stdlib.Functions()
@@ -326,6 +363,19 @@ func TestEvalErrorCases(t *testing.T) {
 			// IsNull() branch (and then the all-empty error).
 			Name: "coalesce_only_null_and_empty",
 			Src:  `locals { out = coalesce(null, "") }`,
+		},
+		{
+			// regex with no match: cty's RegexFunc errors out (matches
+			// Terraform). Use regexall when "no match → empty" is the
+			// desired behaviour.
+			Name: "regex_no_match_errors",
+			Src:  `locals { out = regex("[0-9]+", "no-digits-here") }`,
+		},
+		{
+			// Invalid regex pattern — surfaces as an arg error from
+			// regexp.Compile.
+			Name: "regex_invalid_pattern",
+			Src:  `locals { out = regex("[unterminated", "abc") }`,
 		},
 	}
 	for _, tc := range cases {

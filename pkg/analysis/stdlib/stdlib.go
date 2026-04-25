@@ -77,6 +77,19 @@ func Functions() map[string]function.Function {
 		"indent":     stdlib.IndentFunc,
 		"substr":     stdlib.SubstrFunc,
 
+		// Regex family. cty's implementations use Go's regexp (RE2),
+		// the same engine Terraform uses, so behaviour matches directly
+		// without a wrapper. Capture-group return-type shape (string /
+		// tuple / object) is dispatched on the pattern at evaluation
+		// time — see the corresponding testdata fixtures. Note: cty has
+		// a `RegexReplaceFunc` but Terraform doesn't expose it as a
+		// distinct function — regex replacement happens via the
+		// `/pattern/` form of `replace` (handled by replace.go's
+		// dispatcher). Wiring `regexreplace` here would diverge from
+		// Terraform.
+		"regex":    stdlib.RegexFunc,
+		"regexall": stdlib.RegexAllFunc,
+
 		// Additional collection helpers — same value-collapse story as
 		// the batch-1 collection functions; these are the next tier of
 		// commonly-used Terraform-stdlib pure functions.
