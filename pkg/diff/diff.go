@@ -169,15 +169,15 @@ func diffVariables(oldMod, newMod *analysis.Module, changes *[]Change) {
 		// (variables). Comparing canonical condition text catches the case
 		// where one block is removed and another is added with a different
 		// condition — the count is unchanged but the rule set differs.
-		diffConditionSet(oe.ID(), oe.ValidationConditions, ne.ValidationConditions, oe.Pos, ne.Pos,
+		diffConditionSet(oe.ID(), analysis.ConditionTexts(oe.Validations), analysis.ConditionTexts(ne.Validations), oe.Pos, ne.Pos,
 			"validation block",
 			"may reject previously-valid inputs",
 			"accepts a wider input set", changes)
-		diffConditionSet(oe.ID(), oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+		diffConditionSet(oe.ID(), analysis.ConditionTexts(oe.Preconditions), analysis.ConditionTexts(ne.Preconditions), oe.Pos, ne.Pos,
 			"precondition",
 			"may reject previously-valid inputs",
 			"loosens the precondition contract", changes)
-		diffConditionSet(oe.ID(), oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+		diffConditionSet(oe.ID(), analysis.ConditionTexts(oe.Postconditions), analysis.ConditionTexts(ne.Postconditions), oe.Pos, ne.Pos,
 			"postcondition",
 			"may reject previously-valid state",
 			"loosens the postcondition contract", changes)
@@ -302,11 +302,11 @@ func diffOutputs(oldMod, newMod *analysis.Module, changes *[]Change) {
 			})
 		}
 		// Precondition / postcondition content changes (outputs)
-		diffConditionSet(oe.ID(), oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+		diffConditionSet(oe.ID(), analysis.ConditionTexts(oe.Preconditions), analysis.ConditionTexts(ne.Preconditions), oe.Pos, ne.Pos,
 			"output precondition",
 			"may reject previously-valid state",
 			"loosens the output precondition contract", changes)
-		diffConditionSet(oe.ID(), oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+		diffConditionSet(oe.ID(), analysis.ConditionTexts(oe.Postconditions), analysis.ConditionTexts(ne.Postconditions), oe.Pos, ne.Pos,
 			"output postcondition",
 			"may reject previously-valid state",
 			"loosens the output postcondition contract", changes)
@@ -773,11 +773,11 @@ func diffLifecycle(id string, oe, ne analysis.Entity, changes *[]Change) {
 		})
 	}
 	// Lifecycle precondition / postcondition content
-	diffConditionSet(id, oe.PreconditionConditions, ne.PreconditionConditions, oe.Pos, ne.Pos,
+	diffConditionSet(id, analysis.ConditionTexts(oe.Preconditions), analysis.ConditionTexts(ne.Preconditions), oe.Pos, ne.Pos,
 		"lifecycle precondition",
 		"may reject previously-valid plans",
 		"loosens the lifecycle precondition contract", changes)
-	diffConditionSet(id, oe.PostconditionConditions, ne.PostconditionConditions, oe.Pos, ne.Pos,
+	diffConditionSet(id, analysis.ConditionTexts(oe.Postconditions), analysis.ConditionTexts(ne.Postconditions), oe.Pos, ne.Pos,
 		"lifecycle postcondition",
 		"may reject previously-valid state",
 		"loosens the lifecycle postcondition contract", changes)

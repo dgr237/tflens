@@ -1,0 +1,164 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.4.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "provider_aliases",
+    "module": {
+      "variables": [],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_vpc",
+          "name": "default_region",
+          "attributes": {
+            "cidr_block": {
+              "text": "\"10.0.0.0/16\"",
+              "value": {
+                "type": "string",
+                "value": "10.0.0.0/16"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "10.0.0.0/16"
+                }
+              }
+            }
+          },
+          "location": "main.tf:35"
+        },
+        {
+          "type": "aws_vpc",
+          "name": "east_region",
+          "provider": {
+            "text": "aws.east",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "aws",
+                  "step": "root"
+                },
+                {
+                  "name": "east",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "attributes": {
+            "cidr_block": {
+              "text": "\"10.1.0.0/16\"",
+              "value": {
+                "type": "string",
+                "value": "10.1.0.0/16"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "10.1.0.0/16"
+                }
+              }
+            }
+          },
+          "location": "main.tf:39"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {
+        "required_providers": {
+          "aws": {
+            "source": "hashicorp/aws",
+            "version_constraint": "~\u003e 5.0"
+          }
+        },
+        "providers": [
+          {
+            "type": "aws",
+            "config": {
+              "region": {
+                "text": "\"us-east-1\"",
+                "value": {
+                  "type": "string",
+                  "value": "us-east-1"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "us-east-1"
+                  }
+                }
+              }
+            },
+            "location": "main.tf:12"
+          },
+          {
+            "type": "aws",
+            "alias": "east",
+            "config": {
+              "region": {
+                "text": "\"us-east-1\"",
+                "value": {
+                  "type": "string",
+                  "value": "us-east-1"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "us-east-1"
+                  }
+                }
+              }
+            },
+            "location": "main.tf:17"
+          },
+          {
+            "type": "aws",
+            "alias": "west",
+            "config": {
+              "profile": {
+                "text": "\"shared-services\"",
+                "value": {
+                  "type": "string",
+                  "value": "shared-services"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "shared-services"
+                  }
+                }
+              },
+              "region": {
+                "text": "\"us-west-2\"",
+                "value": {
+                  "type": "string",
+                  "value": "us-west-2"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "us-west-2"
+                  }
+                }
+              }
+            },
+            "location": "main.tf:24"
+          }
+        ]
+      },
+      "tracked_attributes": [],
+      "dependencies": {}
+    }
+  }
+}

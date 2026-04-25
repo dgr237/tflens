@@ -1,0 +1,372 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.4.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "condition_blocks",
+    "module": {
+      "variables": [
+        {
+          "name": "instance_count",
+          "type": "number",
+          "has_default": true,
+          "default": {
+            "text": "3",
+            "value": {
+              "type": "number",
+              "value": 3
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 3
+              }
+            }
+          },
+          "nullable": true,
+          "validations": [
+            {
+              "condition": {
+                "text": "var.instance_count \u003e 0",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                },
+                "ast": {
+                  "lhs": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "instance_count",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "node": "binary_op",
+                  "op": "\u003e",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "number",
+                      "value": 0
+                    }
+                  }
+                }
+              },
+              "error_message": {
+                "text": "\"instance_count must be positive\"",
+                "value": {
+                  "type": "string",
+                  "value": "instance_count must be positive"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "instance_count must be positive"
+                  }
+                }
+              },
+              "location": "main.tf:5"
+            },
+            {
+              "condition": {
+                "text": "var.instance_count \u003c= 100",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                },
+                "ast": {
+                  "lhs": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "instance_count",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "node": "binary_op",
+                  "op": "\u003c=",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "number",
+                      "value": 100
+                    }
+                  }
+                }
+              },
+              "error_message": {
+                "text": "format(\"instance_count too high: got %d\", var.instance_count)",
+                "value": {
+                  "type": "string",
+                  "value": "instance_count too high: got 3"
+                },
+                "ast": {
+                  "args": [
+                    {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "instance_count too high: got %d"
+                      }
+                    },
+                    {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "var",
+                          "step": "root"
+                        },
+                        {
+                          "name": "instance_count",
+                          "step": "attr"
+                        }
+                      ]
+                    }
+                  ],
+                  "name": "format",
+                  "node": "function_call"
+                }
+              },
+              "location": "main.tf:10"
+            }
+          ],
+          "location": "main.tf:1"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "first_id",
+          "value": {
+            "text": "aws_instance.web[0].id",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "aws_instance",
+                  "step": "root"
+                },
+                {
+                  "name": "web",
+                  "step": "attr"
+                },
+                {
+                  "key": {
+                    "type": "number",
+                    "value": 0
+                  },
+                  "step": "index"
+                },
+                {
+                  "name": "id",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "preconditions": [
+            {
+              "condition": {
+                "text": "length(aws_instance.web) \u003e 0",
+                "ast": {
+                  "lhs": {
+                    "args": [
+                      {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "aws_instance",
+                            "step": "root"
+                          },
+                          {
+                            "name": "web",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    ],
+                    "name": "length",
+                    "node": "function_call"
+                  },
+                  "node": "binary_op",
+                  "op": "\u003e",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "number",
+                      "value": 0
+                    }
+                  }
+                }
+              },
+              "error_message": {
+                "text": "\"no instances were created\"",
+                "value": {
+                  "type": "string",
+                  "value": "no instances were created"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "no instances were created"
+                  }
+                }
+              },
+              "location": "main.tf:34"
+            }
+          ],
+          "location": "main.tf:31"
+        }
+      ],
+      "resources": [
+        {
+          "type": "aws_instance",
+          "name": "web",
+          "count": {
+            "text": "var.instance_count",
+            "value": {
+              "type": "number",
+              "value": 3
+            },
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "var",
+                  "step": "root"
+                },
+                {
+                  "name": "instance_count",
+                  "step": "attr"
+                }
+              ]
+            }
+          },
+          "preconditions": [
+            {
+              "condition": {
+                "text": "var.instance_count \u003c= 50",
+                "value": {
+                  "type": "bool",
+                  "value": true
+                },
+                "ast": {
+                  "lhs": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "instance_count",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "node": "binary_op",
+                  "op": "\u003c=",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "number",
+                      "value": 50
+                    }
+                  }
+                }
+              },
+              "error_message": {
+                "text": "\"EKS limits — keep instance_count under 50\"",
+                "value": {
+                  "type": "string",
+                  "value": "EKS limits — keep instance_count under 50"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "EKS limits — keep instance_count under 50"
+                  }
+                }
+              },
+              "location": "main.tf:20"
+            }
+          ],
+          "postconditions": [
+            {
+              "condition": {
+                "text": "self.id != \"\"",
+                "ast": {
+                  "lhs": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "self",
+                        "step": "root"
+                      },
+                      {
+                        "name": "id",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "node": "binary_op",
+                  "op": "!=",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": ""
+                    }
+                  }
+                }
+              },
+              "error_message": {
+                "text": "\"instance must have an id after apply\"",
+                "value": {
+                  "type": "string",
+                  "value": "instance must have an id after apply"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "instance must have an id after apply"
+                  }
+                }
+              },
+              "location": "main.tf:24"
+            }
+          ],
+          "location": "main.tf:16"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "output.first_id": [
+          "resource.aws_instance.web"
+        ],
+        "resource.aws_instance.web": [
+          "variable.instance_count"
+        ]
+      }
+    }
+  }
+}
