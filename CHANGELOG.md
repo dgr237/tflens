@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-04-25
+
 ### Documentation
 
 - **README "What it does NOT catch" → condition semantics.** Previous wording said `validation`/`precondition`/`postcondition` block contents "are not evaluated" and "the conditions themselves are opaque" — overselling the limitation. The condition text IS captured and diffed (a changed/added/removed condition surfaces as Informational), it's just the boolean outcome that isn't evaluated. Tightened the bullet so it accurately reflects what the diff actually does.
@@ -137,7 +139,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/dgr237/tflens/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/dgr237/tflens/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dgr237/tflens/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/dgr237/tflens/compare/v0.2.1...v0.2.2
