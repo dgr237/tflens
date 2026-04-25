@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.1.0-prototype",
+  "schema_version": "0.2.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "resource_attributes",
@@ -11,10 +11,19 @@
           "name": "env",
           "type": "string",
           "has_default": true,
-          "default_text": "\"prod\"",
-          "default_value": {
-            "type": "string",
-            "value": "prod"
+          "default": {
+            "text": "\"prod\"",
+            "value": {
+              "type": "string",
+              "value": "prod"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "prod"
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:1"

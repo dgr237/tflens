@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.1.0-prototype",
+  "schema_version": "0.2.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "nested_modules",
@@ -11,10 +11,19 @@
           "name": "region",
           "type": "string",
           "has_default": true,
-          "default_text": "\"us-east-1\"",
-          "default_value": {
-            "type": "string",
-            "value": "us-east-1"
+          "default": {
+            "text": "\"us-east-1\"",
+            "value": {
+              "type": "string",
+              "value": "us-east-1"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "us-east-1"
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:1"
@@ -29,7 +38,26 @@
           "name": "child",
           "source": "./child",
           "arguments": {
-            "region": "var.region"
+            "region": {
+              "text": "var.region",
+              "value": {
+                "type": "string",
+                "value": "us-east-1"
+              },
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "region",
+                    "step": "attr"
+                  }
+                ]
+              }
+            }
           },
           "location": "main.tf:6"
         }
@@ -59,7 +87,22 @@
           "outputs": [
             {
               "name": "echo",
-              "value_text": "var.region",
+              "value": {
+                "text": "var.region",
+                "ast": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "region",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              },
               "location": "main.tf:5"
             }
           ],

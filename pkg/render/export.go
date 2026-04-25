@@ -31,7 +31,14 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
-const ExportSchemaVersion = "0.1.0-prototype"
+// 0.2.0-prototype unified every expression-bearing field (count,
+// for_each, depends_on, lifecycle, module-call arguments, locals,
+// outputs, variable defaults, …) under the same {text, value?, ast?}
+// shape that resource attributes use, so consumers see one shape
+// wherever an HCL expression appears in the export. Schema bumped
+// from 0.1.0-prototype because the *_text string fields were
+// removed in favour of nested objects.
+const ExportSchemaVersion = "0.2.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -62,65 +69,68 @@ type ExportModule struct {
 }
 
 type ExportVariable struct {
-	Name         string         `json:"name"`
-	Type         string         `json:"type,omitempty"`
-	HasDefault   bool           `json:"has_default"`
-	DefaultText  string         `json:"default_text,omitempty"`
-	DefaultValue *ExportCtyJSON `json:"default_value,omitempty"`
-	Sensitive    bool           `json:"sensitive,omitempty"`
-	Ephemeral    bool           `json:"ephemeral,omitempty"`
-	Nullable     bool           `json:"nullable"`
-	Validations  int            `json:"validation_count,omitempty"`
-	Location     string         `json:"location,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type,omitempty"`
+	HasDefault  bool              `json:"has_default"`
+	Default     *ExportExpression `json:"default,omitempty"`
+	Sensitive   bool              `json:"sensitive,omitempty"`
+	Ephemeral   bool              `json:"ephemeral,omitempty"`
+	Nullable    bool              `json:"nullable"`
+	Validations int               `json:"validation_count,omitempty"`
+	Location    string            `json:"location,omitempty"`
 }
 
 type ExportOutput struct {
-	Name           string         `json:"name"`
-	ValueText      string         `json:"value_text,omitempty"`
-	EvaluatedValue *ExportCtyJSON `json:"evaluated_value,omitempty"`
-	Sensitive      bool           `json:"sensitive,omitempty"`
-	Ephemeral      bool           `json:"ephemeral,omitempty"`
-	DependsOn      string         `json:"depends_on,omitempty"`
-	Location       string         `json:"location,omitempty"`
+	Name      string            `json:"name"`
+	Value     *ExportExpression `json:"value,omitempty"`
+	Sensitive bool              `json:"sensitive,omitempty"`
+	Ephemeral bool              `json:"ephemeral,omitempty"`
+	DependsOn *ExportExpression `json:"depends_on,omitempty"`
+	Location  string            `json:"location,omitempty"`
 }
 
 type ExportResource struct {
-	Type                   string                     `json:"type"`
-	Name                   string                     `json:"name"`
-	Provider               string                     `json:"provider,omitempty"`
-	CountText              string                     `json:"count_text,omitempty"`
-	ForEachText            string                     `json:"for_each_text,omitempty"`
-	DependsOnText          string                     `json:"depends_on_text,omitempty"`
-	PreventDestroy         bool                       `json:"prevent_destroy,omitempty"`
-	CreateBeforeDestroy    bool                       `json:"create_before_destroy,omitempty"`
-	IgnoreChangesText      string                     `json:"ignore_changes_text,omitempty"`
-	ReplaceTriggeredByText string                     `json:"replace_triggered_by_text,omitempty"`
-	Attributes             map[string]ExportAttribute `json:"attributes,omitempty"`
-	Blocks                 map[string][]ExportBlock   `json:"blocks,omitempty"`
-	Location               string                     `json:"location,omitempty"`
+	Type                string                      `json:"type"`
+	Name                string                      `json:"name"`
+	Provider            *ExportExpression           `json:"provider,omitempty"`
+	Count               *ExportExpression           `json:"count,omitempty"`
+	ForEach             *ExportExpression           `json:"for_each,omitempty"`
+	DependsOn           *ExportExpression           `json:"depends_on,omitempty"`
+	PreventDestroy      bool                        `json:"prevent_destroy,omitempty"`
+	CreateBeforeDestroy bool                        `json:"create_before_destroy,omitempty"`
+	IgnoreChanges       *ExportExpression           `json:"ignore_changes,omitempty"`
+	ReplaceTriggeredBy  *ExportExpression           `json:"replace_triggered_by,omitempty"`
+	Attributes          map[string]ExportExpression `json:"attributes,omitempty"`
+	Blocks              map[string][]ExportBlock    `json:"blocks,omitempty"`
+	Location            string                      `json:"location,omitempty"`
 	// Note: `lifecycle` (already projected into dedicated meta-arg
-	// fields like PreventDestroy / IgnoreChangesText) and `dynamic`
+	// fields like PreventDestroy / IgnoreChanges) and `dynamic`
 	// (special generation semantics, deferred) are excluded from
 	// the Blocks map. See pkg/analysis.isResourceMetaBlock.
 }
 
-// ExportAttribute pairs the canonical source text of a resource's
-// attribute with its statically-evaluated cty value (when one can be
-// resolved) AND a tagged JSON-tree representation of the underlying
-// HCL expression. The three fields are complementary:
+// ExportExpression is the shared shape for every HCL expression that
+// appears in the export — resource attributes, count/for_each/
+// depends_on, lifecycle ignore_changes / replace_triggered_by,
+// module-call arguments, locals, outputs, variable defaults. Three
+// complementary fields:
 //
 //   - text:  the source as written. Always present. Lossless for
 //     consumers that just want to pass the expression through.
 //   - value: the evaluated cty value when the curated stdlib resolves
 //     the expression. Lets converters emit literal values directly
-//     for the common case of literal-heavy attributes
-//     (`tags = { Name = "web" }`).
+//     for the common case of literal-heavy expressions
+//     (`tags = { Name = "web" }`, `count = 3`, …).
 //   - ast:   the structural decomposition (function calls, traversals,
 //     conditionals, …). Lets converters translate expressions into
 //     the target language without re-parsing the text. Especially
 //     valuable for non-Go consumers that don't want to embed an HCL
 //     parser. See export_ast.go for the supported node kinds.
-type ExportAttribute struct {
+//
+// Renamed from ExportAttribute in 0.2.0-prototype: same shape, but
+// "expression" describes its scope better now that count/for_each/
+// arguments/locals/etc. all use it too.
+type ExportExpression struct {
 	Text  string         `json:"text"`
 	Value *ExportCtyJSON `json:"value,omitempty"`
 	AST   any            `json:"ast,omitempty"`
@@ -132,26 +142,25 @@ type ExportAttribute struct {
 // blocks (`ebs_block_device { ... }` × N) appear as multiple entries
 // in the parent's []ExportBlock slice, in source order.
 type ExportBlock struct {
-	Attributes map[string]ExportAttribute `json:"attributes,omitempty"`
-	Blocks     map[string][]ExportBlock   `json:"blocks,omitempty"`
-	Location   string                     `json:"location,omitempty"`
+	Attributes map[string]ExportExpression `json:"attributes,omitempty"`
+	Blocks     map[string][]ExportBlock    `json:"blocks,omitempty"`
+	Location   string                      `json:"location,omitempty"`
 }
 
 type ExportLocal struct {
-	Name           string         `json:"name"`
-	ValueText      string         `json:"value_text,omitempty"`
-	EvaluatedValue *ExportCtyJSON `json:"evaluated_value,omitempty"`
-	Location       string         `json:"location,omitempty"`
+	Name     string            `json:"name"`
+	Value    *ExportExpression `json:"value,omitempty"`
+	Location string            `json:"location,omitempty"`
 }
 
 type ExportModuleCall struct {
-	Name        string            `json:"name"`
-	Source      string            `json:"source,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	Arguments   map[string]string `json:"arguments,omitempty"`
-	CountText   string            `json:"count_text,omitempty"`
-	ForEachText string            `json:"for_each_text,omitempty"`
-	Location    string            `json:"location,omitempty"`
+	Name      string                      `json:"name"`
+	Source    string                      `json:"source,omitempty"`
+	Version   string                      `json:"version,omitempty"`
+	Arguments map[string]ExportExpression `json:"arguments,omitempty"`
+	Count     *ExportExpression           `json:"count,omitempty"`
+	ForEach   *ExportExpression           `json:"for_each,omitempty"`
+	Location  string                      `json:"location,omitempty"`
 }
 
 type ExportTerraform struct {
@@ -171,11 +180,14 @@ type ExportBackend struct {
 }
 
 type ExportTracked struct {
-	Subject        string         `json:"subject"`
-	ExpressionText string         `json:"expression_text,omitempty"`
-	EvaluatedValue *ExportCtyJSON `json:"evaluated_value,omitempty"`
-	Marker         string         `json:"marker,omitempty"`
-	Location       string         `json:"location,omitempty"`
+	Subject string `json:"subject"`
+	// Note: ExpressionText (not the unified ExportExpression) because
+	// pkg/analysis.TrackedAttribute keeps the underlying *Expr private
+	// — we only have the canonical text. Promoting to the {text, value?, ast?}
+	// shape needs a small pkg/analysis API addition; deferred.
+	ExpressionText string `json:"expression_text,omitempty"`
+	Marker         string `json:"marker,omitempty"`
+	Location       string `json:"location,omitempty"`
 }
 
 // ExportCtyJSON wraps a cty.Value as its JSON representation plus the
@@ -271,7 +283,7 @@ func exportModule(m *analysis.Module) ExportModule {
 		case analysis.KindLocal:
 			out.Locals = append(out.Locals, exportLocal(e, ctx))
 		case analysis.KindModule:
-			out.ModuleCalls = append(out.ModuleCalls, exportModuleCall(e, m))
+			out.ModuleCalls = append(out.ModuleCalls, exportModuleCall(e, m, ctx))
 		}
 		// Dependency adjacency — emitted for every entity, not just one
 		// kind, so converters get the full graph.
@@ -306,6 +318,24 @@ func exportModule(m *analysis.Module) ExportModule {
 	return out
 }
 
+// exprToExport is the universal builder for ExportExpression — every
+// place that emits an HCL expression goes through this so the {text,
+// value?, ast?} contract is identical across attributes, count,
+// for_each, depends_on, lifecycle, module-call arguments, locals,
+// outputs, variable defaults, etc. Returns nil for a nil/empty *Expr
+// so callers can plug it directly into pointer-typed export fields
+// (the zero result then disappears thanks to omitempty).
+func exprToExport(e *analysis.Expr, ctx *hcl.EvalContext) *ExportExpression {
+	if e == nil || e.E == nil {
+		return nil
+	}
+	return &ExportExpression{
+		Text:  e.Text(),
+		Value: evalToExport(e, ctx),
+		AST:   astFor(e),
+	}
+}
+
 func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 	v := ExportVariable{
 		Name:        e.Name,
@@ -319,64 +349,39 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 	if e.DeclaredType != nil {
 		v.Type = e.DeclaredType.String()
 	}
-	if e.DefaultExpr != nil {
-		v.DefaultText = e.DefaultExpr.Text()
-		v.DefaultValue = evalToExport(e.DefaultExpr, ctx)
-	}
+	v.Default = exprToExport(e.DefaultExpr, ctx)
 	return v
 }
 
 func exportOutput(e analysis.Entity, ctx *hcl.EvalContext) ExportOutput {
-	o := ExportOutput{
+	return ExportOutput{
 		Name:      e.Name,
+		Value:     exprToExport(e.ValueExpr, ctx),
 		Sensitive: e.Sensitive,
 		Ephemeral: e.Ephemeral,
+		DependsOn: exprToExport(e.DependsOnExpr, ctx),
 		Location:  e.Location(),
 	}
-	if e.ValueExpr != nil {
-		o.ValueText = e.ValueExpr.Text()
-		o.EvaluatedValue = evalToExport(e.ValueExpr, ctx)
-	}
-	if e.DependsOnExpr != nil {
-		o.DependsOn = e.DependsOnExpr.Text()
-	}
-	return o
 }
 
 func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 	r := ExportResource{
 		Type:                e.Type,
 		Name:                e.Name,
+		Provider:            exprToExport(e.ProviderExpr, ctx),
+		Count:               exprToExport(e.CountExpr, ctx),
+		ForEach:             exprToExport(e.ForEachExpr, ctx),
+		DependsOn:           exprToExport(e.DependsOnExpr, ctx),
 		PreventDestroy:      e.PreventDestroy,
 		CreateBeforeDestroy: e.CreateBeforeDestroy,
+		IgnoreChanges:       exprToExport(e.IgnoreChangesExpr, ctx),
+		ReplaceTriggeredBy:  exprToExport(e.ReplaceTriggeredByExpr, ctx),
 		Location:            e.Location(),
 	}
-	if e.ProviderExpr != nil {
-		r.Provider = e.ProviderExpr.Text()
-	}
-	if e.CountExpr != nil {
-		r.CountText = e.CountExpr.Text()
-	}
-	if e.ForEachExpr != nil {
-		r.ForEachText = e.ForEachExpr.Text()
-	}
-	if e.DependsOnExpr != nil {
-		r.DependsOnText = e.DependsOnExpr.Text()
-	}
-	if e.IgnoreChangesExpr != nil {
-		r.IgnoreChangesText = e.IgnoreChangesExpr.Text()
-	}
-	if e.ReplaceTriggeredByExpr != nil {
-		r.ReplaceTriggeredByText = e.ReplaceTriggeredByExpr.Text()
-	}
 	if len(e.BodyAttrs) > 0 {
-		r.Attributes = make(map[string]ExportAttribute, len(e.BodyAttrs))
+		r.Attributes = make(map[string]ExportExpression, len(e.BodyAttrs))
 		for name, expr := range e.BodyAttrs {
-			r.Attributes[name] = ExportAttribute{
-				Text:  expr.Text(),
-				Value: evalToExport(expr, ctx),
-				AST:   astFor(expr),
-			}
+			r.Attributes[name] = *exprToExport(expr, ctx)
 		}
 	}
 	if len(e.BodyBlocks) > 0 {
@@ -404,13 +409,9 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 		out.Location = filepath.Base(b.Pos.File) + ":" + strconv.Itoa(b.Pos.Line)
 	}
 	if len(b.Attrs) > 0 {
-		out.Attributes = make(map[string]ExportAttribute, len(b.Attrs))
+		out.Attributes = make(map[string]ExportExpression, len(b.Attrs))
 		for name, expr := range b.Attrs {
-			out.Attributes[name] = ExportAttribute{
-				Text:  expr.Text(),
-				Value: evalToExport(expr, ctx),
-				AST:   astFor(expr),
-			}
+			out.Attributes[name] = *exprToExport(expr, ctx)
 		}
 	}
 	if len(b.Blocks) > 0 {
@@ -427,34 +428,26 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 }
 
 func exportLocal(e analysis.Entity, ctx *hcl.EvalContext) ExportLocal {
-	l := ExportLocal{
+	return ExportLocal{
 		Name:     e.Name,
+		Value:    exprToExport(e.LocalExpr, ctx),
 		Location: e.Location(),
 	}
-	if e.LocalExpr != nil {
-		l.ValueText = e.LocalExpr.Text()
-		l.EvaluatedValue = evalToExport(e.LocalExpr, ctx)
-	}
-	return l
 }
 
-func exportModuleCall(e analysis.Entity, m *analysis.Module) ExportModuleCall {
+func exportModuleCall(e analysis.Entity, m *analysis.Module, ctx *hcl.EvalContext) ExportModuleCall {
 	c := ExportModuleCall{
 		Name:     e.Name,
 		Source:   m.ModuleSource(e.Name),
 		Version:  m.ModuleVersion(e.Name),
+		Count:    exprToExport(e.CountExpr, ctx),
+		ForEach:  exprToExport(e.ForEachExpr, ctx),
 		Location: e.Location(),
 	}
-	if e.CountExpr != nil {
-		c.CountText = e.CountExpr.Text()
-	}
-	if e.ForEachExpr != nil {
-		c.ForEachText = e.ForEachExpr.Text()
-	}
 	if len(e.ModuleArgs) > 0 {
-		c.Arguments = make(map[string]string, len(e.ModuleArgs))
+		c.Arguments = make(map[string]ExportExpression, len(e.ModuleArgs))
 		for k, v := range e.ModuleArgs {
-			c.Arguments[k] = v.Text()
+			c.Arguments[k] = *exprToExport(v, ctx)
 		}
 	}
 	return c

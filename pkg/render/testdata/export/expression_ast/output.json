@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.1.0-prototype",
+  "schema_version": "0.2.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "expression_ast",
@@ -11,10 +11,19 @@
           "name": "env",
           "type": "string",
           "has_default": true,
-          "default_text": "\"prod\"",
-          "default_value": {
-            "type": "string",
-            "value": "prod"
+          "default": {
+            "text": "\"prod\"",
+            "value": {
+              "type": "string",
+              "value": "prod"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "prod"
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:1"
@@ -23,10 +32,19 @@
           "name": "scale",
           "type": "number",
           "has_default": true,
-          "default_text": "3",
-          "default_value": {
-            "type": "number",
-            "value": 3
+          "default": {
+            "text": "3",
+            "value": {
+              "type": "number",
+              "value": 3
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 3
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:6"
@@ -316,7 +334,20 @@
         {
           "type": "aws_security_group",
           "name": "sg",
-          "count_text": "2",
+          "count": {
+            "text": "2",
+            "value": {
+              "type": "number",
+              "value": 2
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "number",
+                "value": 2
+              }
+            }
+          },
           "attributes": {
             "description": {
               "text": "join(\",\", [for s in [\"a\", \"b\", \"c\"] : upper(s)])",

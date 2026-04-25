@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.1.0-prototype",
+  "schema_version": "0.2.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "nested_blocks_eks",
@@ -11,10 +11,19 @@
           "name": "cluster_name",
           "type": "string",
           "has_default": true,
-          "default_text": "\"prod-eks\"",
-          "default_value": {
-            "type": "string",
-            "value": "prod-eks"
+          "default": {
+            "text": "\"prod-eks\"",
+            "value": {
+              "type": "string",
+              "value": "prod-eks"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "prod-eks"
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:1"
@@ -23,10 +32,19 @@
           "name": "k8s_version",
           "type": "string",
           "has_default": true,
-          "default_text": "\"1.31\"",
-          "default_value": {
-            "type": "string",
-            "value": "1.31"
+          "default": {
+            "text": "\"1.31\"",
+            "value": {
+              "type": "string",
+              "value": "1.31"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "1.31"
+              }
+            }
           },
           "nullable": true,
           "location": "main.tf:6"
