@@ -59,7 +59,13 @@ func runFmt(s config.Settings) {
 	// will silently produce garbage on broken input.
 	p := hclparse.NewParser()
 	if _, diags := p.ParseHCL(src, s.Path); diags.HasErrors() {
-		render.WriteFmtParseErrors(os.Stderr, diags)
+		// JSON path goes to stdout (machine-readable envelope);
+		// text path stays on stderr to keep it out of pipes.
+		w := os.Stderr
+		if s.JSON {
+			w = os.Stdout
+		}
+		render.New(s.JSON, w).FmtParseErrors(diags)
 		os.Exit(1)
 	}
 

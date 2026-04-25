@@ -25,17 +25,5 @@ func init() {
 }
 
 func runInventory(s config.Settings) {
-	mod := mustLoadModule(s.Path)
-	if s.JSON {
-		entities := make([]render.JSONEntity, 0, len(mod.Entities()))
-		for _, e := range mod.Entities() {
-			entities = append(entities, render.JSONEnt(e))
-		}
-		emitJSON(struct {
-			Total    int                 `json:"total"`
-			Entities []render.JSONEntity `json:"entities"`
-		}{Total: len(entities), Entities: entities})
-		return
-	}
-	render.WriteInventory(os.Stdout, mod)
+	render.New(s.JSON, os.Stdout).Inventory(mustLoadModule(s.Path))
 }

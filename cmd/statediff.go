@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/config"
-	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/statediff"
@@ -70,11 +69,7 @@ func runStatediff(s config.Settings) error {
 	}
 	result := statediff.Analyze(oldProj, newProj, state)
 	result.BaseRef, result.Path = s.BaseRef, s.Path
-	if s.JSON {
-		exitJSON(result, diff.ExitCodeFor(result.FlaggedCount()))
-		return nil
-	}
-	render.WriteStatediff(os.Stdout, &result)
+	render.New(s.JSON, os.Stdout).Statediff(&result)
 	if result.FlaggedCount() > 0 {
 		os.Exit(1)
 	}

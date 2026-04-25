@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
@@ -46,50 +45,14 @@ func runValidate(s config.Settings) {
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
-	if s.JSON {
-		emitValidateJSON(refErrs, crossErrs, typeErrs, total)
-		return
-	}
 	// Errors go to stderr so they don't pollute pipes; the success
-	// message goes to stdout.
+	// message (and the JSON envelope) go to stdout.
 	var w io.Writer = os.Stdout
-	if total > 0 {
+	if total > 0 && !s.JSON {
 		w = os.Stderr
 	}
-	render.WriteValidate(w, refErrs, crossErrs, typeErrs)
+	render.New(s.JSON, w).Validate(refErrs, crossErrs, typeErrs)
 	if total > 0 {
 		os.Exit(1)
 	}
-}
-
-// emitValidateJSON builds the structured envelope for `validate
-// --format=json`. Refs and cross-errors share the ValidationError
-// type but mean different things; the wire format keeps them in
-// distinct top-level keys for consumers.
-func emitValidateJSON(
-	refErrs, crossErrs []analysis.ValidationError,
-	typeErrs []analysis.TypeCheckError,
-	total int,
-) {
-	refJSON := make([]render.JSONValidationError, 0, len(refErrs))
-	for _, e := range refErrs {
-		refJSON = append(refJSON, render.JSONValErr(e))
-	}
-	crossJSON := make([]render.JSONValidationError, 0, len(crossErrs))
-	for _, e := range crossErrs {
-		crossJSON = append(crossJSON, render.JSONValErr(e))
-	}
-	typeJSON := make([]render.JSONTypeError, 0, len(typeErrs))
-	for _, e := range typeErrs {
-		typeJSON = append(typeJSON, render.JSONTypeErr(e))
-	}
-	code := 0
-	if total > 0 {
-		code = 1
-	}
-	exitJSON(struct {
-		UndefinedReferences []render.JSONValidationError `json:"undefined_references"`
-		CrossModuleIssues   []render.JSONValidationError `json:"cross_module_issues"`
-		TypeErrors          []render.JSONTypeError       `json:"type_errors"`
-	}{refJSON, crossJSON, typeJSON}, code)
 }

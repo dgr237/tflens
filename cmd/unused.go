@@ -26,16 +26,5 @@ func init() {
 
 func runUnused(s config.Settings) {
 	mod := mustLoadModule(s.Path)
-	unused := mod.Unreferenced()
-	if s.JSON {
-		entities := make([]render.JSONEntity, 0, len(unused))
-		for _, e := range unused {
-			entities = append(entities, render.JSONEnt(e))
-		}
-		emitJSON(struct {
-			Unreferenced []render.JSONEntity `json:"unreferenced"`
-		}{Unreferenced: entities})
-		return
-	}
-	render.WriteUnused(os.Stdout, unused)
+	render.New(s.JSON, os.Stdout).Unused(mod.Unreferenced())
 }

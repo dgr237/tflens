@@ -38,15 +38,8 @@ var cacheInfoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if config.FromCommand(cmd).JSON {
-			exitJSON(struct {
-				Path    string `json:"path"`
-				Entries int    `json:"entries"`
-				Bytes   int64  `json:"bytes"`
-			}{c.Root(), entries, bytes}, 0)
-			return nil
-		}
-		render.WriteCacheInfo(os.Stdout, c.Root(), entries, bytes)
+		render.New(config.FromCommand(cmd).JSON, os.Stdout).
+			CacheInfo(c.Root(), entries, bytes)
 		return nil
 	},
 }
@@ -63,11 +56,12 @@ trusts its own contents as immutable, re-fetching requires clearing).`,
 		if err != nil {
 			return err
 		}
+		r := render.New(config.FromCommand(cmd).JSON, os.Stdout)
 		root := c.Root()
 		info, err := os.Stat(root)
 		if err != nil {
 			if os.IsNotExist(err) {
-				render.WriteCacheAlreadyEmpty(os.Stdout, root)
+				r.CacheAlreadyEmpty(root)
 				return nil
 			}
 			return err
@@ -79,7 +73,7 @@ trusts its own contents as immutable, re-fetching requires clearing).`,
 		if err := os.RemoveAll(root); err != nil {
 			return fmt.Errorf("removing cache: %w", err)
 		}
-		render.WriteCacheCleared(os.Stdout, entries, bytes, root)
+		r.CacheCleared(entries, bytes, root)
 		return nil
 	},
 }

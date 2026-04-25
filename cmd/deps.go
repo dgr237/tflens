@@ -30,15 +30,5 @@ func runDeps(s config.Settings, id string) {
 		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
 			id, s.Path, s.Path)
 	}
-	deps := mod.Dependencies(id)
-	dependents := mod.Dependents(id)
-	if s.JSON {
-		emitJSON(struct {
-			Entity       string   `json:"entity"`
-			DependsOn    []string `json:"depends_on"`
-			ReferencedBy []string `json:"referenced_by"`
-		}{Entity: id, DependsOn: deps, ReferencedBy: dependents})
-		return
-	}
-	render.WriteDeps(os.Stdout, id, deps, dependents)
+	render.New(s.JSON, os.Stdout).Deps(id, mod.Dependencies(id), mod.Dependents(id))
 }

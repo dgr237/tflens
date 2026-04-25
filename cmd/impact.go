@@ -30,16 +30,5 @@ func runImpact(s config.Settings, id string) {
 		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
 			id, s.Path, s.Path)
 	}
-	affected := mod.Impact(id)
-	if s.JSON {
-		if affected == nil {
-			affected = []string{}
-		}
-		emitJSON(struct {
-			Entity   string   `json:"entity"`
-			Affected []string `json:"affected"`
-		}{Entity: id, Affected: affected})
-		return
-	}
-	render.WriteImpact(os.Stdout, id, affected)
+	render.New(s.JSON, os.Stdout).Impact(id, mod.Impact(id))
 }

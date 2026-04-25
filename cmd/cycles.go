@@ -27,26 +27,8 @@ func init() {
 func runCycles(s config.Settings) {
 	mod := mustLoadModule(s.Path)
 	cycles := mod.Cycles()
-	if s.JSON {
-		if cycles == nil {
-			cycles = [][]string{}
-		}
-		exitJSON(struct {
-			Cycles [][]string `json:"cycles"`
-		}{Cycles: cycles}, exitCodeIfPositive(len(cycles)))
-		return
-	}
-	render.WriteCycles(os.Stdout, cycles)
+	render.New(s.JSON, os.Stdout).Cycles(cycles)
 	if len(cycles) > 0 {
 		os.Exit(1)
 	}
-}
-
-// exitCodeIfPositive returns 1 when n > 0, else 0. Tiny helper used
-// by subcommands whose JSON exit code mirrors a count.
-func exitCodeIfPositive(n int) int {
-	if n > 0 {
-		return 1
-	}
-	return 0
 }

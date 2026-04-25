@@ -69,11 +69,7 @@ func runWhatifRef(s config.Settings) error {
 	if filtered {
 		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", s.OnlyName, s.BaseRef)
 	}
-	if s.JSON {
-		exitJSON(render.BuildJSONWhatif(s.BaseRef, s.Path, calls), diff.ExitCodeFor(totalImpact))
-		return nil
-	}
-	render.WriteWhatifResults(os.Stdout, s.BaseRef, s.Path, calls)
+	render.New(s.JSON, os.Stdout).Whatif(s.BaseRef, s.Path, calls)
 	if totalImpact > 0 {
 		os.Exit(1)
 	}

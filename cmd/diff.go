@@ -54,11 +54,7 @@ func runDiffRef(s config.Settings) error {
 	}
 	defer cleanup()
 	results, rootChanges, breaking := diff.AnalyzeProjects(oldProj, newProj)
-	if s.JSON {
-		exitJSON(render.BuildJSONDiff(s.BaseRef, s.Path, results, rootChanges), diff.ExitCodeFor(breaking))
-		return nil
-	}
-	render.WriteDiffResults(os.Stdout, s.BaseRef, results, rootChanges)
+	render.New(s.JSON, os.Stdout).Diff(s.BaseRef, s.Path, results, rootChanges)
 	if breaking > 0 {
 		os.Exit(1)
 	}
