@@ -1,0 +1,4 @@
+Value changes that may alter count/for_each expansion:
+  - module.app.local.size
+      old: 3
+      new: 1

@@ -104,6 +104,19 @@ var statediffCases = []statediffCase{
 		},
 	},
 	{
+		// SensitiveChange whose Module field is set — the prefix
+		// becomes "<module>.<kind>.<name>" instead of "<kind>.<name>".
+		// Pins the module-scoped local/variable rendering.
+		Name: "sensitive_change_module_scoped",
+		Result: &statediff.Result{
+			BaseRef: "main",
+			SensitiveChanges: []statediff.SensitiveChange{{
+				Module: "module.app", Kind: "local", Name: "size",
+				OldValue: "3", NewValue: "1",
+			}},
+		},
+	},
+	{
 		// Empty NewValue renders as "(absent)" — distinguishes
 		// "default removed" from "default = ''".
 		Name: "or_absent_marker",

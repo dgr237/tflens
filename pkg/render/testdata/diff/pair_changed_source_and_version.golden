@@ -1,3 +1,4 @@
 Module "vpc": source ns/vpc/aws → ns/vpc-v2/aws, version "1.0.0" → "2.0.0"
   Breaking (1):
     var.x: removed
+      hint: callers passing this variable will fail

@@ -113,7 +113,8 @@ var diffCases = []diffCase{
 	},
 	{
 		// Source + version both moved AND there are content changes —
-		// pin the full multi-line shape.
+		// pin the full multi-line shape. The Hint also exercises
+		// writeChange's "  hint: ..." emission line.
 		Name:    "pair_changed_source_and_version",
 		BaseRef: "main",
 		Path:    ".",
@@ -123,7 +124,31 @@ var diffCases = []diffCase{
 				OldSource: "ns/vpc/aws", NewSource: "ns/vpc-v2/aws",
 				OldVersion: "1.0.0", NewVersion: "2.0.0",
 			},
-			Changes: []diff.Change{{Kind: diff.Breaking, Subject: "var.x", Detail: "removed"}},
+			Changes: []diff.Change{{
+				Kind:    diff.Breaking,
+				Subject: "var.x",
+				Detail:  "removed",
+				Hint:    "callers passing this variable will fail",
+			}},
+		}},
+	},
+	{
+		// Mixed change kinds in one pair — exercises every arm of
+		// bucketByKind (Breaking / NonBreaking / Informational) and
+		// the section ordering between them.
+		Name:    "pair_mixed_change_kinds",
+		BaseRef: "main",
+		Path:    ".",
+		Results: []diff.PairResult{{
+			Pair: loader.ModuleCallPair{
+				Key: "vpc", Status: loader.StatusChanged,
+				OldSource: "x", NewSource: "x",
+			},
+			Changes: []diff.Change{
+				{Kind: diff.Breaking, Subject: "var.required", Detail: "removed"},
+				{Kind: diff.NonBreaking, Subject: "var.tags", Detail: "added optional"},
+				{Kind: diff.Informational, Subject: "out.docs", Detail: "description updated"},
+			},
 		}},
 	},
 	{
