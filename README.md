@@ -493,6 +493,10 @@ Downstream tools that translate Terraform configurations into other provisioning
 
 `hashicorp/hcl`'s parser output gives you the raw AST — fine if you want literal source bytes, but you'd still need to do the type inference and cross-module work yourself. `terraform show -json` gives you the fully-evaluated plan — but it requires provider credentials, real state, and provider schemas, which static converters don't want to deal with. `tflens export` sits between: schema-free, providerless, no plan required, but with the type and dependency information that raw HCL doesn't surface.
 
+### Worked example
+
+[`docs/export-to-kro-rgd/`](./docs/export-to-kro-rgd/) is an end-to-end POC consuming the export JSON to emit a [kro](https://kro.run) `ResourceGraphDefinition` targeting [AWS Controllers for Kubernetes (ACK)](https://aws-controllers-k8s.github.io/community/) custom resources. ~250 LOC of stdlib-only Python (`generator.py`) covering: variable refs → `${schema.spec.X}`, cross-resource ARN refs → `${resources.foo.status.ackResourceMetadata.arn}` (ACK convention), `format()` template expansion → CEL string concat, `jsonencode` → kro's `json.marshal` CEL function (or literal JSON when statically resolvable), nested blocks → recursive YAML, snake_case → camelCase attribute renames. Read the bundled `README.md` for the full translation model, the subtleties the POC handles (parameterisation vs static eval, the HCL bare-identifier-key gotcha), and an effort estimate for productionising similar converters for crossplane / Pulumi / CDK for Terraform.
+
 ### Shape stability
 
 The shape is versioned via the `schema_version` field. While `_experimental: true`, fields may be added, renamed, or restructured between minor releases. We'll bump `schema_version` whenever the shape changes (even additions) so consumers can detect drift cheaply. When the prototype graduates, `_experimental` flips to `false` and the schema becomes part of the stable API contract under SemVer.
