@@ -4,21 +4,34 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// loadOldAndNew loads both sides of a project diff (the working tree
-// at path + the same path materialised in a temporary git worktree at
-// baseRef) using the standard resolver chain. Reads --offline from
-// the command flags. Thin cobra-side wrapper around
-// loader.LoadProjectsForDiff. The returned cleanup is non-nil even
-// on the error paths so a deferred cleanup() is always safe.
-func loadOldAndNew(cmd *cobra.Command, path, baseRef string) (oldProj, newProj *loader.Project, cleanup func(), err error) {
-	offline, _ := cmd.Flags().GetBool("offline")
-	return loader.LoadProjectsForDiff(path, baseRef, offline)
+// pathArg returns args[i] if present, otherwise ".". Used by every
+// subcommand whose first positional arg is an optional workspace path.
+func pathArg(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return "."
+}
+
+// resolveAutoBaseRef rewrites s.BaseRef in place when it equals the
+// "auto" keyword: dispatches to loader.ResolveAutoRef using s.Path so
+// the auto detection runs against the correct workspace. No-op when
+// the user supplied an explicit ref.
+func resolveAutoBaseRef(s *config.Settings) error {
+	if s.BaseRef != config.RefAutoKeyword {
+		return nil
+	}
+	auto, err := loader.ResolveAutoRef(s.Path)
+	if err != nil {
+		return err
+	}
+	s.BaseRef = auto
+	return nil
 }
 
 // mustLoadModule loads a single .tf file or a directory of .tf files

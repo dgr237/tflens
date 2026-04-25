@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 )
@@ -26,7 +27,9 @@ local submodules (including those resolved via .terraform/modules/modules.json
 after 'terraform init') are cross-validated.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runValidate(cmd, args[0])
+		s := config.FromCommand(cmd)
+		s.Path = args[0]
+		runValidate(s)
 	},
 }
 
@@ -34,13 +37,17 @@ func init() {
 	rootCmd.AddCommand(validateCmd)
 }
 
-func runValidate(cmd *cobra.Command, path string) {
-	mod, crossErrs := loadForValidate(cmd, path)
+func runValidate(s config.Settings) {
+	mod, crossErrs, fileErrs, err := loader.LoadForValidate(s.Path, s.Offline)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	printFileErrs(fileErrs)
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
 
-	if outputJSON(cmd) {
+	if s.JSON {
 		refJSON := make([]render.JSONValidationError, 0, len(refErrs))
 		crossJSON := make([]render.JSONValidationError, 0, len(crossErrs))
 		typeJSON := make([]render.JSONTypeError, 0, len(typeErrs))
@@ -96,18 +103,4 @@ func runValidate(cmd *cobra.Command, path string) {
 		}
 	}
 	os.Exit(1)
-}
-
-// loadForValidate returns the root module for validation plus any
-// cross-module errors discovered by walking into locally-referenced
-// child modules. Thin cobra-side wrapper around loader.LoadForValidate;
-// fatal on I/O errors and prints any FileErrors to stderr as warnings.
-func loadForValidate(cmd *cobra.Command, path string) (*analysis.Module, []analysis.ValidationError) {
-	offline, _ := cmd.Flags().GetBool("offline")
-	mod, crossErrs, fileErrs, err := loader.LoadForValidate(path, offline)
-	if err != nil {
-		fatalf("%v", err)
-	}
-	printFileErrs(fileErrs)
-	return mod, crossErrs
 }

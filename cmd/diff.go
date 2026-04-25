@@ -5,7 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -30,44 +32,35 @@ The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
 → main → master.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "."
-		if len(args) == 1 {
-			path = args[0]
+		s := config.FromCommand(cmd)
+		s.Path = pathArg(args, 0)
+		if err := resolveAutoBaseRef(&s); err != nil {
+			return err
 		}
-		base, _ := cmd.Flags().GetString("ref")
-		if base == RefAutoKeyword {
-			auto, err := resolveAutoRef(path)
-			if err != nil {
-				return err
-			}
-			base = auto
-		}
-		return runDiffRef(cmd, path, base)
+		return runDiffRef(s)
 	},
 }
 
 func init() {
-	diffCmd.Flags().String("ref", RefAutoKeyword,
+	diffCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	rootCmd.AddCommand(diffCmd)
 }
 
-func runDiffRef(cmd *cobra.Command, path, baseRef string) error {
-	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
+func runDiffRef(s config.Settings) error {
+	oldProj, newProj, cleanup, err := loader.LoadProjectsForDiff(s.Path, s.BaseRef, s.Offline)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	results, rootChanges, breaking := diff.AnalyzeProjects(oldProj, newProj)
-	if outputJSON(cmd) {
-		exitJSON(render.BuildJSONDiff(baseRef, path, results, rootChanges), diff.ExitCodeFor(breaking))
+	if s.JSON {
+		exitJSON(render.BuildJSONDiff(s.BaseRef, s.Path, results, rootChanges), diff.ExitCodeFor(breaking))
 		return nil
 	}
-	render.WriteDiffResults(os.Stdout, baseRef, results, rootChanges)
+	render.WriteDiffResults(os.Stdout, s.BaseRef, results, rootChanges)
 	if breaking > 0 {
 		os.Exit(1)
 	}
 	return nil
 }
-
-

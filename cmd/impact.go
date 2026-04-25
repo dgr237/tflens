@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/config"
 )
 
 var impactCmd = &cobra.Command{
@@ -11,7 +13,9 @@ var impactCmd = &cobra.Command{
 	Short: "Show every entity transitively affected if <id> changes",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		runImpact(cmd, args[0], args[1])
+		s := config.FromCommand(cmd)
+		s.Path = args[0]
+		runImpact(s, args[1])
 	},
 }
 
@@ -19,15 +23,15 @@ func init() {
 	rootCmd.AddCommand(impactCmd)
 }
 
-func runImpact(cmd *cobra.Command, path, id string) {
-	mod := mustLoadModule(path)
+func runImpact(s config.Settings, id string) {
+	mod := mustLoadModule(s.Path)
 	if !mod.HasEntity(id) {
 		fatalf("entity %q not found in %s\nRun 'tflens inventory %s' to list available entities",
-			id, path, path)
+			id, s.Path, s.Path)
 	}
 
 	affected := mod.Impact(id)
-	if outputJSON(cmd) {
+	if s.JSON {
 		if affected == nil {
 			affected = []string{}
 		}

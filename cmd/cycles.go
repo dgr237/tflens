@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/config"
 )
 
 var cyclesCmd = &cobra.Command{
@@ -13,7 +15,9 @@ var cyclesCmd = &cobra.Command{
 	Short: "Detect and print dependency cycles (exits non-zero if any found)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runCycles(cmd, args[0])
+		s := config.FromCommand(cmd)
+		s.Path = args[0]
+		runCycles(s)
 	},
 }
 
@@ -21,10 +25,10 @@ func init() {
 	rootCmd.AddCommand(cyclesCmd)
 }
 
-func runCycles(cmd *cobra.Command, path string) {
-	mod := mustLoadModule(path)
+func runCycles(s config.Settings) {
+	mod := mustLoadModule(s.Path)
 	cycles := mod.Cycles()
-	if outputJSON(cmd) {
+	if s.JSON {
 		if cycles == nil {
 			cycles = [][]string{}
 		}

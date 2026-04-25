@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -13,7 +14,9 @@ var unusedCmd = &cobra.Command{
 	Short: "List entities that nothing in the module references",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		runUnused(cmd, args[0])
+		s := config.FromCommand(cmd)
+		s.Path = args[0]
+		runUnused(s)
 	},
 }
 
@@ -21,10 +24,10 @@ func init() {
 	rootCmd.AddCommand(unusedCmd)
 }
 
-func runUnused(cmd *cobra.Command, path string) {
-	mod := mustLoadModule(path)
+func runUnused(s config.Settings) {
+	mod := mustLoadModule(s.Path)
 	unused := mod.Unreferenced()
-	if outputJSON(cmd) {
+	if s.JSON {
 		entities := make([]render.JSONEntity, 0, len(unused))
 		for _, e := range unused {
 			entities = append(entities, render.JSONEnt(e))

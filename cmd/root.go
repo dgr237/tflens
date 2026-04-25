@@ -42,9 +42,3 @@ func Execute() {
 		os.Exit(1)
 	}
 }
-
-// outputJSON reports whether the user asked for JSON output on this cmd.
-func outputJSON(cmd *cobra.Command) bool {
-	v, _ := cmd.Flags().GetString("format")
-	return v == "json"
-}

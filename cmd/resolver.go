@@ -4,25 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dgr237/tflens/pkg/loader"
 )
 
-// loadProject is the CLI's one-stop loader: reads --offline from the
-// command flags, calls loader.LoadProjectDefaults, and prints any
-// collected FileErrors to stderr as warnings. The returned project
-// is always non-nil on a nil error.
-func loadProject(cmd *cobra.Command, rootDir string) (*loader.Project, error) {
-	offline, _ := cmd.Flags().GetBool("offline")
-	project, fileErrs, err := loader.LoadProjectDefaults(rootDir, offline)
-	if err != nil {
-		return nil, err
-	}
-	printFileErrs(fileErrs)
-	return project, nil
-}
-
+// printFileErrs writes any non-fatal parse warnings to stderr.
+// Centralised here so every cmd-side caller of a loader.LoadXxx
+// function uses the same format.
 func printFileErrs(fileErrs []loader.FileError) {
 	for _, fe := range fileErrs {
 		fmt.Fprintf(os.Stderr, "warning: parse errors in %s\n", fe.Path)

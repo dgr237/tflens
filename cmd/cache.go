@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dgr237/tflens/pkg/cache"
+	"github.com/dgr237/tflens/pkg/config"
 )
 
 var cacheCmd = &cobra.Command{
@@ -36,7 +37,7 @@ var cacheInfoCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if outputJSON(cmd) {
+		if config.FromCommand(cmd).JSON {
 			exitJSON(struct {
 				Path    string `json:"path"`
 				Entries int    `json:"entries"`

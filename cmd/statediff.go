@@ -6,7 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/diff"
+	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/statediff"
 	"github.com/dgr237/tflens/pkg/tfstate"
@@ -40,43 +42,35 @@ provider schemas and expression evaluation — run 'terraform plan' for
 that. statediff is a static hazard detector, not a plan replacement.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		path := "."
-		if len(args) == 1 {
-			path = args[0]
+		s := config.FromCommand(cmd)
+		s.Path = pathArg(args, 0)
+		if err := resolveAutoBaseRef(&s); err != nil {
+			return err
 		}
-		base, _ := cmd.Flags().GetString("ref")
-		if base == RefAutoKeyword {
-			auto, err := resolveAutoRef(path)
-			if err != nil {
-				return err
-			}
-			base = auto
-		}
-		statePath, _ := cmd.Flags().GetString("state")
-		return runStatediff(cmd, path, base, statePath)
+		return runStatediff(s)
 	},
 }
 
 func init() {
-	statediffCmd.Flags().String("ref", RefAutoKeyword,
+	statediffCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	statediffCmd.Flags().String("state", "", "optional Terraform state v4 JSON file for instance cross-reference")
 	rootCmd.AddCommand(statediffCmd)
 }
 
-func runStatediff(cmd *cobra.Command, path, baseRef, statePath string) error {
-	oldProj, newProj, cleanup, err := loadOldAndNew(cmd, path, baseRef)
+func runStatediff(s config.Settings) error {
+	oldProj, newProj, cleanup, err := loader.LoadProjectsForDiff(s.Path, s.BaseRef, s.Offline)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	state, err := loadOptionalState(statePath)
+	state, err := loadOptionalState(s.StatePath)
 	if err != nil {
 		return err
 	}
 	result := statediff.Analyze(oldProj, newProj, state)
-	result.BaseRef, result.Path = baseRef, path
-	if outputJSON(cmd) {
+	result.BaseRef, result.Path = s.BaseRef, s.Path
+	if s.JSON {
 		exitJSON(result, diff.ExitCodeFor(result.FlaggedCount()))
 		return nil
 	}
