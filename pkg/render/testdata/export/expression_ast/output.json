@@ -265,13 +265,11 @@
                 "items": [
                   {
                     "key": {
-                      "node": "scope_traversal",
-                      "traversal": [
-                        {
-                          "name": "Name",
-                          "step": "root"
-                        }
-                      ]
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Name"
+                      }
                     },
                     "value": {
                       "args": [
@@ -302,13 +300,11 @@
                   },
                   {
                     "key": {
-                      "node": "scope_traversal",
-                      "traversal": [
-                        {
-                          "name": "Env",
-                          "step": "root"
-                        }
-                      ]
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Env"
+                      }
                     },
                     "value": {
                       "node": "scope_traversal",

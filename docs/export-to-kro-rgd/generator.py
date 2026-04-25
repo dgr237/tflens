@@ -208,10 +208,14 @@ def call_to_cel(name, args):
         return " + ".join(expr_to_cel(a) for a in args)
 
     if name == "jsonencode":
-        # CEL has no jsonencode; pass through as a comment for the
-        # operator. Production converters would emit a YAML literal
-        # block here when args[0] is statically resolvable.
-        return f'"<jsonencode: handle in YAML literal>"'
+        # kro ships json.marshal / json.unmarshal as first-class CEL
+        # functions in its CEL library, so jsonencode round-trips
+        # cleanly. See:
+        # https://github.com/kubernetes-sigs/kro/blob/main/pkg/cel/library/json.go
+        return f"json.marshal({expr_to_cel(args[0])})"
+
+    if name == "jsondecode":
+        return f"json.unmarshal({expr_to_cel(args[0])})"
 
     return f'"<unsupported_function: {name}>"'
 

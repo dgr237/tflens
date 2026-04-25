@@ -5,6 +5,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/dgr237/tflens/pkg/analysis"
 )
@@ -161,9 +162,26 @@ func expressionToAST(expr hclsyntax.Expression) any {
 		return map[string]any{"node": "object_cons", "items": items}
 
 	case *hclsyntax.ObjectConsKeyExpr:
-		// Object keys come wrapped to indicate whether they're a bare
-		// identifier (default) or an explicit expression. Unwrap and
-		// recurse — ScopeTraversalExpr inside conveys "bare-name key".
+		// HCL gotcha: a bare identifier in an object-cons key position
+		// is interpreted as a literal STRING, not a variable reference
+		// (per hclsyntax.ObjectConsKeyExpr docs). The parser still
+		// wraps it as a single-step ScopeTraversalExpr internally —
+		// emitting that to the AST consumer would mislead them into
+		// thinking { Name = "x" } references a variable named Name.
+		// Detect the bare-identifier case via AsTraversal and emit it
+		// as the literal_value string it actually represents. The
+		// parenthesised form `(expr) = "v"` sets ForceNonLiteral and
+		// recurses normally so the wrapped expression is preserved.
+		if !e.ForceNonLiteral {
+			if t := e.AsTraversal(); len(t) == 1 {
+				if root, ok := t[0].(hcl.TraverseRoot); ok {
+					return map[string]any{
+						"node":  "literal_value",
+						"value": ctyToExport(cty.StringVal(root.Name)),
+					}
+				}
+			}
+		}
 		return expressionToAST(e.Wrapped)
 
 	case *hclsyntax.TupleConsExpr:

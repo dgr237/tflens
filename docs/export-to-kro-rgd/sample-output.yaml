@@ -38,5 +38,5 @@ spec:
         metadata:
           name: "${(schema.spec.cluster_name + \"-eks-role\")}"
         spec:
-          assumeRolePolicyDocument: "${\"<jsonencode: handle in YAML literal>\"}"
+          assumeRolePolicyDocument: "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"eks.amazonaws.com\"}}],\"Version\":\"2012-10-17\"}"
           name: "${(schema.spec.cluster_name + \"-eks-role\")}"

@@ -40,6 +40,8 @@ The generator implements roughly this mapping:
 | `length(var.xs)` | `${size(schema.spec.xs)}` |
 | `lower(s)` / `upper(s)` | `${s.lowerAscii()}` / `${s.upperAscii()}` |
 | `concat(a, b)` | `${a + b}` (CEL list addition) |
+| `jsonencode(...)` | `${json.marshal(...)}` (kro ships a [`json` CEL library](https://github.com/kubernetes-sigs/kro/blob/main/pkg/cel/library/json.go) — round-trips cleanly) |
+| `jsondecode(...)` | `${json.unmarshal(...)}` |
 | snake_case attribute name | camelCase (ACK convention; some attrs renamed via the per-resource `attr_renames` table) |
 | `nested_block { ... }` | `nestedBlock: { ... }` (recursive) |
 | repeated `block { ... } × N` | `block: [ {...}, {...}, ... ]` |
@@ -71,11 +73,16 @@ ACK exposes every resource's AWS ARN at the standard path `status.ackResourceMet
 
 `format("%s-eks-role", var.cluster_name)` expands into a CEL string-concat expression: `(schema.spec.cluster_name + "-eks-role")`. The generator only handles `%s` and `%d` on literal-string templates — production converters would either expand the full printf grammar or call into a CEL helper function.
 
+### `jsonencode` round-trip
+
+A statically-resolvable `jsonencode({...})` (where the body has no `var.X` / `local.X` / resource refs) collapses to a literal string at the export layer — the cty stdlib evaluates the function and the generator emits the JSON directly into YAML. Example: the IAM `assume_role_policy` in the fixture becomes `assumeRolePolicyDocument: "{\"Statement\":...}"` with no CEL needed. When the body DOES reference variables/resources, the generator falls back to `${json.marshal({...})}` using kro's CEL `json` library — no information loss.
+
+This relies on a subtle HCL detail: a bare identifier in an object-cons key position (`Version = ...`, `Statement = ...`) is a literal STRING per [hclsyntax.ObjectConsKeyExpr](https://pkg.go.dev/github.com/hashicorp/hcl/v2/hclsyntax#ObjectConsKeyExpr), not a variable reference. The export AST walker special-cases this — emitting it as a `scope_traversal` would mislead consumers into thinking `{ Name = "x" }` references a variable named `Name`.
+
 ## Known gaps surfaced by the POC
 
 | Limitation | Workaround for now |
 | --- | --- |
-| `jsonencode({...})` has no CEL equivalent | Emit the static JSON value literally when the argument is statically resolvable (POC currently emits a placeholder marker). For dynamic arguments, use a kro CEL extension or pre-compute outside kro. |
 | `dynamic "name" { for_each = ..., content { ... } }` blocks aren't yet in the export | Deferred at the `tflens export` layer (see the README's "Static evaluation surface" → deferred items). Common in security-group rules and IAM policies. |
 | Tracked-attribute records still emit `expression_text` only (no `value`/`ast`) | Promote when the underlying `*Expr` is exported from `pkg/analysis.TrackedAttribute`. Doesn't affect resource-attribute conversion (where the AST IS available). |
 | Many AWS resource types lack ACK CRDs | Per-resource manual mapping in `ACK_MAPPING`. The [aws-controllers-k8s/code-generator](https://github.com/aws-controllers-k8s/code-generator) repo ships these mappings — a production converter would generate the table from there rather than hand-curate. |

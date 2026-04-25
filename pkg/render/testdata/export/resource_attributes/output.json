@@ -101,13 +101,11 @@
                 "items": [
                   {
                     "key": {
-                      "node": "scope_traversal",
-                      "traversal": [
-                        {
-                          "name": "Name",
-                          "step": "root"
-                        }
-                      ]
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Name"
+                      }
                     },
                     "value": {
                       "node": "literal_value",
@@ -119,13 +117,11 @@
                   },
                   {
                     "key": {
-                      "node": "scope_traversal",
-                      "traversal": [
-                        {
-                          "name": "Env",
-                          "step": "root"
-                        }
-                      ]
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Env"
+                      }
                     },
                     "value": {
                       "node": "scope_traversal",
@@ -143,13 +139,11 @@
                   },
                   {
                     "key": {
-                      "node": "scope_traversal",
-                      "traversal": [
-                        {
-                          "name": "Tier",
-                          "step": "root"
-                        }
-                      ]
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "Tier"
+                      }
                     },
                     "value": {
                       "args": [
