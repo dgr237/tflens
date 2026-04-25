@@ -155,6 +155,116 @@ var stdlibCases = []stdlibCase{
 			cty.StringVal("a"), cty.StringVal("b"), cty.StringVal("c"),
 		}),
 	},
+
+	// String functions
+	{Name: "upper", Want: cty.StringVal("HELLO")},
+	{Name: "lower", Want: cty.StringVal("hello")},
+	{Name: "join", Want: cty.StringVal("a-b-c")},
+	{
+		// split returns list(string), not tuple — explicit element type.
+		Name: "split",
+		Want: cty.ListVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("b"), cty.StringVal("c"),
+		}),
+	},
+	{Name: "format", Want: cty.StringVal("hello world, 42")},
+	{
+		// Literal mode — substr is plain text, no `/.../` delimiters.
+		Name: "replace_literal",
+		Want: cty.StringVal("baz bar baz"),
+	},
+	{
+		// Regex mode — `/[0-9]+/` triggers the Terraform-side
+		// dispatcher in replace.go (cty's own ReplaceFunc would treat
+		// the slashes as literal).
+		Name: "replace_regex",
+		Want: cty.StringVal("abcNdef"),
+	},
+	{Name: "trim", Want: cty.StringVal("hello")},
+	{Name: "trimspace", Want: cty.StringVal("hello")},
+	{Name: "trimprefix", Want: cty.StringVal("world")},
+	{Name: "trimsuffix", Want: cty.StringVal("hello")},
+
+	// Numeric functions
+	{Name: "abs", Want: cty.NumberIntVal(5)},
+	{Name: "min", Want: cty.NumberIntVal(1)},
+	{Name: "max", Want: cty.NumberIntVal(3)},
+	{Name: "floor", Want: cty.NumberIntVal(3)},
+	{Name: "ceil", Want: cty.NumberIntVal(4)},
+	{Name: "pow", Want: cty.NumberIntVal(1024)},
+
+	// Additional batch-2 string helpers
+	{Name: "title", Want: cty.StringVal("Hello World")},
+	{Name: "substr", Want: cty.StringVal("cde")},
+	{Name: "chomp", Want: cty.StringVal("hello")},
+	{Name: "indent", Want: cty.StringVal("line1\n  line2\n  line3")},
+	{
+		Name: "formatlist",
+		Want: cty.ListVal([]cty.Value{
+			cty.StringVal("hi-a"), cty.StringVal("hi-b"), cty.StringVal("hi-c"),
+		}),
+	},
+
+	// Additional batch-2 collection helpers
+	{
+		// SortFunc returns list(string).
+		Name: "sort",
+		Want: cty.ListVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("b"), cty.StringVal("c"),
+		}),
+	},
+	{
+		// ReverseListFunc preserves the input element type — a tuple
+		// of strings stays a tuple in reversed order.
+		Name: "reverse",
+		Want: cty.TupleVal([]cty.Value{
+			cty.StringVal("c"), cty.StringVal("b"), cty.StringVal("a"),
+		}),
+	},
+	{
+		// SliceFunc preserves the input element type; tuple slice
+		// returns a tuple of the requested span.
+		Name: "slice",
+		Want: cty.TupleVal([]cty.Value{
+			cty.StringVal("b"), cty.StringVal("c"), cty.StringVal("d"),
+		}),
+	},
+	{
+		// chunklist splits by size; trailing chunk is shorter.
+		Name: "chunklist",
+		Want: cty.ListVal([]cty.Value{
+			cty.ListVal([]cty.Value{cty.StringVal("a"), cty.StringVal("b")}),
+			cty.ListVal([]cty.Value{cty.StringVal("c"), cty.StringVal("d")}),
+			cty.ListVal([]cty.Value{cty.StringVal("e")}),
+		}),
+	},
+	{
+		// compact filters empty strings out of the list-of-strings.
+		Name: "compact",
+		Want: cty.ListVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("b"), cty.StringVal("c"),
+		}),
+	},
+	{Name: "coalesce", Want: cty.StringVal("first-non-empty")},
+	{
+		Name: "coalescelist",
+		Want: cty.TupleVal([]cty.Value{cty.StringVal("first-non-empty")}),
+	},
+	{
+		// zipmap produces an object (HCL string-key shape) with
+		// per-key types from the corresponding values.
+		Name: "zipmap",
+		Want: cty.ObjectVal(map[string]cty.Value{
+			"a": cty.NumberIntVal(1), "b": cty.NumberIntVal(2),
+		}),
+	},
+	{
+		// range(1, 4) → [1, 2, 3]; result is list(number).
+		Name: "range",
+		Want: cty.ListVal([]cty.Value{
+			cty.NumberIntVal(1), cty.NumberIntVal(2), cty.NumberIntVal(3),
+		}),
+	},
 }
 
 // TestFunctionsReturnsExpectedSet pins the public surface — the
@@ -165,6 +275,12 @@ func TestFunctionsReturnsExpectedSet(t *testing.T) {
 		"toset", "tolist", "tomap", "tostring", "tonumber", "tobool",
 		"length", "concat", "merge", "keys", "values",
 		"lookup", "contains", "element", "flatten", "distinct",
+		"upper", "lower", "title", "join", "split", "format", "formatlist",
+		"replace", "trim", "trimspace", "trimprefix", "trimsuffix",
+		"chomp", "indent", "substr",
+		"sort", "reverse", "slice", "chunklist", "compact",
+		"coalesce", "coalescelist", "zipmap", "range",
+		"abs", "min", "max", "floor", "ceil", "pow",
 	}
 	got := stdlib.Functions()
 	if len(got) != len(want) {
@@ -174,6 +290,75 @@ func TestFunctionsReturnsExpectedSet(t *testing.T) {
 		if _, ok := got[name]; !ok {
 			t.Errorf("missing function %q in Functions()", name)
 		}
+	}
+}
+
+// TestEvalErrorCases exercises the error paths of the Terraform-side
+// wrappers (replace.go, coalesce.go) by evaluating malformed inputs
+// through Functions() and asserting the call surfaces diagnostics.
+// Without this the negative branches go uncovered — the happy cases
+// in TestStdlibFunctionCases only prove successful evaluation.
+func TestEvalErrorCases(t *testing.T) {
+	cases := []struct {
+		Name string
+		Src  string
+	}{
+		{
+			// replace.go: regexp.Compile rejects unterminated character
+			// classes — surfaced as evaluation diags.
+			Name: "replace_invalid_regex",
+			Src:  `locals { out = replace("abc", "/[unterminated/", "x") }`,
+		},
+		{
+			// coalesce.go: type-unification fails when args are not
+			// promotable to a common type (string vs map).
+			Name: "coalesce_mismatched_types",
+			Src:  `locals { out = coalesce("a", {b = 1}) }`,
+		},
+		{
+			// coalesce.go: all args are empty strings → falls through
+			// to the "no non-null, non-empty-string arguments" error.
+			Name: "coalesce_all_empty",
+			Src:  `locals { out = coalesce("", "", "") }`,
+		},
+		{
+			// coalesce.go: explicit nulls plus an empty string take the
+			// IsNull() branch (and then the all-empty error).
+			Name: "coalesce_only_null_and_empty",
+			Src:  `locals { out = coalesce(null, "") }`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			p := hclparse.NewParser()
+			f, diags := p.ParseHCL([]byte(tc.Src), "main.tf")
+			if diags.HasErrors() {
+				t.Fatalf("parse: %v", diags)
+			}
+			body := f.Body.(*hclsyntax.Body)
+			attr := body.Blocks[0].Body.Attributes["out"]
+			ctx := &hcl.EvalContext{Functions: stdlib.Functions()}
+			if _, evalDiags := attr.Expr.Value(ctx); !evalDiags.HasErrors() {
+				t.Errorf("expected evaluation diagnostics, got none")
+			}
+		})
+	}
+}
+
+// TestCoalesceUnknown exercises the IsKnown() short-circuit in
+// coalesce.go: an unknown-typed argument causes the function to
+// return UnknownVal rather than skipping or erroring. Driven through
+// the Function directly because HCL literals are always known.
+func TestCoalesceUnknown(t *testing.T) {
+	got, err := stdlib.Functions()["coalesce"].Call([]cty.Value{
+		cty.UnknownVal(cty.String),
+		cty.StringVal("fallback"),
+	})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if got.IsKnown() {
+		t.Errorf("coalesce(unknown, ...) should return Unknown, got %#v", got)
 	}
 }
 

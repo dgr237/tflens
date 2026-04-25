@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Changed
+
+- **Terraform stdlib functions: batch 2 (string, numeric + extended collection helpers).** `pkg/analysis/stdlib.Functions()` now wires in 30 more Terraform built-ins on top of batch 1's 16, bringing the curated set to 46. Strings (13): `upper`, `lower`, `title`, `join`, `split`, `format`, `formatlist`, `replace`, `trim`, `trimspace`, `trimprefix`, `trimsuffix`, `chomp`, `indent`, `substr`. Numeric (6): `abs`, `min`, `max`, `floor`, `ceil`, `pow`. Extended collections (9): `sort`, `reverse`, `slice`, `chunklist`, `compact`, `coalesce`, `coalescelist`, `zipmap`, `range`. The same effective-value-collapse machinery introduced in batch 1 now suppresses false positives for these too — a tracked attribute or sensitive local that switches between e.g. `"us-east-1"` and `lower("US-EAST-1")`, `["a","b","c"]` and `sort(["c","b","a"])`, or `"ec2-small-v3"` and `format("ec2-%s-v%d", "small", 3)`, no longer flags as a change. Two functions needed Terraform-faithful wrappers because cty's defaults diverge: `replace` (`pkg/analysis/stdlib/replace.go`) — Terraform dispatches on `/regex/`-delimited search args, while cty's `ReplaceFunc` is literal-only; and `coalesce` (`pkg/analysis/stdlib/coalesce.go`) — Terraform's `coalesce` skips empty strings as well as nulls, while cty's only skips nulls. New per-function table tests under `pkg/analysis/stdlib/testdata/<func>/main.tf` (30 new fixtures, plus `replace_literal`/`replace_regex` and 4 negative-path coalesce/replace error cases), end-to-end statediff suppression cases under `pkg/statediff/testdata/effective_value_collapse/{lower,format}_collapses/{main,feature}/main.tf`, and end-to-end tracked-attribute cases under `pkg/diff/testdata/tracked_eval_{lower,format}_collapses/`. `pkg/analysis/stdlib` package coverage at 100%.
+
 ## [0.3.0] — 2026-04-25
 
 ### Changed

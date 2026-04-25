@@ -1,0 +1,3 @@
+locals {
+  out = trimspace("  hello  ")
+}

@@ -1,0 +1,3 @@
+locals {
+  out = trim("!?hello?!", "!?")
+}
