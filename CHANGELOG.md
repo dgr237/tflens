@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-04-25
+
 ### Fixed
 
 - **Plan enrichment — strip count/for_each indices from module path on source-side match.** 0.11.0's release notes described this behavior as if it shipped, but the actual fix landed in this follow-up: indexed module segments (`module.regions["us-east-1"]`) in plan addresses now correctly resolve to the source-side `module.regions` ModuleNode (no index) at lookup time. Without the fix, every indexed-module entry in the plan generated a spurious `(no matching source-side entity — plan may be stale)` hint. New `stripIndices` helper in `pkg/diff/enrich.go` walks each module-path segment removing content between `[` and `]`. Applied at matchKey lookup time so the original ModuleAddress is preserved on the ResourceChange (still visible in Subject for human readability) but the source-side lookup uses the index-stripped path. Resource indices (the trailing `[idx]` on the resource itself) were already handled correctly because `EntityID()` strips them. New `indexed_module.json` fixture exercises both indexed-module and indexed-resource shapes; two new tests pin per-instance Subject preservation and end-to-end source-side resolution against a real project tree.
@@ -216,7 +218,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/dgr237/tflens/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dgr237/tflens/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dgr237/tflens/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/dgr237/tflens/compare/v0.9.0...v0.9.1
