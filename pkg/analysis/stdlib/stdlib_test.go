@@ -301,6 +301,81 @@ var stdlibCases = []stdlibCase{
 			cty.StringVal("abc"), cty.StringVal("def"), cty.StringVal("ghi"),
 		}),
 	},
+
+	// Encoders / decoders. JSON object keys are emitted in sorted
+	// order (Go encoding/json default) which is also what cty does.
+	{
+		Name: "jsonencode",
+		Want: cty.StringVal(`{"a":1,"b":"two"}`),
+	},
+	{
+		// jsondecode of a JSON object → cty.Object with one attribute
+		// per key. Numeric values become cty.Number; strings cty.String.
+		Name: "jsondecode",
+		Want: cty.ObjectVal(map[string]cty.Value{
+			"a": cty.NumberIntVal(1),
+			"b": cty.StringVal("two"),
+		}),
+	},
+	{
+		// csvdecode treats the first row as headers; subsequent rows
+		// become objects keyed by header. cty unifies the row objects
+		// (same attribute set + types) into a list, not a tuple.
+		Name: "csvdecode",
+		Want: cty.ListVal([]cty.Value{
+			cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("web"), "size": cty.StringVal("small"),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"name": cty.StringVal("db"), "size": cty.StringVal("large"),
+			}),
+		}),
+	},
+	{Name: "base64encode", Want: cty.StringVal("aGVsbG8=")},
+	{Name: "base64decode", Want: cty.StringVal("hello")},
+
+	// Set algebra. cty preserves set semantics — order-insensitive,
+	// duplicate-folding. SetVal with the same element set RawEquals
+	// regardless of input ordering.
+	{
+		Name: "setunion",
+		Want: cty.SetVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("b"), cty.StringVal("c"),
+		}),
+	},
+	{
+		Name: "setintersection",
+		Want: cty.SetVal([]cty.Value{
+			cty.StringVal("b"), cty.StringVal("c"),
+		}),
+	},
+	{
+		Name: "setsubtract",
+		Want: cty.SetVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("c"),
+		}),
+	},
+	{
+		Name: "setsymmetricdifference",
+		Want: cty.SetVal([]cty.Value{
+			cty.StringVal("a"), cty.StringVal("c"),
+		}),
+	},
+	{
+		// setproduct of two list/tuple inputs preserves ordering and
+		// returns a list of tuples (cartesian pairs).
+		Name: "setproduct",
+		Want: cty.ListVal([]cty.Value{
+			cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("x")}),
+			cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.StringVal("y")}),
+			cty.TupleVal([]cty.Value{cty.StringVal("b"), cty.StringVal("x")}),
+			cty.TupleVal([]cty.Value{cty.StringVal("b"), cty.StringVal("y")}),
+		}),
+	},
+
+	// List + numeric pickups
+	{Name: "index", Want: cty.NumberIntVal(1)},
+	{Name: "parseint", Want: cty.NumberIntVal(255)},
 }
 
 // TestFunctionsReturnsExpectedSet pins the public surface — the
@@ -317,6 +392,11 @@ func TestFunctionsReturnsExpectedSet(t *testing.T) {
 		"sort", "reverse", "slice", "chunklist", "compact",
 		"coalesce", "coalescelist", "zipmap", "range",
 		"regex", "regexall",
+		"jsonencode", "jsondecode", "csvdecode",
+		"base64encode", "base64decode",
+		"setunion", "setintersection", "setsubtract",
+		"setsymmetricdifference", "setproduct",
+		"index", "parseint",
 		"abs", "min", "max", "floor", "ceil", "pow",
 	}
 	got := stdlib.Functions()
@@ -377,6 +457,40 @@ func TestEvalErrorCases(t *testing.T) {
 			Name: "regex_invalid_pattern",
 			Src:  `locals { out = regex("[unterminated", "abc") }`,
 		},
+		{
+			// base64.go: malformed base64 input → DecodeString error.
+			Name: "base64decode_invalid",
+			Src:  `locals { out = base64decode("not-valid-base64!!!") }`,
+		},
+		{
+			// base64.go: legal base64 that decodes to non-UTF-8 bytes
+			// (0xff is not a valid UTF-8 start byte) hits the utf8.Valid
+			// guard. "/w==" is base64 for [0xff].
+			Name: "base64decode_non_utf8",
+			Src:  `locals { out = base64decode("/w==") }`,
+		},
+		{
+			// jsondecode of malformed JSON surfaces a parse error.
+			Name: "jsondecode_invalid",
+			Src:  `locals { out = jsondecode("{not json") }`,
+		},
+		{
+			// index.go: non-list/tuple input → "argument must be a
+			// list or tuple" error.
+			Name: "index_non_list",
+			Src:  `locals { out = index("not-a-list", "x") }`,
+		},
+		{
+			// index.go: empty list → "cannot search an empty list"
+			// error path.
+			Name: "index_empty_list",
+			Src:  `locals { out = index([], "x") }`,
+		},
+		{
+			// index.go: value not present → "item not found" error.
+			Name: "index_not_found",
+			Src:  `locals { out = index(["a", "b"], "z") }`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -395,20 +509,55 @@ func TestEvalErrorCases(t *testing.T) {
 	}
 }
 
-// TestCoalesceUnknown exercises the IsKnown() short-circuit in
-// coalesce.go: an unknown-typed argument causes the function to
-// return UnknownVal rather than skipping or erroring. Driven through
-// the Function directly because HCL literals are always known.
-func TestCoalesceUnknown(t *testing.T) {
-	got, err := stdlib.Functions()["coalesce"].Call([]cty.Value{
-		cty.UnknownVal(cty.String),
-		cty.StringVal("fallback"),
-	})
-	if err != nil {
-		t.Fatalf("Call: %v", err)
+// TestUnknownInputShortCircuits exercises the IsKnown() short-
+// circuits in coalesce.go and index.go: an unknown-typed argument
+// causes the function to return UnknownVal rather than skipping or
+// erroring. Driven through Function.Call directly because HCL
+// literals are always known.
+func TestUnknownInputShortCircuits(t *testing.T) {
+	cases := []struct {
+		Name string
+		Func string
+		Args []cty.Value
+	}{
+		{
+			Name: "coalesce_unknown_first_arg",
+			Func: "coalesce",
+			Args: []cty.Value{cty.UnknownVal(cty.String), cty.StringVal("fallback")},
+		},
+		{
+			// index.go: unknown list short-circuits to Unknown(Number).
+			Name: "index_unknown_list",
+			Func: "index",
+			Args: []cty.Value{cty.UnknownVal(cty.List(cty.String)), cty.StringVal("x")},
+		},
+		{
+			// index.go: a list containing an unknown element makes
+			// the per-element equality check return unknown for that
+			// position; the iterator hits the !eq.IsKnown() branch
+			// before reaching the known target. Outer list is known
+			// (structurally) so the function machinery passes it into
+			// Impl rather than short-circuiting at the boundary.
+			Name: "index_partially_unknown_list",
+			Func: "index",
+			Args: []cty.Value{
+				cty.ListVal([]cty.Value{
+					cty.UnknownVal(cty.String), cty.StringVal("b"),
+				}),
+				cty.StringVal("b"),
+			},
+		},
 	}
-	if got.IsKnown() {
-		t.Errorf("coalesce(unknown, ...) should return Unknown, got %#v", got)
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, err := stdlib.Functions()[tc.Func].Call(tc.Args)
+			if err != nil {
+				t.Fatalf("Call: %v", err)
+			}
+			if got.IsKnown() {
+				t.Errorf("%s should return Unknown, got %#v", tc.Name, got)
+			}
+		})
 	}
 }
 
