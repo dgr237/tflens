@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens export` subcommand (PROTOTYPE — shape subject to change).** Walks the project tree and emits the enriched entity model that tflens has built up internally as a single JSON document on stdout: variables/outputs/resources with parsed type info, locals with both source text AND statically-evaluated `cty.Value` (when the curated stdlib can resolve them), the dependency graph as adjacency map, the `terraform { }` block, and `# tflens:track` markers. Child modules nest under `root.children.<call-name>`. Intended as a building block for downstream converters that translate Terraform to other provisioning systems (kro, crossplane, Pulumi, CDK for Terraform, …) without re-implementing the parser/analyser/resolver layers — `terraform show -json` requires provider credentials and a real plan; raw `hcl.File` doesn't give you type inference or cross-module resolution; `tflens export` sits between. Output is explicitly versioned (`schema_version: "0.1.0-prototype"`) and flagged `_experimental: true` in every emitted document. Field additions/renames/restructures may happen between minor versions while the prototype matures — see the new "Export (experimental)" section in the README for what's emitted, what's deferred, and how shape stability will work post-graduation. Implementation: `cmd/export.go` (cobra wiring) + `pkg/render/export.go` (JSON shape + builder + `BuildExport`/`WriteExport` helpers); 3 tests under `pkg/render/export_test.go` cover the envelope, end-to-end shape via an inline fixture (variables/outputs/resources/locals/data/module-call/terraform/tracked), JSON round-trip, and nil-project safety. cmd-side coverage is 0% by convention — exercise via the `pkg/render` helpers.
+
 ## [0.6.0] — 2026-04-25
 
 ### Changed

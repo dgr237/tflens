@@ -64,6 +64,7 @@ tflens --offline diff --ref main ./my-tf
 | `statediff [path] [--state file]` | Static hazard detector: resource adds/removes vs `--ref` (default `auto`), plus locals whose value changed and whose dep chain reaches `count`/`for_each`. With `--state`, lists the state instances that may be affected |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
+| `export [path]` | **[EXPERIMENTAL]** Emit the enriched module model as JSON — variables/outputs/resources with type info, evaluated values where statically resolvable, dependency graph, tracked-attribute markers. Shape subject to change; intended as a building block for converters to other provisioning systems (kro, crossplane, Pulumi, etc.). See [Export (experimental)](#export-experimental). |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
 
@@ -468,6 +469,43 @@ Evaluation goes through known variable defaults and local values via the cty std
 - **Child modules** — every module call (recursively) is also covered, regardless of source type. Local-source children get tracked diffing in addition to consumption checks; registry/git children get it in addition to the full API diff.
 
 Tracked-attribute diffs always count toward the `tflens diff` exit code, so CI gates work without extra wiring.
+
+## Export (experimental)
+
+> **Status: prototype.** The output shape is explicitly versioned (`schema_version` field) and flagged `_experimental: true` in every emitted document. **Do not depend on field stability across minor versions until this graduates** — entries may be added, renamed, or restructured in response to feedback from downstream converter authors.
+
+```
+tflens export [path]
+```
+
+`path` defaults to cwd. Walks the project tree (root + all resolvable child modules) and emits a single JSON document containing the enriched entity model that tflens has built up internally:
+
+- **Per module**: variables (with parsed type constraint, default text + evaluated value, sensitivity flags, validation count), outputs, resources + data sources (type/name + every meta-arg: `count`, `for_each`, `depends_on`, `provider`, lifecycle), locals (text + evaluated value), module calls (source, version, full argument map as text), the `terraform { }` block (required version, required providers, backend type), and `# tflens:track` markers.
+- **Dependency graph**: adjacency map of canonical entity IDs.
+- **Project tree**: child modules nested under `root.children.<call-name>` recursively, with the original `source` string preserved.
+
+Evaluated values come through the curated stdlib (see [Static evaluation surface](#static-evaluation-surface)) — anything that resolves statically (literals, variable defaults, `format`/`jsonencode`/`lower`/etc. of known constants, transitive var/local refs) gets an `evaluated_value` populated with both the cty type and the JSON value. Anything that reaches a computed attribute, data source, or non-curated function omits `evaluated_value` and surfaces only `value_text` — converters can choose what to do with unevaluable expressions.
+
+### Why it exists
+
+Downstream tools that translate Terraform configurations into other provisioning systems (kro, crossplane, Pulumi, CDK for Terraform, …) all need the same upstream work: parse the HCL, infer types, resolve cross-module references, evaluate what's statically resolvable, build the dependency graph. tflens has all of that already. `export` makes it accessible without each converter re-implementing the parser/analyser layers.
+
+`hashicorp/hcl`'s parser output gives you the raw AST — fine if you want literal source bytes, but you'd still need to do the type inference and cross-module work yourself. `terraform show -json` gives you the fully-evaluated plan — but it requires provider credentials, real state, and provider schemas, which static converters don't want to deal with. `tflens export` sits between: schema-free, providerless, no plan required, but with the type and dependency information that raw HCL doesn't surface.
+
+### Shape stability
+
+The shape is versioned via the `schema_version` field. While `_experimental: true`, fields may be added, renamed, or restructured between minor releases. We'll bump `schema_version` whenever the shape changes (even additions) so consumers can detect drift cheaply. When the prototype graduates, `_experimental` flips to `false` and the schema becomes part of the stable API contract under SemVer.
+
+### Not yet emitted
+
+Deferred until a converter author asks — adding fields is cheap; reverting them after they ship is expensive:
+
+- **Per-attribute resource bodies.** Currently only the meta-args (`count`, `for_each`, `depends_on`, `provider`, lifecycle) are exposed. Arbitrary attributes (`cidr_block = "10.0.0.0/16"`) aren't yet captured on `analysis.Entity`.
+- **Validation/precondition/postcondition block contents.** Counts are exposed; the condition expressions themselves are not.
+- **Dynamic block bodies.** `dynamic "ingress" { for_each = ... }` block contents are opaque.
+- **Provider alias graph.** Multiple `provider` declarations with `alias = ...` aren't separately surfaced.
+
+If you're building a converter and need any of these, please open an issue — the shape conversation is exactly what the experimental phase exists for.
 
 ## Module resolution
 
