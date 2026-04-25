@@ -335,7 +335,7 @@ Exit code is 1 when any resource add/remove or sensitive local fires.
 ### What it does not do
 
 - **Plan simulation.** Attribute-level diffs (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) need provider schemas and expression evaluation — that is `terraform plan`'s job. `statediff` is a complementary, cheap, schema-free check that catches a different class of hazard than plan.
-- **Full expression evaluation.** A sensitive local with `count = length(local.xs) > 0 ? 1 : 0` is flagged as "may change" without us knowing whether `length` actually crosses the boundary. The signal is a warning, not a definitive answer.
+- **Full expression evaluation.** A curated subset of Terraform built-ins is wired in (see [Static evaluation surface](#static-evaluation-surface) below), so e.g. `count = length(local.xs)` IS evaluated when `local.xs` is statically known. But anything that reaches a data source, a computed resource attribute, or a non-curated function still falls back to "may change". The signal is a warning, not a definitive answer.
 - **Variable-driven changes across module callers.** A `count = var.n` resource where the caller on one branch passes `n = 3` and the other passes `n = 1` is not currently followed across module boundaries.
 
 ## Tracked attributes (for application-development teams)
@@ -460,7 +460,7 @@ Pick the highest-leverage spot for your scenario:
 
 **Effective-value awareness:** when the literal text of an expression changes but it evaluates to the same constant (e.g. `"1.34"` on the old side vs `var.upgrade ? "1.35" : "1.34"` with `var.upgrade = false` on the new side, both yielding `"1.34"`), the diff suppresses the value-change detail. The marker still surfaces *what's new* (a freshly-referenced variable, for example) as Informational supporting context — useful for reviewers to know what's wired in — but won't gate CI as Breaking unless the effective value actually moved.
 
-Evaluation goes through known variable defaults and local values via the cty stdlib. Expressions that can't be evaluated statically — references to `data.X.Y` data sources, computed resource attributes (`aws_vpc.main.id`), Terraform-specific functions (`length`, `contains`, `keys`, `merge`, `lookup`, …) — fall back to literal text comparison. That fallback is conservative: if the texts differ, the diff is reported as Breaking even when the *real* value might be unchanged, because tflens can't prove either way without resolving the unevaluable bits. Expressions where text and effective value both differ on the new side are always reported correctly; expressions where text differs but value doesn't are only collapsed when both sides evaluate cleanly.
+Evaluation goes through known variable defaults and local values via the cty stdlib plus a curated set of ~46 Terraform built-ins (`length`, `contains`, `merge`, `lookup`, `concat`, `toset`, `lower`, `format`, `replace`, `sort`, `coalesce`, `min`/`max`, … — see [Static evaluation surface](#static-evaluation-surface) for the full list and what's deliberately out). Expressions that can't be evaluated statically — references to `data.X.Y` data sources, computed resource attributes (`aws_vpc.main.id`), or any non-curated function — fall back to literal text comparison. That fallback is conservative: if the texts differ, the diff is reported as Breaking even when the *real* value might be unchanged, because tflens can't prove either way without resolving the unevaluable bits. Expressions where text and effective value both differ on the new side are always reported correctly; expressions where text differs but value doesn't are only collapsed when both sides evaluate cleanly.
 
 ### Where it works
 
@@ -524,9 +524,24 @@ These are not bugs but deliberate boundaries:
 
 - **No Terraform execution.** This is a static analyser. Anything that requires planning, applying, or querying a provider is out of scope.
 - **No provider schemas.** We do not embed AWS/GCP/Azure/etc. provider schemas. Resource attribute types, required-vs-optional attributes, and deprecations of resource types are invisible to us. Running `terraform validate` in addition to this tool catches those.
-- **No expression evaluation.** Functions, conditionals, and references to computed attributes cannot be resolved statically. The inferred type of `aws_vpc.main.id` is `TypeUnknown`. The tracked-attribute pass does follow `var.X` / `local.X` references one or two hops deep — by comparing the canonical *text* of the referenced default or value, not by evaluating the expression.
+- **Limited expression evaluation.** Conditionals, arithmetic, string interpolation, and a curated set of ~46 Terraform built-in functions (see [Static evaluation surface](#static-evaluation-surface)) ARE evaluated when every reference resolves to a known constant — this powers the effective-value-collapse for tracked attributes and statediff sensitive locals. Anything that reaches a computed attribute (`aws_vpc.main.id` is always `TypeUnknown`), a data source, or a non-curated function (`templatefile`, `jsondecode`, `regex`, `try`, …) falls back to text comparison.
 - **Caller awareness only at module-call boundaries.** `whatif` and the local-source path of `diff` cross-validate a parent module's `module "x" { ... }` block against the candidate child's variables and outputs. Beyond that — e.g. whether some external repo that pinned to an old version still works after a registry-module change — is out of scope; we'd need to analyse those callers too.
 - **Mid-expression comments are dropped.** Line and block comments at statement boundaries round-trip correctly; comments embedded inside a function call argument list split across lines, or inside a multi-line object/tuple literal, are lost by `fmt`.
+
+### Static evaluation surface
+
+Tracked-attribute diffs and statediff sensitive-local detection both ask the question "does the new expression evaluate to the same value as the old one?". When the answer is yes, the change is suppressed — so a refactor like `"us-east-1"` → `lower("US-EAST-1")` doesn't gate CI.
+
+The curated function set is intentionally a subset of Terraform's built-ins, not a complete mirror. Adding more is cheap (one entry in `pkg/analysis/stdlib/stdlib.go` plus a fixture) — see [issue #16](https://github.com/dgr237/tflens/issues/16) for the rationale on what's in vs. out.
+
+| Group | Functions |
+| --- | --- |
+| Type conversion | `toset`, `tolist`, `tomap`, `tostring`, `tonumber`, `tobool` |
+| Collections | `length`, `concat`, `merge`, `keys`, `values`, `lookup`, `contains`, `element`, `flatten`, `distinct`, `sort`, `reverse`, `slice`, `chunklist`, `compact`, `coalesce`, `coalescelist`, `zipmap`, `range` |
+| String | `upper`, `lower`, `title`, `join`, `split`, `format`, `formatlist`, `replace` (literal + `/regex/` dispatch), `trim`, `trimspace`, `trimprefix`, `trimsuffix`, `chomp`, `indent`, `substr` |
+| Numeric | `abs`, `min`, `max`, `floor`, `ceil`, `pow` |
+
+**Deliberately excluded** (and unlikely to be added): filesystem (`file`, `fileset`, `templatefile`) — needs filesystem context that isn't valid for static analysis; non-deterministic (`timestamp`, `uuid`, `bcrypt`) — must always return unknown; complex semantics (`can`, `try`) — needs full Terraform evaluator catch-and-retry. **Not yet wired but plausible** for future batches: `regex`/`regexall`/`regexreplace`, `jsondecode`/`jsonencode`, `formatdate`, `parseint`, `signum`, `log`.
 
 ## Editor integration
 
