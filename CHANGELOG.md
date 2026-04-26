@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Documentation
+
+- **Repo hygiene: Code of Conduct + issue / PR templates.** New [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) adopts Contributor Covenant 2.1 (linked rather than vendored, so upstream updates flow automatically) with the maintainer contact email. New `.github/ISSUE_TEMPLATE/` directory with two GitHub-form templates — bug report (version, subcommand, repro, actual vs expected) and feature request (problem-first framing, prior-art prompt, scope reminder pointing at `docs/comparison.md`) — plus a `config.yml` that disables blank issues and routes "questions" to the feature-request template + security reports to GitHub Security Advisories. New [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) with the Summary / Test plan / CHANGELOG / Release-label sections that mirror the shape of recent merged PRs. Standard OSS-hygiene set; reduces friction for first-time contributors and signals "this is a maintained project taking contributions seriously" — useful as the action's Marketplace listing makes the repo more discoverable.
+
 ## [0.16.2] — 2026-04-26
 
 ### Changed

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/dgr237/tflens/issues/new?template=feature_request.yml
+    about: |
+      No Discussions board yet — please open a feature request describing what you're trying to do.
+      Most "questions" turn out to be requests for clearer docs or a missing flag, both of which are useful issues.
+  - name: Security report
+    url: https://github.com/dgr237/tflens/security/advisories/new
+    about: |
+      Found a vulnerability? Report privately via GitHub Security Advisories. See SECURITY.md for scope and process.

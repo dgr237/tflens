@@ -1,0 +1,98 @@
+name: Bug report
+description: tflens did something wrong, crashed, or produced unexpected output
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! The more specific the repro, the faster we can fix it.
+
+        **Before filing:** please check that the issue isn't already covered in the [docs/commands/](https://github.com/dgr237/tflens/tree/main/docs/commands) reference for the affected subcommand — many surprising behaviours are documented in the "What it does NOT catch" sections.
+
+  - type: input
+    id: version
+    attributes:
+      label: tflens version
+      description: Output of `tflens --version` (or the git SHA / release tag if you're running from source)
+      placeholder: "v0.16.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: subcommand
+    attributes:
+      label: Subcommand
+      description: Which command surfaced the bug?
+      options:
+        - validate
+        - diff
+        - whatif
+        - statediff
+        - export
+        - inventory / deps / impact / unused / cycles / graph / fmt / cache
+        - GitHub Action wrapper
+        - other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug in one or two sentences.
+      placeholder: "Running `tflens diff --ref main` against ./modules/network produced ... but I expected ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps
+      description: Minimal HCL + commands that reproduce the issue. The smaller the better — single `main.tf` is ideal.
+      placeholder: |
+        ```hcl
+        # main.tf
+        variable "x" { type = string }
+        ```
+
+        ```bash
+        tflens diff --ref main .
+        ```
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: Paste the actual output (or the error / stack trace).
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: What did you expect tflens to do or report?
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / shell
+      description: Linux/macOS/Windows + which shell. CI runner OS counts too.
+      placeholder: "Ubuntu 22.04, bash"
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Workarounds you've tried, related issues, surrounding context.
+    validations:
+      required: false
