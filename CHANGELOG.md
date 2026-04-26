@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-04-26
+
 ### Added
 
 - **`tflens diff --enrich-with-plan` — source positions on plan-derived rows.** When a plan ResourceChange matches a known source-side entity, the entity's `Pos` is propagated onto the emitted `Change.NewPos` so the markdown renderer can link plan-derived rows back to the resource declaration with `file:line`. Previously every plan-derived row had a zero Position regardless of whether the source-side analysis knew about the resource — reviewers couldn't navigate from the diff to the underlying `resource "aws_vpc" "main"` block. Plan rows whose address has no source-side match (typical of stale plans) leave NewPos zero rather than fabricating a fake position; the existing `(no matching source-side entity — plan may be stale)` hint already tells the reviewer the plan is out of sync. New `entityRef` value type on the entity index carries the position; `lookupEntity` now returns `(exists, position)`; `changesForResourceChange` takes the position and stamps it onto every emitted Change including the per-attribute delta rows.
@@ -244,7 +246,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/dgr237/tflens/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dgr237/tflens/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dgr237/tflens/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/dgr237/tflens/compare/v0.11.0...v0.11.1
