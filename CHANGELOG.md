@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Changed
+
+- **GitHub Action metadata: name and description tightened for Marketplace publication.** Renamed from `tflens` to `tflens — Terraform breaking-change detector` (the bare name was rejected as non-unique by GitHub Marketplace). Description trimmed from ~250 chars (multi-line block) to 105 chars (single line) to fit Marketplace's 125-char limit. Behaviour unchanged — only the metadata humans see on the Marketplace listing differs. The `uses: dgr237/tflens@vX.Y.Z` invocation form is unaffected.
+
 ## [0.16.1] — 2026-04-26
 
 ### Fixed

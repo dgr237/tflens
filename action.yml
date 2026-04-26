@@ -1,9 +1,5 @@
-name: 'tflens'
-description: |
-  Run tflens (static Terraform analyser) against a Terraform project and
-  surface the result as a sticky PR comment + workflow step summary.
-  Wraps `tflens diff | whatif | statediff | validate` with PR-comment
-  plumbing so CI integration is a single uses: line.
+name: 'tflens — Terraform breaking-change detector'
+description: 'Run tflens against Terraform on every PR. Posts diff / whatif / statediff results as a sticky PR comment.'
 author: 'dgr237'
 branding:
   icon: 'eye'
