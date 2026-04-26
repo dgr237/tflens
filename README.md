@@ -49,6 +49,54 @@ tflens --format markdown diff --ref main ./my-tf | gh pr comment $PR --body-file
 tflens --offline diff --ref main ./my-tf
 ```
 
+## GitHub Action
+
+A composite action wrapper lives at the repo root, so a workflow can invoke `tflens diff --format markdown --enrich-with-plan` and post the result as a sticky PR comment in one step:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write   # required for the sticky comment
+
+jobs:
+  tflens:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # tflens needs history for --ref comparison
+
+      # Optional: produce a plan to enrich the diff with attribute-level deltas
+      - run: terraform init && terraform plan -out=tfplan && terraform show -json tfplan > plan.json
+
+      - uses: dgr237/tflens@v0.12.0
+        with:
+          command: diff
+          ref: origin/${{ github.base_ref }}
+          plan: plan.json
+```
+
+The action builds tflens from the same ref the consumer pinned (so `dgr237/tflens@v0.12.0` always runs tflens v0.12.0) and posts the markdown output as a sticky PR comment — subsequent runs edit the same comment via a hidden marker (`<!-- tflens-action:tflens -->`) instead of stacking new ones. Every run also appends to `$GITHUB_STEP_SUMMARY` for visibility on the workflow run page.
+
+Inputs (all optional):
+
+| Input | Default | Notes |
+|---|---|---|
+| `command` | `diff` | `diff` / `whatif` / `statediff` / `validate` |
+| `path` | `.` | Project path |
+| `ref` | `auto` | Git ref for diff/whatif/statediff. `auto` resolves to @{upstream} → origin/HEAD → main → master |
+| `format` | `markdown` | `markdown` / `json` / `text`. PR commenting and step summary skip silently for non-markdown |
+| `plan` | _(empty)_ | Path to `terraform show -json` output. Forwarded as `--enrich-with-plan` (diff only) |
+| `state` | _(empty)_ | Path to a Terraform state file. Forwarded as `--state` (statediff only) |
+| `args` | _(empty)_ | Raw extra args appended to the command (e.g. `--offline`) |
+| `comment-on-pr` | `true` | Post / edit a sticky PR comment |
+| `comment-tag` | `tflens` | Marker used to identify the sticky comment. Use distinct tags when calling the action multiple times in one workflow |
+| `pr-number` | _(empty)_ | PR number to comment on. Required for non-`pull_request` triggers |
+| `step-summary` | `true` | Append output to `$GITHUB_STEP_SUMMARY` |
+| `fail-on-breaking` | `true` | Exit non-zero when tflens reports findings (CI gate) |
+
+Outputs: `output-file` (path to captured output), `exit-code` (numeric), `breaking` (`true` / `false`).
+
 ## Commands
 
 | Command | Purpose |
