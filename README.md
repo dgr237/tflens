@@ -182,6 +182,12 @@ tflens diff --ref main --enrich-with-plan plan.json
 
 **Provenance:** plan-derived rows are tagged with a `[plan]` prefix in the console renderer and a 📋 marker in the markdown renderer, so reviewers can tell at a glance which findings came from static analysis vs the plan output.
 
+**Sensitive value redaction.** Attributes flagged via the plan's `before_sensitive` / `after_sensitive` shadow trees (anything that flowed through a sensitive variable, sensitive output, or `sensitive = true` resource attribute) render as `(sensitive)` instead of the raw value. Subtree-wide markers (e.g. an entire `aws_secretsmanager_secret_version.secret_string` map flagged sensitive) collapse to a single `(sensitive)` row at the subtree level rather than descending into placeholder children. This is enforced inside `pkg/diff/enrich.go` before the value reaches Detail — no renderer downstream can accidentally leak it.
+
+**`(known after apply)` rendering.** Attributes whose post-apply value is computed by the provider (the plan's `after_unknown` shadow) render as `(known after apply)` rather than `<nil>`, so `aws_db_instance.main:arn` showing `→ (known after apply)` is unambiguously "the provider will fill this in" rather than "the attribute is being unset".
+
+**Per-module routing.** Plan-derived rows whose module address matches a paired module call land under that pair's section in the rendered output, next to the static-side findings for the same module. Plan rows for unmatched modules (or for the root) accumulate in the project-root section. Indexed module addresses (`module.regions["us-east-1"]`) route to the underlying `module.regions` pair regardless of how many instances the for_each / count produces.
+
 ```
 Root module:
   Breaking (2):

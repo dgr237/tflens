@@ -118,6 +118,69 @@ func TestAttrDeltasCreateAndDelete(t *testing.T) {
 	}
 }
 
+// TestAttrDeltasSensitiveAndUnknown pins the shadow-tree handling.
+// The fixture's RDS resource has a sensitive `password` (per-leaf
+// shadow), an unchanged-but-redacted `username`, and an `arn` that's
+// going from a real value to `(known after apply)`. The secret-
+// manager resource has a fully sensitive structured value (subtree-
+// wide shadow) where the entire `secret_string` map is masked.
+//
+// Expectations:
+//   - password: emit one delta with BeforeSensitive + AfterSensitive
+//   - engine_version: emit one delta, no sensitivity flags
+//   - arn: emit one delta with AfterUnknown
+//   - secret_string: emit ONE delta at the subtree level (don't
+//     descend into db_pass / api_key — those are masked by the
+//     subtree-wide sensitive marker)
+func TestAttrDeltasSensitiveAndUnknown(t *testing.T) {
+	p, err := plan.Load(fixturePath("sensitive_and_unknown.json"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	rdsDeltas := p.ResourceChanges[0].Change.AttrDeltas()
+	byPath := map[string]plan.AttrDelta{}
+	for _, d := range rdsDeltas {
+		byPath[d.Path] = d
+	}
+
+	if pw, ok := byPath["password"]; !ok {
+		t.Errorf("missing password delta")
+	} else {
+		if !pw.BeforeSensitive || !pw.AfterSensitive {
+			t.Errorf("password delta should be marked sensitive on both sides; got %+v", pw)
+		}
+		if pw.AfterUnknown {
+			t.Errorf("password delta should NOT be marked unknown")
+		}
+	}
+
+	if ev, ok := byPath["engine_version"]; !ok {
+		t.Errorf("missing engine_version delta")
+	} else if ev.BeforeSensitive || ev.AfterSensitive || ev.AfterUnknown {
+		t.Errorf("engine_version should have no shadow flags; got %+v", ev)
+	}
+
+	if arn, ok := byPath["arn"]; !ok {
+		t.Errorf("missing arn delta — known-after-apply should still surface")
+	} else if !arn.AfterUnknown {
+		t.Errorf("arn delta should be AfterUnknown; got %+v", arn)
+	}
+
+	// Subtree-masked sensitive structured value — emit one delta at
+	// `secret_string`, NOT per-leaf entries for db_pass / api_key.
+	secretDeltas := p.ResourceChanges[1].Change.AttrDeltas()
+	if len(secretDeltas) != 1 {
+		t.Fatalf("secret_string deltas len = %d, want 1; got %+v", len(secretDeltas), secretDeltas)
+	}
+	if secretDeltas[0].Path != "secret_string" {
+		t.Errorf("secret delta path = %q, want secret_string", secretDeltas[0].Path)
+	}
+	if !secretDeltas[0].BeforeSensitive || !secretDeltas[0].AfterSensitive {
+		t.Errorf("secret_string subtree should be marked sensitive on both sides; got %+v", secretDeltas[0])
+	}
+}
+
 // TestAddressParsingNestedModule exercises the address parser
 // against `module.X.module.Y.<type>.<name>[<index>]` shape. Plus
 // the `data.<type>.<name>` data-source variant.

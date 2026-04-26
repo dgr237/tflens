@@ -62,13 +62,11 @@ func runDiffRef(s config.Settings) error {
 			cleanup()
 			return err
 		}
-		// First-cut routing: every plan-derived change attaches to
-		// rootChanges with the full plan address as Subject. A
-		// future iteration would route module.X.* entries into the
-		// matching PairResult.Changes for tighter per-module
-		// presentation. For now the renderers handle the flat list
-		// fine via the Source field tagging.
-		rootChanges = diff.EnrichFromPlan(rootChanges, p, newProj)
+		// Per-module routing: plan-derived changes whose module
+		// address matches a paired call land under that pair's
+		// section in the rendered output; unmatched (or root-module)
+		// findings fall back to rootChanges.
+		results, rootChanges = diff.EnrichResultsFromPlan(results, rootChanges, p, newProj)
 		// Recompute the breaking count to include plan-derived
 		// findings — otherwise the CI exit code wouldn't fire on
 		// plan-only Breaking changes (e.g. a force-new attribute

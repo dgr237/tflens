@@ -78,6 +78,23 @@ type ChangeSet struct {
 	// steps (e.g. [["lifecycle", "0", "ignore_changes"]] or
 	// [["cidr_block"]]).
 	ReplacePaths [][]any `json:"replace_paths,omitempty"`
+	// BeforeSensitive / AfterSensitive shadow Before / After with
+	// boolean leaves indicating which attribute paths are sensitive.
+	// Terraform marks anything that flowed through a sensitive
+	// variable, a sensitive output, or a `sensitive = true` resource
+	// attribute. AttrDeltas consults these to redact values before
+	// they reach the renderer — without redaction a `tflens diff
+	// --enrich-with-plan` against a plan touching e.g. an RDS
+	// password would print the password into CI logs.
+	BeforeSensitive json.RawMessage `json:"before_sensitive,omitempty"`
+	AfterSensitive  json.RawMessage `json:"after_sensitive,omitempty"`
+	// AfterUnknown shadows After with boolean leaves indicating which
+	// attribute values are still `(known after apply)` — i.e.
+	// computed by the provider during apply and not present in the
+	// plan. Without this we'd render those attributes as nil, which
+	// looks like the attribute is being unset rather than just
+	// pending.
+	AfterUnknown json.RawMessage `json:"after_unknown,omitempty"`
 }
 
 // IsNoOp reports whether the change is a refresh-only entry (Actions
@@ -121,11 +138,25 @@ func (c ChangeSet) IsUpdate() bool {
 // (`tags.Name`, `cidr_block`, `vpc_config.0.subnet_ids`); Before /
 // After are the JSON-decoded values; ForceNew is true when this
 // path appears in the parent ChangeSet's ReplacePaths.
+//
+// BeforeSensitive / AfterSensitive mark whether the value at that
+// path was tagged sensitive in the corresponding sensitive-shadow
+// tree. Renderers must redact the value (print "(sensitive)" instead
+// of the raw before/after) when the corresponding flag is set.
+//
+// AfterUnknown marks a value that's still `(known after apply)` —
+// the provider will fill it in during apply, so the plan's After is
+// just a placeholder (typically null) rather than a real value being
+// written. Renderers should print "(known after apply)" instead of
+// the raw After in that case.
 type AttrDelta struct {
-	Path     string
-	Before   any
-	After    any
-	ForceNew bool
+	Path            string
+	Before          any
+	After           any
+	ForceNew        bool
+	BeforeSensitive bool
+	AfterSensitive  bool
+	AfterUnknown    bool
 }
 
 // AttrDeltas walks the before/after attribute trees and returns the
@@ -137,6 +168,14 @@ type AttrDelta struct {
 // with Before=nil. nil after (pure delete) → every before attribute
 // becomes a delta with After=nil. The IsNoOp short-circuit upstream
 // avoids calling AttrDeltas on no-op changes.
+//
+// Sensitive-shadow trees (BeforeSensitive / AfterSensitive) and the
+// AfterUnknown shadow are walked alongside the data. At each leaf,
+// the corresponding bool from the shadow surfaces as a flag on the
+// emitted AttrDelta. Subtree-wide markers (a `true` in the shadow
+// at a non-leaf position) emit a single AttrDelta at that level
+// rather than descending — there's no per-leaf data to compare when
+// the entire subtree is opaque.
 func (c ChangeSet) AttrDeltas() []AttrDelta {
 	var before, after any
 	if len(c.Before) > 0 && string(c.Before) != "null" {
@@ -145,10 +184,26 @@ func (c ChangeSet) AttrDeltas() []AttrDelta {
 	if len(c.After) > 0 && string(c.After) != "null" {
 		_ = json.Unmarshal(c.After, &after)
 	}
+	beforeSens := decodeShadow(c.BeforeSensitive)
+	afterSens := decodeShadow(c.AfterSensitive)
+	afterUnk := decodeShadow(c.AfterUnknown)
 	forceNew := pathSet(c.ReplacePaths)
 	var out []AttrDelta
-	walkDelta(before, after, "", forceNew, &out)
+	walkDelta(before, after, beforeSens, afterSens, afterUnk, "", forceNew, &out)
 	return out
+}
+
+// decodeShadow JSON-decodes a sensitive/unknown shadow tree. Returns
+// nil when the shadow is empty or the literal "null" — a missing
+// shadow means "nothing in this subtree is sensitive/unknown" rather
+// than some kind of error.
+func decodeShadow(raw json.RawMessage) any {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var v any
+	_ = json.Unmarshal(raw, &v)
+	return v
 }
 
 // pathSet flattens the [][]any ReplacePaths into a string set keyed
@@ -187,9 +242,52 @@ func joinPath(steps []any) string {
 // accumulator starts empty and grows with "key" / "<index>" segments
 // as recursion descends. Force-new flag is looked up by the final
 // dot-joined path string.
-func walkDelta(before, after any, path string, forceNew map[string]bool, out *[]AttrDelta) {
-	// Equal — nothing to emit; recursion stops here.
-	if reflect.DeepEqual(before, after) {
+//
+// The three shadow trees (beforeSens / afterSens / afterUnk) are
+// drilled in parallel: at each step shadowKey/shadowIdx returns the
+// matching child shadow, which may be a bool (subtree-wide marker),
+// a map / list (continue drilling), or nil (no marker). When a
+// shadow is `true` at the current level we stop descending and emit
+// a single AttrDelta carrying the marker — terraform represents a
+// fully sensitive/unknown subtree this way (the data side is opaque
+// or empty), so there's no inner content worth diffing.
+func walkDelta(before, after, beforeSens, afterSens, afterUnk any,
+	path string, forceNew map[string]bool, out *[]AttrDelta) {
+	beforeSensBool := isShadowTrue(beforeSens)
+	afterSensBool := isShadowTrue(afterSens)
+	afterUnkBool := isShadowTrue(afterUnk)
+	// A shadow `true` at a structured (map/list) position is terraform
+	// saying "the whole subtree is sensitive/unknown" — the inner
+	// contents are either elided or just placeholder values. Emit one
+	// leaf here carrying the marker rather than descending and
+	// generating a spray of opaque per-attribute deltas.
+	shadowMasksSubtree := (afterUnkBool || afterSensBool || beforeSensBool) &&
+		(hasStructuralChildren(before) || hasStructuralChildren(after))
+	if shadowMasksSubtree {
+		// Sensitive markers alone don't constitute a change — only emit
+		// when the data side actually differs OR the after is unknown
+		// (since unknown means a write is happening, even if before/
+		// after compare equal because both are placeholder nulls).
+		if reflect.DeepEqual(before, after) && !afterUnkBool {
+			return
+		}
+		*out = append(*out, AttrDelta{
+			Path:            path,
+			Before:          before,
+			After:           after,
+			ForceNew:        forceNew[path],
+			BeforeSensitive: beforeSensBool,
+			AfterSensitive:  afterSensBool,
+			AfterUnknown:    afterUnkBool,
+		})
+		return
+	}
+
+	// Equal — nothing to emit; recursion stops here. Exception: if
+	// after-is-unknown, we still want to surface the change (the
+	// values look equal because both are placeholder nulls, but the
+	// provider IS going to compute a new value).
+	if reflect.DeepEqual(before, after) && !afterUnkBool {
 		return
 	}
 	bm, bIsMap := before.(map[string]any)
@@ -205,7 +303,9 @@ func walkDelta(before, after any, path string, forceNew map[string]bool, out *[]
 			} else {
 				child = child + "." + k
 			}
-			walkDelta(bm[k], am[k], child, forceNew, out)
+			walkDelta(bm[k], am[k],
+				shadowKey(beforeSens, k), shadowKey(afterSens, k), shadowKey(afterUnk, k),
+				child, forceNew, out)
 		}
 		return
 	}
@@ -214,11 +314,8 @@ func walkDelta(before, after any, path string, forceNew map[string]bool, out *[]
 	if bIsSlice || aIsSlice {
 		// Lists: recurse positionally up to the longer side. Index
 		// becomes a string segment to match Terraform's path encoding.
-		n := len(bs)
-		if len(as) > n {
-			n = len(as)
-		}
-		for i := 0; i < n; i++ {
+		n := max(len(bs), len(as))
+		for i := range n {
 			var bv, av any
 			if i < len(bs) {
 				bv = bs[i]
@@ -233,17 +330,73 @@ func walkDelta(before, after any, path string, forceNew map[string]bool, out *[]
 			} else {
 				child = child + "." + idx
 			}
-			walkDelta(bv, av, child, forceNew, out)
+			walkDelta(bv, av,
+				shadowIdx(beforeSens, i), shadowIdx(afterSens, i), shadowIdx(afterUnk, i),
+				child, forceNew, out)
 		}
 		return
 	}
-	// Leaf — emit the delta. Force-new lookup uses the final path.
+	// Leaf — emit the delta. Force-new lookup uses the final path;
+	// shadow flags carry whatever sensitivity / unknown markers
+	// applied at this exact path.
 	*out = append(*out, AttrDelta{
-		Path:     path,
-		Before:   before,
-		After:    after,
-		ForceNew: forceNew[path],
+		Path:            path,
+		Before:          before,
+		After:           after,
+		ForceNew:        forceNew[path],
+		BeforeSensitive: beforeSensBool,
+		AfterSensitive:  afterSensBool,
+		AfterUnknown:    afterUnkBool,
 	})
+}
+
+// isShadowTrue returns true when a shadow value is the literal `true`
+// — i.e. "this entire subtree is sensitive/unknown". A nested map or
+// list shadow returns false (the markers are deeper); nil returns
+// false (no marker).
+func isShadowTrue(v any) bool {
+	b, ok := v.(bool)
+	return ok && b
+}
+
+// shadowKey looks up a key in a map-shaped shadow value. Returns nil
+// when the shadow isn't a map or doesn't have the key — both mean
+// "no marker at this child".
+func shadowKey(shadow any, k string) any {
+	m, ok := shadow.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return m[k]
+}
+
+// shadowIdx looks up an index in a list-shaped shadow value. Returns
+// nil when the shadow isn't a list or the index is out of bounds.
+func shadowIdx(shadow any, i int) any {
+	s, ok := shadow.([]any)
+	if !ok {
+		return nil
+	}
+	if i < 0 || i >= len(s) {
+		return nil
+	}
+	return s[i]
+}
+
+// hasStructuralChildren reports whether a value is a non-empty map or
+// list — i.e. has children we could descend into. Used to decide
+// whether a sensitive marker at this level should mask the subtree
+// (no children to descend, so emit one leaf) or be inherited as the
+// caller drills into the children themselves (which is the normal
+// per-leaf path).
+func hasStructuralChildren(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		return len(x) > 0
+	case []any:
+		return len(x) > 0
+	}
+	return false
 }
 
 // mergeMapKeys returns the sorted union of keys in two maps. Used by
