@@ -4,6 +4,11 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Documentation
+
+- **Per-command reference docs split out of the main README into `docs/commands/`.** New pages: [`validate.md`](docs/commands/validate.md), [`diff.md`](docs/commands/diff.md), [`whatif.md`](docs/commands/whatif.md), [`statediff.md`](docs/commands/statediff.md), [`tracked-attributes.md`](docs/commands/tracked-attributes.md), [`export.md`](docs/commands/export.md), plus a [`docs/commands/README.md`](docs/commands/README.md) index. Each page is self-contained: when-to-use, usage, worked examples, what-it-catches / what-it-doesn't, output formats, related links. The main README's Commands table now points at each page rather than carrying the long-form content inline (480 lines moved out of the README; it shrinks from 721 to 258 lines and becomes a navigation hub). Anchor references inside the surviving README content (Module resolution, Static evaluation surface) are unchanged so deep links still work.
+- **New [`docs/getting-started.md`](docs/getting-started.md)** — a 5-minute walkthrough that creates a sample module from scratch and exercises `validate` / `diff` / `# tflens:track` / `statediff` / the GitHub Action in sequence. Each section ends with a link to the corresponding command reference page.
+
 ## [0.15.0] — 2026-04-26
 
 ### Added
