@@ -7,6 +7,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/plan"
+	"github.com/dgr237/tflens/pkg/token"
 )
 
 // SourceStatic is the Change.Source value for findings produced by
@@ -45,18 +46,29 @@ const SourcePlan = "plan"
 // node. The resource's Subject in the resulting Change carries the
 // full plan address so renderers can show the precise instance.
 //
-// count/for_each indices are NOT yet matched: a plan ResourceChange
-// at `aws_subnet.foo[0]` matches the source-side entity
-// `resource.aws_subnet.foo`, with the index preserved in the Subject
-// for human reference. Index-aware matching (where each instance
-// is a separate Change) is a follow-up.
+// Each plan ResourceChange (count/for_each instance) gets its own
+// Change row with the full plan address — including the index —
+// preserved in the Subject. The source-side lookup uses the
+// index-stripped path so multiple instances all resolve to the same
+// source-side ModuleNode + Entity, which is the correct shape for
+// flagging a stale plan ("no matching source-side entity") without
+// false positives on indexed instances.
 //
-// Renames via `moved {}` blocks are also out of scope here: a plan
-// describing a destroy + create across a rename will surface as two
-// separate Change entries (one delete, one create) rather than being
-// recognised as the same logical resource. The existing static-diff
-// rename detection in pkg/diff doesn't depend on this; it surfaces
-// the rename from the source side regardless.
+// Source positions: when the plan ResourceChange matches a source-side
+// entity, the entity's Pos is propagated onto the emitted Change's
+// NewPos. The markdown renderer uses this to render `file:line` next
+// to plan-derived rows so reviewers can navigate from the diff back
+// to the resource declaration. Plan rows with no source-side match
+// get a zero Position (and the renderer omits the file:line line).
+//
+// Moved-block awareness: when the source declares a `moved { from = X
+// to = Y }` block AND the plan still shows X as a delete plus Y as a
+// create, the pair is collapsed into a single Informational entry
+// hinting that the plan is stale and should be regenerated. (When the
+// plan correctly honours the moved block, terraform emits a no-op /
+// update at the new address rather than delete+create — those pass
+// through unchanged.) Currently scoped to resource/data renames;
+// module-call renames are more complex and deferred.
 //
 // Returns the merged change list, sorted by (Kind, Subject) so the
 // output is deterministic and Breaking findings sort first regardless
@@ -75,13 +87,21 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 	// entity-existence lookup tells the renderer not to assume a
 	// source position for them.
 	projectEntities := buildEntityIndex(newProj)
+	movedIdx := buildMovedIndex(newProj)
+	stale := detectStalePlanMoves(p.ResourceChanges, movedIdx)
+	deleteSkip, createSkip := stalePlanMoveSkipSets(stale)
 
 	for _, rc := range p.ResourceChanges {
 		if rc.Change.IsNoOp() {
 			continue
 		}
-		out = append(out, changesForResourceChange(rc, lookupEntity(projectEntities, rc))...)
+		if shouldSkipForStaleMove(rc, deleteSkip, createSkip) {
+			continue
+		}
+		exists, pos := lookupEntity(projectEntities, rc)
+		out = append(out, changesForResourceChange(rc, exists, pos)...)
 	}
+	out = append(out, stalePlanMoveChanges(stale, projectEntities)...)
 
 	sortChanges(out)
 	return out
@@ -123,22 +143,39 @@ func EnrichResultsFromPlan(results []PairResult, rootChanges []Change,
 		}
 	}
 	projectEntities := buildEntityIndex(newProj)
+	movedIdx := buildMovedIndex(newProj)
+	stale := detectStalePlanMoves(p.ResourceChanges, movedIdx)
+	deleteSkip, createSkip := stalePlanMoveSkipSets(stale)
 	mergedRoot := append([]Change(nil), rootChanges...)
+
+	route := func(moduleAddress string, change Change) {
+		key := planModuleKey(moduleAddress)
+		if i, ok := pairIdx[key]; ok {
+			results[i].Changes = append(results[i].Changes, change)
+			return
+		}
+		mergedRoot = append(mergedRoot, change)
+	}
 
 	for _, rc := range p.ResourceChanges {
 		if rc.Change.IsNoOp() {
 			continue
 		}
-		rcChanges := changesForResourceChange(rc, lookupEntity(projectEntities, rc))
-		if len(rcChanges) == 0 {
+		if shouldSkipForStaleMove(rc, deleteSkip, createSkip) {
 			continue
 		}
-		key := planModuleKey(rc.ModuleAddress)
-		if i, ok := pairIdx[key]; ok {
-			results[i].Changes = append(results[i].Changes, rcChanges...)
-			continue
+		exists, pos := lookupEntity(projectEntities, rc)
+		for _, c := range changesForResourceChange(rc, exists, pos) {
+			route(rc.ModuleAddress, c)
 		}
-		mergedRoot = append(mergedRoot, rcChanges...)
+	}
+	// Stale-move entries route by the To address's module path (the
+	// destination — that's where the resource will live going
+	// forward, so the entry sits next to whatever other plan-derived
+	// rows for that module landed in the same pair).
+	for _, m := range stale {
+		c := stalePlanMoveChange(m, projectEntities)
+		route(moduleAddressOf(m.To), c)
 	}
 
 	for i := range results {
@@ -154,10 +191,12 @@ func EnrichResultsFromPlan(results []PairResult, rootChanges []Change,
 // shapes — the only difference between the two callers is which
 // bucket the result lands in.
 //
-// `exists` is the precomputed entity-index lookup result so callers
-// don't repeat the work; it controls the "no matching source-side
-// entity" hint on create entries.
-func changesForResourceChange(rc plan.ResourceChange, exists bool) []Change {
+// The (exists, pos) pair is the precomputed entity-index lookup
+// result: `exists` controls the "no matching source-side entity" hint
+// on create entries; `pos` populates the Change's NewPos so renderers
+// can show file:line next to the row. A zero Position (no source-side
+// match) leaves NewPos zero and the renderer omits the location.
+func changesForResourceChange(rc plan.ResourceChange, exists bool, pos token.Position) []Change {
 	var out []Change
 	switch {
 	case rc.Change.IsCreate():
@@ -165,6 +204,7 @@ func changesForResourceChange(rc plan.ResourceChange, exists bool) []Change {
 			Kind:    Informational,
 			Subject: planSubject(rc),
 			Detail:  fmt.Sprintf("plan creates %s%s", planAddressDescriptor(rc), entityHint(exists)),
+			NewPos:  pos,
 			Source:  SourcePlan,
 		})
 	case rc.Change.IsDelete():
@@ -172,6 +212,7 @@ func changesForResourceChange(rc plan.ResourceChange, exists bool) []Change {
 			Kind:    Breaking,
 			Subject: planSubject(rc),
 			Detail:  fmt.Sprintf("plan destroys %s — uncommitted state will be lost", planAddressDescriptor(rc)),
+			NewPos:  pos,
 			Source:  SourcePlan,
 		})
 	case rc.Change.IsReplace():
@@ -182,19 +223,22 @@ func changesForResourceChange(rc plan.ResourceChange, exists bool) []Change {
 			Kind:    Breaking,
 			Subject: planSubject(rc),
 			Detail:  fmt.Sprintf("plan replaces %s (destroy + recreate)", planAddressDescriptor(rc)),
+			NewPos:  pos,
 			Source:  SourcePlan,
 		})
-		out = append(out, attrDeltaChanges(rc)...)
+		out = append(out, attrDeltaChangesWithPos(rc, pos)...)
 	case rc.Change.IsUpdate():
-		out = append(out, attrDeltaChanges(rc)...)
+		out = append(out, attrDeltaChangesWithPos(rc, pos)...)
 	}
 	return out
 }
 
 // lookupEntity hides the index-stripping detail so both enrichment
 // entry points share a single way to ask "does this plan's resource
-// match a known source-side entity?".
-func lookupEntity(index map[string]bool, rc plan.ResourceChange) bool {
+// match a known source-side entity?". Returns (exists, position) so
+// callers can both gate the entity-existence hint and propagate the
+// source position onto the resulting Change.
+func lookupEntity(index map[string]entityRef, rc plan.ResourceChange) (bool, token.Position) {
 	// Strip count/for_each indices from each module segment when
 	// looking up the source-side entity — the source-side module tree
 	// has one node per module CALL, not per instance, so
@@ -202,7 +246,8 @@ func lookupEntity(index map[string]bool, rc plan.ResourceChange) bool {
 	// both need to find the same `module.foo`. Resource indices on
 	// the trailing `[idx]` are already stripped by EntityID(), which
 	// goes through the entity's canonical ID without index decoration.
-	return index[matchKey(stripIndices(rc.ModuleAddress), rc.EntityID())]
+	ref, ok := index[matchKey(stripIndices(rc.ModuleAddress), rc.EntityID())]
+	return ok, ref.Pos
 }
 
 // sortChanges orders a slice by (Kind, Subject) so Breaking findings
@@ -261,7 +306,7 @@ func planModuleKey(moduleAddress string) string {
 // a plan touching e.g. an RDS password would write the password into
 // CI logs. AfterUnknown surfaces as "(known after apply)" so the
 // reader can tell a placeholder apart from an unset attribute.
-func attrDeltaChanges(rc plan.ResourceChange) []Change {
+func attrDeltaChangesWithPos(rc plan.ResourceChange, pos token.Position) []Change {
 	deltas := rc.Change.AttrDeltas()
 	out := make([]Change, 0, len(deltas))
 	for _, d := range deltas {
@@ -276,6 +321,7 @@ func attrDeltaChanges(rc plan.ResourceChange) []Change {
 			Subject: fmt.Sprintf("%s:%s", rc.Address, d.Path),
 			Detail:  fmt.Sprintf("plan attribute change: %s → %s", renderBefore(d), renderAfter(d)),
 			Hint:    hint,
+			NewPos:  pos,
 			Source:  SourcePlan,
 		})
 	}
@@ -357,13 +403,22 @@ func formatValue(v any) string {
 	}
 }
 
-// buildEntityIndex walks every module in the project and returns the
-// set of (modulePath, entityID) keys present in the source-side
-// analysis. Used to flag plan entries with no matching source-side
-// entity (typically: stale plan, or resource referenced from a
-// child module that wasn't loaded).
-func buildEntityIndex(p *loader.Project) map[string]bool {
-	out := map[string]bool{}
+// entityRef is the value side of the project-entity index — a flag
+// that the entity exists plus its source position so plan-derived
+// Changes can carry NewPos for renderers that show file:line.
+type entityRef struct {
+	Pos token.Position
+}
+
+// buildEntityIndex walks every module in the project and returns a
+// map from (modulePath, entityID) to the entity's reference (currently
+// just the source position). Used to flag plan entries with no
+// matching source-side entity (typically: stale plan, or resource
+// referenced from a child module that wasn't loaded) AND to propagate
+// the entity's source position onto the plan-derived Change so the
+// markdown renderer can show file:line next to the row.
+func buildEntityIndex(p *loader.Project) map[string]entityRef {
+	out := map[string]entityRef{}
 	if p == nil {
 		return out
 	}
@@ -374,7 +429,7 @@ func buildEntityIndex(p *loader.Project) map[string]bool {
 		}
 		modulePath := modulePathFromNode(p, node)
 		for _, e := range mod.Entities() {
-			out[matchKey(modulePath, e.ID())] = true
+			out[matchKey(modulePath, e.ID())] = entityRef{Pos: e.Pos}
 		}
 		return true
 	})
@@ -421,6 +476,224 @@ func stripIndices(modulePath string) string {
 		}
 	}
 	return b.String()
+}
+
+// movedPair captures one source-side `moved { from = X; to = Y }`
+// declaration with both addresses already prefixed by the containing
+// module's path so they can be compared directly against plan
+// ResourceChange addresses.
+//
+// Currently scoped to resource/data renames — module-call renames
+// (`moved { from = module.old; to = module.new }`) shift the module
+// prefix on every nested resource, so detecting the corresponding
+// plan-side delete+create cluster requires per-resource walking.
+// Out of scope for the first cut.
+type movedPair struct {
+	From string
+	To   string
+}
+
+// buildMovedIndex collects every resource/data `moved {}` block in
+// the project. Module-call moves are skipped — they need different
+// matching machinery (every nested resource shifts prefix). Empty
+// when newProj is nil.
+func buildMovedIndex(p *loader.Project) []movedPair {
+	if p == nil {
+		return nil
+	}
+	var out []movedPair
+	p.Walk(func(node *loader.ModuleNode) bool {
+		mod := node.Module
+		if mod == nil {
+			return true
+		}
+		prefix := modulePathFromNode(p, node)
+		for from, to := range mod.Moved() {
+			fromAddr := entityIDToPlanAddress(from)
+			toAddr := entityIDToPlanAddress(to)
+			if fromAddr == "" || toAddr == "" {
+				continue // skip module-call moves and any unhandled kinds
+			}
+			if prefix != "" {
+				fromAddr = prefix + "." + fromAddr
+				toAddr = prefix + "." + toAddr
+			}
+			out = append(out, movedPair{From: fromAddr, To: toAddr})
+		}
+		return true
+	})
+	return out
+}
+
+// entityIDToPlanAddress converts a canonical entity ID
+// (`resource.aws_vpc.main`, `data.aws_ami.latest`, `module.X`) to the
+// Terraform plan address form (`aws_vpc.main`, `data.aws_ami.latest`).
+// Returns "" for kinds that don't appear in plan resource_changes
+// addresses (variables, outputs, locals) or for module-call moves
+// (deferred — see movedPair docs).
+func entityIDToPlanAddress(entityID string) string {
+	switch {
+	case strings.HasPrefix(entityID, "resource."):
+		return entityID[len("resource."):]
+	case strings.HasPrefix(entityID, "data."):
+		return entityID
+	}
+	return ""
+}
+
+// detectStalePlanMoves finds plan delete+create pairs whose addresses
+// match the From/To of a source-side moved block. Their existence
+// means the plan was generated BEFORE the moved block was added (or
+// the block didn't take effect for some reason) — in either case the
+// recommended action is "regenerate the plan".
+//
+// When the moved block IS being honoured by the plan, terraform emits
+// a no-op or update at the new address rather than delete+create —
+// those flow through the normal path unchanged.
+func detectStalePlanMoves(rcs []plan.ResourceChange, moved []movedPair) []movedPair {
+	if len(moved) == 0 {
+		return nil
+	}
+	deletes := map[string]bool{}
+	creates := map[string]bool{}
+	for _, rc := range rcs {
+		switch {
+		case rc.Change.IsDelete():
+			deletes[rc.Address] = true
+		case rc.Change.IsCreate():
+			creates[rc.Address] = true
+		}
+	}
+	var out []movedPair
+	for _, m := range moved {
+		if deletes[m.From] && creates[m.To] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// stalePlanMoveSkipSets returns the address sets used to suppress the
+// individual delete + create entries that the stale-move detector
+// will replace with a single hint. Lookups are O(1).
+func stalePlanMoveSkipSets(matches []movedPair) (deleteSkip, createSkip map[string]bool) {
+	deleteSkip = map[string]bool{}
+	createSkip = map[string]bool{}
+	for _, m := range matches {
+		deleteSkip[m.From] = true
+		createSkip[m.To] = true
+	}
+	return deleteSkip, createSkip
+}
+
+// shouldSkipForStaleMove reports whether the given ResourceChange is
+// the delete or create half of a detected stale-move pair, in which
+// case the main loop omits it (the pair will be replaced with a
+// single Informational entry by stalePlanMoveChange).
+func shouldSkipForStaleMove(rc plan.ResourceChange, deleteSkip, createSkip map[string]bool) bool {
+	switch {
+	case rc.Change.IsDelete():
+		return deleteSkip[rc.Address]
+	case rc.Change.IsCreate():
+		return createSkip[rc.Address]
+	}
+	return false
+}
+
+// stalePlanMoveChanges builds the collapsed entries for every detected
+// stale-move pair. Used by the flat EnrichFromPlan path; the per-
+// module routing variant builds them one at a time so each can be
+// routed by its To address's module path.
+func stalePlanMoveChanges(matches []movedPair, projectEntities map[string]entityRef) []Change {
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]Change, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, stalePlanMoveChange(m, projectEntities))
+	}
+	return out
+}
+
+// stalePlanMoveChange produces a single Informational Change for a
+// detected stale-move pair: source declares the rename, plan still
+// shows destroy+create. NewPos points at the destination entity (when
+// found in the source-side index) so the renderer can link to the
+// `moved` block's resource declaration.
+func stalePlanMoveChange(m movedPair, projectEntities map[string]entityRef) Change {
+	// Lookup the destination entity by the To address. The To address
+	// is plan-form (`module.X.aws_vpc.new`); we need to convert it to
+	// (modulePath, entityID) for the index.
+	modulePath, entityID := splitPlanAddress(m.To)
+	pos := projectEntities[matchKey(modulePath, entityID)].Pos
+	return Change{
+		Kind:    Informational,
+		Subject: fmt.Sprintf("%s → %s", m.From, m.To),
+		Detail: fmt.Sprintf(
+			"source declares `moved { from = %s; to = %s }` but plan still shows destroy + recreate — regenerate the plan to honour the moved block",
+			planAddressIdentifier(m.From), planAddressIdentifier(m.To),
+		),
+		NewPos: pos,
+		Source: SourcePlan,
+	}
+}
+
+// planAddressIdentifier returns the local resource address (without
+// module prefix) for inclusion in a Detail string. Mirrors the form
+// authors actually wrote in the moved block — `aws_vpc.new` rather
+// than `module.network.aws_vpc.new`.
+func planAddressIdentifier(planAddress string) string {
+	_, local := splitPlanAddress(planAddress)
+	// Convert canonical entity ID back to plan-address form for
+	// display so the user sees what they wrote in the moved block.
+	if a := entityIDToPlanAddress(local); a != "" {
+		return a
+	}
+	return local
+}
+
+// splitPlanAddress splits a full plan ResourceChange address into
+// (modulePath, entityID). modulePath is the leading `module.X`-only
+// segments joined verbatim ("module.network.module.subnets" — index
+// segments stripped); entityID is the canonical form expected by the
+// entity index (`resource.<type>.<name>` or `data.<type>.<name>`).
+//
+// Examples:
+//
+//	`aws_vpc.main`                                → ("", "resource.aws_vpc.main")
+//	`module.network.aws_vpc.main`                 → ("module.network", "resource.aws_vpc.main")
+//	`module.regions["us-east-1"].aws_vpc.main`    → ("module.regions", "resource.aws_vpc.main")
+//	`data.aws_ami.latest`                         → ("", "data.aws_ami.latest")
+func splitPlanAddress(addr string) (modulePath, entityID string) {
+	stripped := stripIndices(addr)
+	parts := strings.Split(stripped, ".")
+	// Walk forward through `module.X` pairs.
+	i := 0
+	for i+1 < len(parts) && parts[i] == "module" {
+		i += 2
+	}
+	modulePath = strings.Join(parts[:i], ".")
+	rest := parts[i:]
+	switch {
+	case len(rest) >= 3 && rest[0] == "data":
+		entityID = "data." + rest[1] + "." + rest[2]
+	case len(rest) >= 2:
+		entityID = "resource." + rest[0] + "." + rest[1]
+	}
+	return modulePath, entityID
+}
+
+// moduleAddressOf returns the leading `module.X[.module.Y...]` portion
+// of a plan address. Used by the routing variant to send a stale-move
+// entry to the same pair the moved-to resource will live in.
+func moduleAddressOf(planAddress string) string {
+	stripped := stripIndices(planAddress)
+	parts := strings.Split(stripped, ".")
+	i := 0
+	for i+1 < len(parts) && parts[i] == "module" {
+		i += 2
+	}
+	return strings.Join(parts[:i], ".")
 }
 
 // modulePathFromNode returns the dotted path of a module node from

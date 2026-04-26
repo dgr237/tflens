@@ -221,6 +221,152 @@ resource "aws_vpc" "main" {}
 	}
 }
 
+// TestEnrichFromPlanAttachesSourcePosition pins the source-position
+// attribution: when a plan ResourceChange matches a source-side
+// entity, the entity's Pos is propagated onto the resulting Change's
+// NewPos so renderers can show file:line. Plan rows with no
+// source-side match leave NewPos at its zero value.
+func TestEnrichFromPlanAttachesSourcePosition(t *testing.T) {
+	dir := t.TempDir()
+	mainTF := filepath.Join(dir, "main.tf")
+	// Write the resources the update.json fixture references so the
+	// entity index has something to find. We don't care about the
+	// exact lines — only that NewPos is non-zero for matching rows.
+	if err := os.WriteFile(mainTF, []byte(`
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "public" {
+  availability_zone = "us-east-1a"
+}
+
+resource "aws_security_group" "unchanged" {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	p := planFixture(t, "update.json")
+	out := diff.EnrichFromPlan(nil, p, proj)
+
+	// Every emitted Change should carry a non-zero NewPos because
+	// every plan address in update.json maps to one of the resources
+	// we declared above.
+	for _, c := range out {
+		if c.NewPos.Line == 0 {
+			t.Errorf("Change %q has zero NewPos; expected a source position from the matching entity", c.Subject)
+		}
+		if c.NewPos.File == "" {
+			t.Errorf("Change %q has empty NewPos.File; expected the main.tf path", c.Subject)
+		}
+	}
+}
+
+// TestEnrichFromPlanLeavesPositionZeroWhenNoMatch pins the inverse:
+// when the plan describes a resource not present in the source-side
+// project, NewPos stays zero. The entity-existence hint already tells
+// the user the plan is stale; the renderer must not also fabricate a
+// fake position.
+func TestEnrichFromPlanLeavesPositionZeroWhenNoMatch(t *testing.T) {
+	// Pass a nil project — every plan entry is "no matching source-side
+	// entity". NewPos should stay zero on every emitted Change.
+	p := planFixture(t, "update.json")
+	out := diff.EnrichFromPlan(nil, p, nil)
+	for _, c := range out {
+		if c.NewPos.Line != 0 || c.NewPos.File != "" {
+			t.Errorf("Change %q has unexpected NewPos %+v; want zero (no source-side match)",
+				c.Subject, c.NewPos)
+		}
+	}
+}
+
+// TestEnrichFromPlanCollapsesStaleMovedPair pins the moved-block
+// awareness: when source declares `moved { from = aws_vpc.old; to =
+// aws_vpc.new }` AND the plan still shows aws_vpc.old as a delete
+// plus aws_vpc.new as a create, both rows collapse into a single
+// Informational entry hinting that the plan is stale. The unrelated
+// delete in the same fixture passes through unchanged.
+func TestEnrichFromPlanCollapsesStaleMovedPair(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`
+resource "aws_vpc" "new" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "unrelated" {
+  availability_zone = "us-east-1a"
+}
+
+moved {
+  from = aws_vpc.old
+  to   = aws_vpc.new
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	p := planFixture(t, "moved_stale.json")
+	out := diff.EnrichFromPlan(nil, p, proj)
+
+	// Expect: 1 collapsed move entry + 1 unrelated delete = 2 total.
+	// Without the moved-block awareness we'd see 3 (delete old, create
+	// new, delete unrelated).
+	if got, want := len(out), 2; got != want {
+		t.Fatalf("len(out) = %d, want %d; got %+v", got, want, out)
+	}
+
+	var moveEntry, unrelatedEntry *diff.Change
+	for i := range out {
+		if strings.Contains(out[i].Detail, "regenerate the plan") {
+			moveEntry = &out[i]
+		}
+		if out[i].Subject == "aws_subnet.unrelated" {
+			unrelatedEntry = &out[i]
+		}
+	}
+	if moveEntry == nil {
+		t.Fatal("missing collapsed stale-move entry")
+	}
+	if moveEntry.Kind != diff.Informational {
+		t.Errorf("stale-move Kind = %v, want Informational", moveEntry.Kind)
+	}
+	if !strings.Contains(moveEntry.Subject, "aws_vpc.old") || !strings.Contains(moveEntry.Subject, "aws_vpc.new") {
+		t.Errorf("stale-move Subject should reference both addresses; got %q", moveEntry.Subject)
+	}
+	if unrelatedEntry == nil {
+		t.Error("unrelated delete should still pass through")
+	}
+}
+
+// TestEnrichFromPlanLeavesGenuineDestroyAlone confirms the moved-aware
+// path doesn't accidentally suppress real destroys: when the source
+// has NO moved block, a plan delete just stays a delete (not collapsed
+// into a fake move hint).
+func TestEnrichFromPlanLeavesGenuineDestroyAlone(t *testing.T) {
+	// No moved block in source — every plan row should pass through
+	// the normal path.
+	p := planFixture(t, "moved_stale.json")
+	out := diff.EnrichFromPlan(nil, p, nil)
+	// 1 delete (aws_vpc.old) + 1 create (aws_vpc.new) + 1 delete
+	// (aws_subnet.unrelated) = 3 entries. No collapse.
+	if got, want := len(out), 3; got != want {
+		t.Fatalf("len(out) = %d, want %d; got %+v", got, want, out)
+	}
+	for _, c := range out {
+		if strings.Contains(c.Detail, "regenerate the plan") {
+			t.Errorf("unexpected stale-move hint without source-side moved block: %+v", c)
+		}
+	}
+}
+
 // TestEnrichResultsFromPlanRoutesByModule pins the per-module routing.
 // The fixture has:
 //   - module.network.aws_vpc.main update     → routes to PairResult{Key: "network"}

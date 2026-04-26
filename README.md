@@ -244,9 +244,12 @@ Root module:
       hint: this attribute forces a destroy + recreate; coordinate with the operator
 ```
 
+**Source positions.** When a plan ResourceChange matches a known source-side entity, the entity's source position (`file:line`) is propagated onto the resulting Change so the markdown renderer can link plan-derived rows back to the resource declaration. Plan rows for resources NOT in the source-side analysis (typical of stale plans) leave the position empty rather than fabricating one — they're already marked with the `(no matching source-side entity — plan may be stale)` hint.
+
+**Stale `moved {}` block detection.** When the source declares `moved { from = X; to = Y }` AND the plan still shows X as a delete plus Y as a create, the pair is collapsed into a single Informational entry hinting that the plan is stale and should be regenerated. (When the plan correctly honours the moved block, terraform emits a no-op / update at the new address rather than delete+create — those flow through unchanged.) Currently scoped to resource/data renames; module-call renames are deferred.
+
 **First-cut limitations** (worth knowing before you wire this into CI):
 
-- **Resource matching is by exact address only.** A resource renamed via a `moved {}` block surfaces as a delete + create pair on the plan side rather than a single rename — the static-side diff already detects rename pairs from the source, so the plan-derived noise is harmless but worth understanding.
 - **`count`/`for_each` instances all roll up to the same source-side entity.** Plan addresses like `aws_subnet.foo[0]` / `aws_subnet.foo["us-east-1"]` resolve to the single source-side `resource.aws_subnet.foo` declaration (matching by index-stripped path), but each indexed instance still gets its own Change row with the full plan address — including the index — preserved in the Subject. So `aws_subnet.foo[0]:cidr_block` and `aws_subnet.foo[1]:cidr_block` are visually distinct in the output. Indexed module calls (`module.regions["us-east-1"]`) match the same way: the source-side `module.regions` ModuleNode is the lookup target regardless of how many instances the for_each / count produces.
 - **Plan format versions.** Supports format_version 1.x (Terraform 1.0+). Older plans are rejected with a clear error.
 - **`whatif` and `statediff` don't yet take `--enrich-with-plan`** — only `diff` does. Same machinery would slot in cleanly if useful.

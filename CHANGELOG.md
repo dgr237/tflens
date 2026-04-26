@@ -4,6 +4,16 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens diff --enrich-with-plan` — source positions on plan-derived rows.** When a plan ResourceChange matches a known source-side entity, the entity's `Pos` is propagated onto the emitted `Change.NewPos` so the markdown renderer can link plan-derived rows back to the resource declaration with `file:line`. Previously every plan-derived row had a zero Position regardless of whether the source-side analysis knew about the resource — reviewers couldn't navigate from the diff to the underlying `resource "aws_vpc" "main"` block. Plan rows whose address has no source-side match (typical of stale plans) leave NewPos zero rather than fabricating a fake position; the existing `(no matching source-side entity — plan may be stale)` hint already tells the reviewer the plan is out of sync. New `entityRef` value type on the entity index carries the position; `lookupEntity` now returns `(exists, position)`; `changesForResourceChange` takes the position and stamps it onto every emitted Change including the per-attribute delta rows.
+
+- **`tflens diff --enrich-with-plan` — collapse stale `moved {}` blocks.** When the source declares `moved { from = aws_vpc.old; to = aws_vpc.new }` AND the plan still shows `aws_vpc.old` as a delete plus `aws_vpc.new` as a create, both rows are now collapsed into a single Informational entry hinting that the plan is stale and should be regenerated. Without the collapse, reviewers saw four entries (the static-side rename detection plus two plan-derived rows) for what's actually one logical event. New `pkg/diff/enrich.go` helpers: `buildMovedIndex` walks every module's `moved {}` blocks and prefixes their addresses with the containing module's path; `detectStalePlanMoves` matches against plan delete+create pairs; `shouldSkipForStaleMove` suppresses the individual rows so the collapsed entry is the only signal. Currently scoped to resource/data renames — module-call renames (`moved { from = module.old; to = module.new }`) shift the prefix on every nested resource and need different matching machinery, deferred. When the plan correctly honours the moved block (terraform emits a no-op or update at the new address), nothing collapses — those flow through the normal path unchanged.
+
+### Documentation
+
+- **`pkg/diff/enrich.go` — refresh the doc comment on `EnrichFromPlan`.** The previous comment described count/for_each indices as "NOT yet matched" and moved blocks as "out of scope" — both stale since 0.11.1 / 0.12.0 / this release. Updated to describe the actual current behaviour: per-instance Change rows with index-stripped source-side lookup, source-position propagation when the entity matches, and stale-moved-block collapse.
+
 ## [0.13.0] — 2026-04-26
 
 ### Added
