@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-04-26
+
 ### Documentation
 
 - **Repo hygiene: Code of Conduct + issue / PR templates.** New [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) adopts Contributor Covenant 2.1 (linked rather than vendored, so upstream updates flow automatically) with the maintainer contact email. New `.github/ISSUE_TEMPLATE/` directory with two GitHub-form templates — bug report (version, subcommand, repro, actual vs expected) and feature request (problem-first framing, prior-art prompt, scope reminder pointing at `docs/comparison.md`) — plus a `config.yml` that disables blank issues and routes "questions" to the feature-request template + security reports to GitHub Security Advisories. New [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) with the Summary / Test plan / CHANGELOG / Release-label sections that mirror the shape of recent merged PRs. Standard OSS-hygiene set; reduces friction for first-time contributors and signals "this is a maintained project taking contributions seriously" — useful as the action's Marketplace listing makes the repo more discoverable.
@@ -295,7 +297,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.3...HEAD
+[0.16.3]: https://github.com/dgr237/tflens/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/dgr237/tflens/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/dgr237/tflens/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/dgr237/tflens/compare/v0.15.2...v0.16.0
