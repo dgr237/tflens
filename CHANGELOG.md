@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-04-26
+
 ### Added
 
 - **GitHub Action wrapper (`uses: dgr237/tflens@vX.Y.Z`).** Composite action at the repo root packages `tflens diff | whatif | statediff | validate` with PR-comment plumbing so CI integration is a single `uses:` line. Inputs map 1:1 to the flags (`command`, `path`, `ref`, `format`, `plan`, `state`, `args`) plus PR-comment controls (`comment-on-pr`, `comment-tag`, `pr-number`, `step-summary`, `fail-on-breaking`). Outputs: `output-file` (path), `exit-code` (numeric), `breaking` (boolean string). Builds tflens from the action's own checkout via `${{ github.action_path }}` so the binary version stays in lockstep with the action ref the consumer pinned (`dgr237/tflens@v0.12.0` always runs tflens v0.12.0; no separate `version` input to drift). Sticky PR comment uses a hidden marker line (`<!-- tflens-action:<tag> -->`) so re-runs find + PATCH the existing comment instead of stacking new ones; body is JSON-encoded via `jq --rawfile` so backticks / `$vars` / quotes inside the markdown can't break the request shape. Default `comment-tag` is `tflens` — workflows that invoke the action twice (e.g. diff + statediff) should pass distinct tags so the comments don't overwrite each other. Step summary append (`$GITHUB_STEP_SUMMARY`) and PR commenting both skip silently when `format != markdown`. Documented in the new "GitHub Action" section of the README with a worked plan-enrichment example.
@@ -232,7 +234,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/dgr237/tflens/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dgr237/tflens/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/dgr237/tflens/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dgr237/tflens/compare/v0.10.0...v0.11.0
