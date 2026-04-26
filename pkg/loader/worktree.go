@@ -103,10 +103,24 @@ func ResolveAutoRef(workspace string) (string, error) {
 //
 // Returns the loaded project and the cleanup func. Cleanup MUST be
 // deferred to remove the temporary worktree.
+//
+// When the path-within-workspace exists at HEAD but NOT at baseRef
+// — typically a PR that adds a new module directory — returns a nil
+// project rather than erroring. The diff / whatif / statediff
+// callers all handle nil oldProj as "every entity in newProj is
+// added," which is the correct shape for "what's in this PR
+// relative to where the directory was first introduced."
 func loadProjectAtRef(workspace, baseRef string, r resolver.Resolver) (*Project, func(), error) {
 	oldDir, cleanup, err := prepareWorktree(workspace, baseRef)
 	if err != nil {
 		return nil, nil, err
+	}
+	if _, err := os.Stat(oldDir); os.IsNotExist(err) {
+		// Worktree was created (so the ref resolved fine), but the
+		// path-within-worktree doesn't exist at baseRef. Treat as
+		// "nothing on the old side" so the diff machinery reports
+		// every HEAD entity as added.
+		return nil, cleanup, nil
 	}
 	proj, _, err := loadProjectWith(oldDir, r, nil)
 	if err != nil {

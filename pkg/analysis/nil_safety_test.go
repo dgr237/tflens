@@ -115,6 +115,16 @@ func TestNilModuleGettersAreSafe(t *testing.T) {
 		// is safe to pass to downstream evaluation". Just exercise it.
 		_ = m.EvalContext()
 	})
+
+	t.Run("LookupAttrText", func(t *testing.T) {
+		// pkg/diff/tracked.go::DiffTrackedCtx calls
+		// oldMod.LookupAttrText(...) directly. With my loader fix
+		// for "subdir added in this PR" returning a nil oldProj,
+		// the nil-receiver branch became a real hot path. Pin it.
+		if text, located := m.LookupAttrText("variable.x", "default"); text != "" || located {
+			t.Fatalf("LookupAttrText on nil = (%q, %v), want ('', false)", text, located)
+		}
+	})
 }
 
 // TestNilExprText pins the zero-Expr behaviour. Several call paths
