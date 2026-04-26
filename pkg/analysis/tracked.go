@@ -350,6 +350,9 @@ func textOrEmpty(e *Expr) string {
 // isn't one of the named fields for that kind (e.g. an arbitrary
 // attribute on a resource block — those aren't cached on Entity).
 func (m *Module) LookupAttrText(entityID, attrName string) (string, bool) {
+	if m == nil {
+		return "", false
+	}
 	e, ok := m.byID[entityID]
 	if !ok {
 		return "", false
