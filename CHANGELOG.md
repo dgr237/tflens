@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-04-26
+
 ### Documentation
 
 - **New [`docs/comparison.md`](docs/comparison.md) — tflens vs other Terraform tools.** Positions tflens against TFLint, Checkov, Terrascan, tfsec / Trivy, `terraform validate`, `terraform plan`, and Atlantis / Terragrunt. Covers what each tool does best, what tflens adds, and recommended pairings. Argues "tflens AND one of these," not "tflens INSTEAD OF" — tflens occupies the change-impact-across-refs cell of the problem-space matrix that the others don't address. Includes a decision matrix mapping common questions ("did I break consumers?", "will this PR destroy state?", "is this code idiomatic?") to the right tool, and two worked CI-stack examples (module repo, workspace repo) showing tflens slotted alongside TFLint + Checkov / `terraform plan`. Linked from the main README's Commands section, the getting-started page's "Where to go next," and the commands index.
@@ -265,7 +267,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/dgr237/tflens/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/dgr237/tflens/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/dgr237/tflens/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dgr237/tflens/compare/v0.13.0...v0.14.0
