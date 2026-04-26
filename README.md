@@ -99,7 +99,7 @@ Outputs: `output-file` (path to captured output), `exit-code` (numeric), `breaki
 
 ## Commands
 
-New here? Run through [Getting started](docs/getting-started.md) first.
+New here? Run through [Getting started](docs/getting-started.md) first. Comparing tflens against TFLint / Checkov / Terrascan / `terraform validate` / `terraform plan`? See [tflens vs other Terraform tools](docs/comparison.md).
 
 The four primary commands all have dedicated reference pages under [`docs/commands/`](docs/commands/):
 

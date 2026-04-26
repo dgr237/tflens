@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Documentation
+
+- **New [`docs/comparison.md`](docs/comparison.md) — tflens vs other Terraform tools.** Positions tflens against TFLint, Checkov, Terrascan, tfsec / Trivy, `terraform validate`, `terraform plan`, and Atlantis / Terragrunt. Covers what each tool does best, what tflens adds, and recommended pairings. Argues "tflens AND one of these," not "tflens INSTEAD OF" — tflens occupies the change-impact-across-refs cell of the problem-space matrix that the others don't address. Includes a decision matrix mapping common questions ("did I break consumers?", "will this PR destroy state?", "is this code idiomatic?") to the right tool, and two worked CI-stack examples (module repo, workspace repo) showing tflens slotted alongside TFLint + Checkov / `terraform plan`. Linked from the main README's Commands section, the getting-started page's "Where to go next," and the commands index.
+
 ## [0.15.1] — 2026-04-26
 
 ### Documentation
