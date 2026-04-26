@@ -143,9 +143,13 @@ runs:
         TFLENS_STATE: ${{ inputs.state }}
         TFLENS_EXTRA_ARGS: ${{ inputs.args }}
       run: |
-        # Don't `set -e` — we want to capture tflens's exit code
-        # rather than aborting the step when it's non-zero.
-        set -uo pipefail
+        # GitHub Actions invokes bash with `-eo pipefail` by default.
+        # We need -e OFF here because we want to capture tflens's
+        # exit code via `ec=$?` and keep going — the gate-on-findings
+        # step at the end decides whether to actually propagate it.
+        # `set -uo pipefail` alone only ADDS -u; it doesn't override
+        # the inherited -e.
+        set +e -uo pipefail
         out_file="$(mktemp -t tflens-output.XXXXXX)"
         cmd=( tflens --format "${TFLENS_FORMAT}" "${TFLENS_COMMAND}" )
         case "${TFLENS_COMMAND}" in
