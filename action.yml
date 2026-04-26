@@ -1,0 +1,248 @@
+name: 'tflens'
+description: |
+  Run tflens (static Terraform analyser) against a Terraform project and
+  surface the result as a sticky PR comment + workflow step summary.
+  Wraps `tflens diff | whatif | statediff | validate` with PR-comment
+  plumbing so CI integration is a single uses: line.
+author: 'dgr237'
+branding:
+  icon: 'eye'
+  color: 'purple'
+
+inputs:
+  command:
+    description: 'Subcommand to run: diff | whatif | statediff | validate.'
+    required: false
+    default: 'diff'
+  path:
+    description: 'Project path passed to the subcommand. Defaults to the workspace root.'
+    required: false
+    default: '.'
+  ref:
+    description: |
+      Git ref for diff / whatif / statediff to compare against. Default
+      `auto` resolves to @{upstream} → origin/HEAD → main → master.
+      Ignored by `validate`.
+    required: false
+    default: 'auto'
+  format:
+    description: |
+      Output format: `markdown` (default — best for PR comments and
+      step summaries), `json`, or `text`.
+    required: false
+    default: 'markdown'
+  plan:
+    description: |
+      Path to a `terraform show -json` plan file. Forwarded as
+      `--enrich-with-plan` when set. Only honoured by `diff`.
+    required: false
+    default: ''
+  state:
+    description: |
+      Path to a Terraform state file. Forwarded as `--state` when set.
+      Only honoured by `statediff`.
+    required: false
+    default: ''
+  args:
+    description: |
+      Raw extra arguments appended verbatim to the tflens command.
+      Word-split on whitespace (no quoting). Use this for flags the
+      action doesn't model directly (e.g. `--offline`).
+    required: false
+    default: ''
+  comment-on-pr:
+    description: |
+      Post the markdown output as a sticky PR comment. Subsequent runs
+      EDIT the same comment (matched by `comment-tag`) instead of
+      stacking new ones. Requires `pull-requests: write` permission and
+      either a `pull_request`-event trigger or `pr-number` set
+      explicitly. Skipped silently when format != `markdown`.
+    required: false
+    default: 'true'
+  comment-tag:
+    description: |
+      Marker used to identify the sticky comment so re-runs find +
+      edit the same one. Use distinct tags when calling this action
+      multiple times in one workflow (e.g. `tflens-diff` /
+      `tflens-statediff`) so the comments don't overwrite each other.
+    required: false
+    default: 'tflens'
+  pr-number:
+    description: |
+      PR number to comment on. Required when the workflow isn't
+      triggered by `pull_request` (e.g. a `workflow_dispatch` test
+      run). Falls back to `github.event.pull_request.number` when
+      empty.
+    required: false
+    default: ''
+  step-summary:
+    description: |
+      Append the markdown output to `$GITHUB_STEP_SUMMARY` for
+      visibility on the workflow run page. Skipped silently when
+      format != `markdown`.
+    required: false
+    default: 'true'
+  fail-on-breaking:
+    description: |
+      Exit the step with the underlying tflens exit code (non-zero
+      when breaking changes / direct impact / flagged resources are
+      detected). Set to `false` to surface findings without gating
+      the run.
+    required: false
+    default: 'true'
+
+outputs:
+  output-file:
+    description: 'Path to the captured tflens output on the runner filesystem.'
+    value: ${{ steps.run.outputs.output-file }}
+  exit-code:
+    description: 'Numeric exit code from tflens (0 = clean, 1 = findings detected).'
+    value: ${{ steps.run.outputs.exit-code }}
+  breaking:
+    description: '`true` when `exit-code != 0`, otherwise `false`.'
+    value: ${{ steps.run.outputs.breaking }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        # Read the go directive from the action's own checked-out
+        # go.mod rather than hardcoding — keeps the toolchain version
+        # in lockstep with the source. github.action_path resolves to
+        # the action's own checkout (NOT the consumer's workspace).
+        go-version-file: '${{ github.action_path }}/go.mod'
+        check-latest: true
+
+    - name: Build tflens
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        # Build from the action's own source tree so the binary
+        # version matches the action ref the consumer pinned (e.g.
+        # uses: dgr237/tflens@v0.12.0 ⇒ tflens v0.12.0). Avoids a
+        # round-trip to proxy.golang.org and avoids a separate
+        # version input getting out of sync with the action ref.
+        out_dir="${RUNNER_TEMP:-/tmp}/tflens-bin"
+        mkdir -p "${out_dir}"
+        ( cd "${ACTION_PATH}" && go build -o "${out_dir}/tflens" . )
+        echo "${out_dir}" >> "$GITHUB_PATH"
+
+    - name: Run tflens
+      id: run
+      shell: bash
+      env:
+        TFLENS_COMMAND: ${{ inputs.command }}
+        TFLENS_PATH: ${{ inputs.path }}
+        TFLENS_REF: ${{ inputs.ref }}
+        TFLENS_FORMAT: ${{ inputs.format }}
+        TFLENS_PLAN: ${{ inputs.plan }}
+        TFLENS_STATE: ${{ inputs.state }}
+        TFLENS_EXTRA_ARGS: ${{ inputs.args }}
+      run: |
+        # Don't `set -e` — we want to capture tflens's exit code
+        # rather than aborting the step when it's non-zero.
+        set -uo pipefail
+        out_file="$(mktemp -t tflens-output.XXXXXX)"
+        cmd=( tflens --format "${TFLENS_FORMAT}" "${TFLENS_COMMAND}" )
+        case "${TFLENS_COMMAND}" in
+          diff|whatif|statediff)
+            cmd+=( --ref "${TFLENS_REF}" )
+            ;;
+        esac
+        if [ -n "${TFLENS_PLAN}" ] && [ "${TFLENS_COMMAND}" = "diff" ]; then
+          cmd+=( --enrich-with-plan "${TFLENS_PLAN}" )
+        fi
+        if [ -n "${TFLENS_STATE}" ] && [ "${TFLENS_COMMAND}" = "statediff" ]; then
+          cmd+=( --state "${TFLENS_STATE}" )
+        fi
+        if [ -n "${TFLENS_EXTRA_ARGS}" ]; then
+          # Word-split on whitespace — documented behaviour, since
+          # composite actions can't pass arrays as inputs.
+          # shellcheck disable=SC2206
+          extra=( ${TFLENS_EXTRA_ARGS} )
+          cmd+=( "${extra[@]}" )
+        fi
+        cmd+=( "${TFLENS_PATH}" )
+        echo "::group::tflens command"
+        printf '%q ' "${cmd[@]}"; echo
+        echo "::endgroup::"
+        "${cmd[@]}" > "${out_file}"
+        ec=$?
+        {
+          echo "exit-code=${ec}"
+          if [ "${ec}" -ne 0 ]; then
+            echo "breaking=true"
+          else
+            echo "breaking=false"
+          fi
+          echo "output-file=${out_file}"
+        } >> "$GITHUB_OUTPUT"
+        echo "::group::tflens output"
+        cat "${out_file}"
+        echo "::endgroup::"
+
+    - name: Append to step summary
+      if: ${{ inputs.step-summary == 'true' && inputs.format == 'markdown' }}
+      shell: bash
+      env:
+        OUTPUT_FILE: ${{ steps.run.outputs.output-file }}
+      run: |
+        set -euo pipefail
+        cat "${OUTPUT_FILE}" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Sticky PR comment
+      if: ${{ inputs.comment-on-pr == 'true' && inputs.format == 'markdown' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OUTPUT_FILE: ${{ steps.run.outputs.output-file }}
+        COMMENT_TAG: ${{ inputs.comment-tag }}
+        PR_NUMBER_OVERRIDE: ${{ inputs.pr-number }}
+        EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        if [ -n "${PR_NUMBER_OVERRIDE}" ]; then
+          pr="${PR_NUMBER_OVERRIDE}"
+        elif [ -n "${EVENT_PR_NUMBER}" ]; then
+          pr="${EVENT_PR_NUMBER}"
+        else
+          echo "no PR number available (not a pull_request event and pr-number not set) — skipping sticky comment" >&2
+          exit 0
+        fi
+        marker="<!-- tflens-action:${COMMENT_TAG} -->"
+        body_file="$(mktemp)"
+        {
+          echo "${marker}"
+          cat "${OUTPUT_FILE}"
+        } > "${body_file}"
+        # Find an existing comment by the marker line (prefix match)
+        # and edit it; create a new one when none exists. jq's
+        # --rawfile JSON-encodes the body so backticks / dollar-signs
+        # / quotes inside the markdown can't break the request shape.
+        existing="$(gh api "repos/${REPO}/issues/${pr}/comments" --paginate \
+          --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)"
+        if [ -n "${existing}" ]; then
+          jq -n --rawfile body "${body_file}" '{body: $body}' \
+            | gh api "repos/${REPO}/issues/comments/${existing}" \
+                --method PATCH --input - >/dev/null
+          echo "edited existing comment ${existing}"
+        else
+          jq -n --rawfile body "${body_file}" '{body: $body}' \
+            | gh api "repos/${REPO}/issues/${pr}/comments" \
+                --method POST --input - >/dev/null
+          echo "created new comment"
+        fi
+
+    - name: Gate on findings
+      if: ${{ inputs.fail-on-breaking == 'true' && steps.run.outputs.breaking == 'true' }}
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+      run: |
+        echo "tflens reported breaking changes / findings (exit ${EXIT_CODE})" >&2
+        exit "${EXIT_CODE}"
