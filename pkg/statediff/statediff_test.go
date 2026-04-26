@@ -3,9 +3,11 @@ package statediff_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/plan"
 	"github.com/dgr237/tflens/pkg/statediff"
 )
 
@@ -258,6 +260,89 @@ resource "aws_instance" "web" {
 	if c.Kind != "variable" || c.Name != "n" {
 		t.Errorf("change = %+v, want variable.n", c)
 	}
+}
+
+// TestEnrichWithPlanPopulatesPlanInstances confirms that statediff's
+// "static analysis flagged this resource's count expression" signal
+// gets paired with the plan's "here are the concrete instance
+// actions" signal. The fixture: a count goes from 1 → 0; the plan
+// shows aws_vpc.main[0] being destroyed.
+func TestEnrichWithPlanPopulatesPlanInstances(t *testing.T) {
+	old := loadProj(t, `
+locals {
+  enabled = 1
+}
+resource "aws_vpc" "main" {
+  count       = local.enabled
+  cidr_block  = "10.0.0.0/16"
+}
+`)
+	new := loadProj(t, `
+locals {
+  enabled = 0
+}
+resource "aws_vpc" "main" {
+  count       = local.enabled
+  cidr_block  = "10.0.0.0/16"
+}
+`)
+	r := statediff.Analyze(old, new, nil)
+	if len(r.SensitiveChanges) != 1 || len(r.SensitiveChanges[0].AffectedResources) != 1 {
+		t.Fatalf("expected 1 sensitive change with 1 affected resource; got %+v", r)
+	}
+
+	// Affected resource has no plan info before enrichment.
+	if got := len(r.SensitiveChanges[0].AffectedResources[0].PlanInstances); got != 0 {
+		t.Errorf("PlanInstances should be empty before enrichment; got %d", got)
+	}
+
+	// Mode field should be populated by the new flagResource code path.
+	if mode := r.SensitiveChanges[0].AffectedResources[0].Mode; mode != "managed" {
+		t.Errorf("Mode = %q, want managed", mode)
+	}
+
+	p := loadPlanFixture(t, "statediff_count.json")
+	r.EnrichWithPlan(p)
+
+	got := r.SensitiveChanges[0].AffectedResources[0].PlanInstances
+	if len(got) != 1 {
+		t.Fatalf("PlanInstances len = %d, want 1; got %+v", len(got), got)
+	}
+	if got[0].Address != "aws_vpc.main[0]" {
+		t.Errorf("PlanInstance.Address = %q, want aws_vpc.main[0]", got[0].Address)
+	}
+	if len(got[0].Actions) != 1 || got[0].Actions[0] != "delete" {
+		t.Errorf("PlanInstance.Actions = %v, want [delete]", got[0].Actions)
+	}
+}
+
+// TestEnrichWithPlanNilNoop pins the early-return contract.
+func TestEnrichWithPlanNilNoop(t *testing.T) {
+	r := &statediff.Result{
+		SensitiveChanges: []statediff.SensitiveChange{{
+			AffectedResources: []statediff.AffectedResource{{
+				Type: "aws_vpc", Name: "main",
+			}},
+		}},
+	}
+	r.EnrichWithPlan(nil)
+	if len(r.SensitiveChanges[0].AffectedResources[0].PlanInstances) != 0 {
+		t.Error("nil plan should leave PlanInstances empty")
+	}
+}
+
+// loadPlanFixture loads a plan testdata file from pkg/plan/testdata
+// — shared with the diff package's enrich tests so we don't have to
+// duplicate fixtures.
+func loadPlanFixture(t *testing.T, name string) *plan.Plan {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	path := filepath.Join(filepath.Dir(file), "..", "plan", "testdata", name)
+	p, err := plan.Load(path)
+	if err != nil {
+		t.Fatalf("plan.Load %s: %v", path, err)
+	}
+	return p
 }
 
 // loadProj writes src to a temp dir and loads it as a Project. Used

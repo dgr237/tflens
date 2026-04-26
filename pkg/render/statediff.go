@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/dgr237/tflens/pkg/statediff"
 )
@@ -65,6 +66,9 @@ func writeStatediff(w io.Writer, r *statediff.Result) {
 				fmt.Fprintf(w, "    Affected: %s (%s)\n", ar.Address(), ar.MetaArg)
 				for _, inst := range ar.StateInstances {
 					fmt.Fprintf(w, "      • state instance: %s\n", inst)
+				}
+				for _, pi := range ar.PlanInstances {
+					fmt.Fprintf(w, "      • plan: %s [%s]\n", pi.Address, strings.Join(pi.Actions, ", "))
 				}
 			}
 		}

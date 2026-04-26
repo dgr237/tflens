@@ -79,13 +79,29 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 	}
 	out := make([]Change, 0, len(changes)+len(p.ResourceChanges))
 	out = append(out, changes...)
+	walkPlanChanges(p, newProj, func(_ string, c Change) {
+		out = append(out, c)
+	})
+	sortChanges(out)
+	return out
+}
 
-	// Build a lookup so we can confirm each plan entry corresponds to
-	// a known source-side entity. Plan entries that match nothing
-	// still get emitted — they're useful (e.g. detecting a resource
-	// added to the plan from outside the diff'd source) — but the
-	// entity-existence lookup tells the renderer not to assume a
-	// source position for them.
+// walkPlanChanges runs the per-rc enrichment loop and dispatches each
+// resulting Change to the caller-supplied route function with the
+// originating plan module_address. Centralises the shared logic of
+// EnrichFromPlan / EnrichResultsFromPlan / EnrichWhatifsFromPlan —
+// each caller routes the same emitted Changes into different
+// destinations (flat list, per-pair Changes, per-call APIChanges).
+//
+// Skips no-ops and the individual halves of detected stale-move
+// pairs; the collapsed stale-move Informational entries are emitted
+// after the main loop, routed by the To-side module path.
+//
+// Nil plan is a no-op so callers don't need to branch on the flag.
+func walkPlanChanges(p *plan.Plan, newProj *loader.Project, route func(moduleAddress string, c Change)) {
+	if p == nil {
+		return
+	}
 	projectEntities := buildEntityIndex(newProj)
 	movedIdx := buildMovedIndex(newProj)
 	stale := detectStalePlanMoves(p.ResourceChanges, movedIdx)
@@ -99,12 +115,14 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 			continue
 		}
 		exists, pos := lookupEntity(projectEntities, rc)
-		out = append(out, changesForResourceChange(rc, exists, pos)...)
+		for _, c := range changesForResourceChange(rc, exists, pos) {
+			route(rc.ModuleAddress, c)
+		}
 	}
-	out = append(out, stalePlanMoveChanges(stale, projectEntities)...)
-
-	sortChanges(out)
-	return out
+	for _, m := range stale {
+		c := stalePlanMoveChange(m, projectEntities)
+		route(moduleAddressOf(m.To), c)
+	}
 }
 
 // EnrichResultsFromPlan is the per-module-aware variant of
@@ -142,47 +160,64 @@ func EnrichResultsFromPlan(results []PairResult, rootChanges []Change,
 			pairIdx[r.Pair.Key] = i
 		}
 	}
-	projectEntities := buildEntityIndex(newProj)
-	movedIdx := buildMovedIndex(newProj)
-	stale := detectStalePlanMoves(p.ResourceChanges, movedIdx)
-	deleteSkip, createSkip := stalePlanMoveSkipSets(stale)
 	mergedRoot := append([]Change(nil), rootChanges...)
-
-	route := func(moduleAddress string, change Change) {
+	walkPlanChanges(p, newProj, func(moduleAddress string, c Change) {
 		key := planModuleKey(moduleAddress)
 		if i, ok := pairIdx[key]; ok {
-			results[i].Changes = append(results[i].Changes, change)
+			results[i].Changes = append(results[i].Changes, c)
 			return
 		}
-		mergedRoot = append(mergedRoot, change)
-	}
-
-	for _, rc := range p.ResourceChanges {
-		if rc.Change.IsNoOp() {
-			continue
-		}
-		if shouldSkipForStaleMove(rc, deleteSkip, createSkip) {
-			continue
-		}
-		exists, pos := lookupEntity(projectEntities, rc)
-		for _, c := range changesForResourceChange(rc, exists, pos) {
-			route(rc.ModuleAddress, c)
-		}
-	}
-	// Stale-move entries route by the To address's module path (the
-	// destination — that's where the resource will live going
-	// forward, so the entry sits next to whatever other plan-derived
-	// rows for that module landed in the same pair).
-	for _, m := range stale {
-		c := stalePlanMoveChange(m, projectEntities)
-		route(moduleAddressOf(m.To), c)
-	}
-
+		mergedRoot = append(mergedRoot, c)
+	})
 	for i := range results {
 		sortChanges(results[i].Changes)
 	}
 	sortChanges(mergedRoot)
 	return results, mergedRoot
+}
+
+// EnrichWhatifsFromPlan augments each WhatifResult's APIChanges with
+// plan-derived findings whose module address matches the call's
+// pair key. Surfaces force-new attribute changes and other plan-only
+// signals (replaces, deletes) alongside the static-side API diff for
+// the same call so reviewers see one merged view per call.
+//
+// Plan rows whose module address has no matching call are dropped
+// silently — whatif is per-call only with no rootChanges concept.
+// Use `tflens diff --enrich-with-plan` when root-level coverage
+// matters.
+//
+// Whatif's DirectImpact list is NOT touched. DirectImpact is
+// strictly the cross-validation result (would the parent's USE break
+// under the new child's API?); plan deltas are attribute-level
+// signals on the resource side, not cross-validation failures. The
+// caller can still gate the run on plan-derived Breaking findings —
+// see cmd/whatif.go's countWhatifBreaking — but the separation
+// keeps the two signal sources legible.
+//
+// Calls slice is mutated in place; nil plan is a no-op.
+func EnrichWhatifsFromPlan(calls []WhatifResult, p *plan.Plan, newProj *loader.Project) []WhatifResult {
+	if p == nil {
+		return calls
+	}
+	pairIdx := map[string]int{}
+	for i, r := range calls {
+		if r.Pair.Key != "" {
+			pairIdx[r.Pair.Key] = i
+		}
+	}
+	walkPlanChanges(p, newProj, func(moduleAddress string, c Change) {
+		key := planModuleKey(moduleAddress)
+		if i, ok := pairIdx[key]; ok {
+			calls[i].APIChanges = append(calls[i].APIChanges, c)
+		}
+	})
+	for i := range calls {
+		if len(calls[i].APIChanges) > 0 {
+			sortChanges(calls[i].APIChanges)
+		}
+	}
+	return calls
 }
 
 // changesForResourceChange returns the plan-derived Change entries for
@@ -598,21 +633,6 @@ func shouldSkipForStaleMove(rc plan.ResourceChange, deleteSkip, createSkip map[s
 		return createSkip[rc.Address]
 	}
 	return false
-}
-
-// stalePlanMoveChanges builds the collapsed entries for every detected
-// stale-move pair. Used by the flat EnrichFromPlan path; the per-
-// module routing variant builds them one at a time so each can be
-// routed by its To address's module path.
-func stalePlanMoveChanges(matches []movedPair, projectEntities map[string]entityRef) []Change {
-	if len(matches) == 0 {
-		return nil
-	}
-	out := make([]Change, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, stalePlanMoveChange(m, projectEntities))
-	}
-	return out
 }
 
 // stalePlanMoveChange produces a single Informational Change for a

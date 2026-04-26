@@ -252,7 +252,8 @@ Root module:
 
 - **`count`/`for_each` instances all roll up to the same source-side entity.** Plan addresses like `aws_subnet.foo[0]` / `aws_subnet.foo["us-east-1"]` resolve to the single source-side `resource.aws_subnet.foo` declaration (matching by index-stripped path), but each indexed instance still gets its own Change row with the full plan address — including the index — preserved in the Subject. So `aws_subnet.foo[0]:cidr_block` and `aws_subnet.foo[1]:cidr_block` are visually distinct in the output. Indexed module calls (`module.regions["us-east-1"]`) match the same way: the source-side `module.regions` ModuleNode is the lookup target regardless of how many instances the for_each / count produces.
 - **Plan format versions.** Supports format_version 1.x (Terraform 1.0+). Older plans are rejected with a clear error.
-- **`whatif` and `statediff` don't yet take `--enrich-with-plan`** — only `diff` does. Same machinery would slot in cleanly if useful.
+- **`whatif --enrich-with-plan`** layers plan-derived findings onto each call's API-changes section so reviewers see the full picture per call. Plan rows whose module address has no matching call are dropped silently — whatif is per-call only; use `tflens diff --enrich-with-plan` for root-level coverage. Plan-derived Breaking findings count toward the CI exit code in addition to DirectImpact.
+- **`statediff --enrich-with-plan`** pairs the static "this count/for_each expression COULD recompute" signal with the plan's "here are the N concrete instances that WILL be affected." Each `AffectedResource` gets a `PlanInstances` list with the per-instance plan addresses (including count/for_each indices) and the actions terraform will take (`["update"]`, `["delete", "create"]`, etc.). Resources with no plan match leave `PlanInstances` empty — possible reasons: count expanded to 0, plan is stale, or the resource isn't in the plan.
 
 ### What it catches
 
