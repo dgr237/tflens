@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-04-26
+
 ### Fixed
 
 - **GitHub Action `Run tflens` step no longer aborts when tflens exits non-zero.** GitHub Actions invokes `bash` with `-eo pipefail` by default, which the action's `set -uo pipefail` line ONLY added to (it didn't disable `-e`). So the moment tflens exited non-zero — the normal CI-gating signal when Breaking findings exist — the script aborted at the tflens invocation, never captured the exit code into `steps.run.outputs.exit-code`, never appended to `$GITHUB_STEP_SUMMARY`, never posted the sticky comment, and the action's "gate on findings" decision logic was bypassed entirely. Surfaced by the dogfood workflow's statediff job: tflens correctly reported the `aws_vpc.main` add as a flagged item (exit 1), the action propagated 1 instead of consulting `fail-on-breaking`. Fix: `set +e -uo pipefail` explicitly disables `-e` for the `Run tflens` step. Other action steps (Append step summary, Sticky PR comment, Gate on findings) keep their explicit `set -euo pipefail` because their failure modes ARE meaningful.
@@ -283,7 +285,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/dgr237/tflens/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/dgr237/tflens/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/dgr237/tflens/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/dgr237/tflens/compare/v0.15.0...v0.15.1
