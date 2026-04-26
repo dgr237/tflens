@@ -10,17 +10,17 @@
 
 variable "vpc_cidr" {
   type    = string
-  default = "10.0.0.0/16"
+  default = "10.1.0.0/16" // [demo] tracked attribute change — diff should flag Breaking via the # tflens:track marker on aws_vpc.main.cidr_block
 }
 
 variable "subnet_count" {
   type    = number
-  default = 3
+  default = 1 // [demo] 3 → 1, statediff should flag Breaking via the count-reaches-changed-default detector
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  type = map(string)
+  // [demo] default removed → diff should flag Breaking ("variable now required")
 }
 
 locals {
