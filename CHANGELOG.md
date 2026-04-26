@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-04-26
+
 ### Added
 
 - **`tflens whatif --enrich-with-plan plan.json`** — plan enrichment is no longer diff-only. Plan-derived findings whose module address matches a call's pair key land inside that call's `APIChanges`, alongside the static-side API diff for the same call. Plan rows whose module address has no matching call are dropped silently — whatif is per-call only; root-level coverage stays with `tflens diff --enrich-with-plan`. Plan-derived Breaking findings are added to the existing DirectImpact total so the CI exit code reflects them too — a force-new attribute change in a child IS a consumer concern even when the parent's USE cross-validates cleanly. New `diff.EnrichWhatifsFromPlan(calls, plan, project)` entry point. The shared per-rc loop (no-op + stale-move skipping, source-position attribution) was extracted into a new `walkPlanChanges(p, project, route)` helper that all three of `EnrichFromPlan` / `EnrichResultsFromPlan` / `EnrichWhatifsFromPlan` now compose with their own routing strategy.
@@ -252,7 +254,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/dgr237/tflens/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dgr237/tflens/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dgr237/tflens/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dgr237/tflens/compare/v0.11.1...v0.12.0
