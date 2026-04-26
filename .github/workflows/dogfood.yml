@@ -1,0 +1,49 @@
+name: Dogfood (self-test the action)
+
+# Runs the GitHub Action wrapper from this PR's checkout (uses: ./)
+# against the example module under docs/example-module/. Three jobs
+# in parallel — validate, diff, statediff — each posts its own
+# sticky PR comment via a distinct comment-tag so they don't
+# overwrite each other.
+#
+# Purpose: validate the action's plumbing (composite-action build,
+# sticky comment edit-in-place, step summary, exit code) end-to-end
+# on real GitHub-hosted runners on every PR. Catches regressions in
+# the action.yml steps that unit tests can't see, and gives the
+# README's "GitHub Action" section a public, browsable example.
+#
+# fail-on-breaking is false so an unrelated PR that doesn't touch
+# the example module isn't gated by a noisy first-run report. The
+# signal is the sticky comment, not the exit code.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write   # required for the sticky comment
+
+jobs:
+  dogfood:
+    name: tflens ${{ matrix.command }} (example module)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # one command failing shouldn't skip the others
+      matrix:
+        command: [validate, diff, statediff]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # tflens needs history for --ref comparison
+
+      - name: Run tflens ${{ matrix.command }} via the action
+        uses: ./
+        with:
+          command: ${{ matrix.command }}
+          path: docs/example-module
+          # ref is silently ignored by validate (no --ref flag) so
+          # passing it unconditionally keeps the matrix uniform.
+          ref: origin/${{ github.base_ref }}
+          comment-tag: tflens-dogfood-${{ matrix.command }}
+          fail-on-breaking: false   # demo, not a gate

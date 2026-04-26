@@ -4,6 +4,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **Dogfood workflow + example module.** New `.github/workflows/dogfood.yml` runs the GitHub Action wrapper from each PR's own checkout (`uses: ./`) against a small example Terraform module under `docs/example-module/`. Three matrix jobs (validate / diff / statediff) post distinct sticky PR comments via per-command `comment-tag`s so they don't overwrite each other; `fail-on-breaking: false` so the workflow doesn't gate unrelated PRs (the signal is the comment, not the exit code). Catches regressions in the action.yml composite steps that unit tests can't see — sticky-comment edit-in-place, step-summary append, build pipeline. The example module itself doubles as a public reference example: a tracked attribute (`# tflens:track` on `aws_vpc.main.cidr_block`), a count-driven resource (`aws_subnet.public` × `var.subnet_count`), `merge()` on locals to exercise the static-evaluation surface, plus an explanatory `docs/example-module/README.md` covering the patterns and how to run tflens against it locally. No provider block — tflens is schema-free, so the analysis runs without an AWS provider download or credentials.
+
 ## [0.16.0] — 2026-04-26
 
 ### Added
