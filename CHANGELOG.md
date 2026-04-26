@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-04-26
+
 ### Changed
 
 - **GitHub Action metadata: name and description tightened for Marketplace publication.** Renamed from `tflens` to `tflens — Terraform breaking-change detector` (the bare name was rejected as non-unique by GitHub Marketplace). Description trimmed from ~250 chars (multi-line block) to 105 chars (single line) to fit Marketplace's 125-char limit. Behaviour unchanged — only the metadata humans see on the Marketplace listing differs. The `uses: dgr237/tflens@vX.Y.Z` invocation form is unaffected.
@@ -289,7 +291,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/dgr237/tflens/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/dgr237/tflens/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/dgr237/tflens/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/dgr237/tflens/compare/v0.15.1...v0.15.2
