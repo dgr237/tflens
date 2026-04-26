@@ -350,6 +350,175 @@ moved {
 // path doesn't accidentally suppress real destroys: when the source
 // has NO moved block, a plan delete just stays a delete (not collapsed
 // into a fake move hint).
+// TestEnrichFromPlanCollapsesStaleModuleMove pins the module-call
+// rename detection: when source declares `moved { from = module.old;
+// to = module.new }` AND the plan still shows ALL the old module's
+// nested resources being destroyed and the new module's nested
+// resources being created, the entire cluster collapses into ONE
+// Informational entry naming the module rename. Unmatched plan
+// entries (a delete on a resource not inside the renamed module)
+// flow through normally.
+func TestEnrichFromPlanCollapsesStaleModuleMove(t *testing.T) {
+	dir := t.TempDir()
+	// Source has the renamed module call + the moved {} block. The
+	// child module declares the two resources that the plan will see
+	// inside both module.old and module.new.
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`
+module "new" {
+  source = "./child"
+}
+
+resource "aws_security_group" "unrelated" {
+  name = "sg-x"
+}
+
+moved {
+  from = module.old
+  to   = module.new
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	childDir := filepath.Join(dir, "child")
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, "main.tf"), []byte(`
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "public" {
+  availability_zone = "us-east-1a"
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	p := planFixture(t, "moved_module_stale.json")
+	out := diff.EnrichFromPlan(nil, p, proj)
+
+	// Plan fixture: 2 deletes inside module.old + 2 creates inside
+	// module.new (matched cluster) + 1 unrelated delete. Without
+	// the module-rename collapse we'd see 5 entries; with it we see
+	// 1 collapsed + 1 unrelated = 2 entries.
+	if got, want := len(out), 2; got != want {
+		t.Fatalf("len(out) = %d, want %d; got %+v", got, want, out)
+	}
+
+	var moveEntry, unrelatedEntry *diff.Change
+	for i := range out {
+		if strings.Contains(out[i].Detail, "regenerate the plan") {
+			moveEntry = &out[i]
+		}
+		if out[i].Subject == "aws_security_group.unrelated" {
+			unrelatedEntry = &out[i]
+		}
+	}
+	if moveEntry == nil {
+		t.Fatal("missing collapsed module-move entry")
+	}
+	if moveEntry.Kind != diff.Informational {
+		t.Errorf("module-move Kind = %v, want Informational", moveEntry.Kind)
+	}
+	if !strings.Contains(moveEntry.Subject, "module.old") || !strings.Contains(moveEntry.Subject, "module.new") {
+		t.Errorf("module-move Subject should reference both module addresses; got %q", moveEntry.Subject)
+	}
+	// The Detail must mention the count of nested resources so the
+	// reviewer can sanity-check the scope before regenerating.
+	if !strings.Contains(moveEntry.Detail, "2 nested resources") {
+		t.Errorf("module-move Detail should mention '2 nested resources'; got %q", moveEntry.Detail)
+	}
+	if unrelatedEntry == nil {
+		t.Error("unrelated delete should still pass through")
+	}
+}
+
+// TestEnrichFromPlanModuleMoveWithPartialMatchKeepsUnmatched confirms
+// we don't over-collapse: if the plan deletes a resource inside
+// module.old that doesn't have a matching create inside module.new
+// (e.g. a resource that was DELETED during the same PR as the
+// rename), only the matched halves are suppressed — the unmatched
+// delete flows through as its own normal-path Breaking entry.
+func TestEnrichFromPlanModuleMoveWithPartialMatchKeepsUnmatched(t *testing.T) {
+	// Construct a minimal plan inline to control the (mis)match
+	// shape directly. Simpler than another fixture file.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`
+moved {
+  from = module.old
+  to   = module.new
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj, _, err := loader.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	planJSON := `{
+"format_version": "1.2",
+"terraform_version": "1.7.0",
+"resource_changes": [
+  {
+    "address": "module.old.aws_vpc.main",
+    "module_address": "module.old",
+    "mode": "managed", "type": "aws_vpc", "name": "main",
+    "change": {"actions": ["delete"], "before": {}, "after": null}
+  },
+  {
+    "address": "module.old.aws_subnet.removed",
+    "module_address": "module.old",
+    "mode": "managed", "type": "aws_subnet", "name": "removed",
+    "change": {"actions": ["delete"], "before": {}, "after": null}
+  },
+  {
+    "address": "module.new.aws_vpc.main",
+    "module_address": "module.new",
+    "mode": "managed", "type": "aws_vpc", "name": "main",
+    "change": {"actions": ["create"], "before": null, "after": {}}
+  }
+]}`
+	planPath := filepath.Join(dir, "plan.json")
+	if err := os.WriteFile(planPath, []byte(planJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := plan.Load(planPath)
+	if err != nil {
+		t.Fatalf("plan.Load: %v", err)
+	}
+	out := diff.EnrichFromPlan(nil, p, proj)
+
+	// Expect: 1 collapsed module-move (covering aws_vpc.main pair)
+	// + 1 unmatched delete for module.old.aws_subnet.removed = 2 total.
+	if got, want := len(out), 2; got != want {
+		t.Fatalf("len(out) = %d, want %d; got %+v", got, want, out)
+	}
+	var sawMove, sawUnmatched bool
+	for _, c := range out {
+		if strings.Contains(c.Detail, "regenerate the plan") &&
+			strings.Contains(c.Detail, "1 nested resource") {
+			sawMove = true
+		}
+		if strings.Contains(c.Subject, "module.old.aws_subnet.removed") &&
+			strings.Contains(c.Detail, "plan destroys") {
+			sawUnmatched = true
+		}
+	}
+	if !sawMove {
+		t.Errorf("expected collapsed module-move entry naming '1 nested resource'; got %+v", out)
+	}
+	if !sawUnmatched {
+		t.Errorf("expected unmatched delete on module.old.aws_subnet.removed to pass through; got %+v", out)
+	}
+}
+
 func TestEnrichFromPlanLeavesGenuineDestroyAlone(t *testing.T) {
 	// No moved block in source — every plan row should pass through
 	// the normal path.

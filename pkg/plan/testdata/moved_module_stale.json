@@ -1,0 +1,70 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "module.old.aws_vpc.main",
+      "module_address": "module.old",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {
+        "actions": ["delete"],
+        "before": {"cidr_block": "10.0.0.0/16"},
+        "after": null,
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.old.aws_subnet.public",
+      "module_address": "module.old",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public",
+      "change": {
+        "actions": ["delete"],
+        "before": {"availability_zone": "us-east-1a"},
+        "after": null,
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.new.aws_vpc.main",
+      "module_address": "module.new",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"cidr_block": "10.0.0.0/16"},
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "module.new.aws_subnet.public",
+      "module_address": "module.new",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "public",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"availability_zone": "us-east-1a"},
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "aws_security_group.unrelated",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "unrelated",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "sg-x"},
+        "after": null,
+        "replace_paths": []
+      }
+    }
+  ]
+}

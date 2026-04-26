@@ -150,7 +150,7 @@ tflens diff --ref main --enrich-with-plan plan.json
 
 **Source positions.** When a plan ResourceChange matches a known source-side entity, the entity's source position (`file:line`) is propagated onto the resulting Change so the markdown renderer can link plan-derived rows back to the resource declaration.
 
-**Stale `moved {}` block detection.** When the source declares `moved { from = X; to = Y }` AND the plan still shows X as a delete plus Y as a create, the pair is collapsed into a single Informational entry hinting that the plan is stale and should be regenerated. Currently scoped to resource/data renames; module-call renames are deferred.
+**Stale `moved {}` block detection.** When the source declares `moved { from = X; to = Y }` AND the plan still shows X as a delete plus Y as a create, the pair is collapsed into a single Informational entry hinting that the plan is stale and should be regenerated. Resource/data renames collapse a single (delete, create) pair. **Module-call renames** (`moved { from = module.old; to = module.new }`) collapse the entire cluster of N nested resources being destroyed under the old prefix and recreated under the new prefix — one Informational entry per moved-block declaration, with a count of nested resources. Partial matches inside a module-rename cluster are honest: a resource that's deleted from `module.old` but has no twin under `module.new` (e.g. removed during the same PR as the rename) flows through the normal path as its own finding.
 
 ### Plan-enrichment example output
 
