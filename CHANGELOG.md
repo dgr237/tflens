@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-04-26
+
 ### Documentation
 
 - **Per-command reference docs split out of the main README into `docs/commands/`.** New pages: [`validate.md`](docs/commands/validate.md), [`diff.md`](docs/commands/diff.md), [`whatif.md`](docs/commands/whatif.md), [`statediff.md`](docs/commands/statediff.md), [`tracked-attributes.md`](docs/commands/tracked-attributes.md), [`export.md`](docs/commands/export.md), plus a [`docs/commands/README.md`](docs/commands/README.md) index. Each page is self-contained: when-to-use, usage, worked examples, what-it-catches / what-it-doesn't, output formats, related links. The main README's Commands table now points at each page rather than carrying the long-form content inline (480 lines moved out of the README; it shrinks from 721 to 258 lines and becomes a navigation hub). Anchor references inside the surviving README content (Module resolution, Static evaluation surface) are unchanged so deep links still work.
@@ -259,7 +261,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/dgr237/tflens/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/dgr237/tflens/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dgr237/tflens/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dgr237/tflens/compare/v0.12.0...v0.13.0
