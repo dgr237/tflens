@@ -1,0 +1,60 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "main",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "password": "hunter2",
+          "username": "admin",
+          "engine_version": "14.5",
+          "arn": "arn:aws:rds:us-east-1:123:db:main"
+        },
+        "after": {
+          "password": "correcthorsebatterystaple",
+          "username": "admin",
+          "engine_version": "15.1",
+          "arn": null
+        },
+        "before_sensitive": {
+          "password": true
+        },
+        "after_sensitive": {
+          "password": true
+        },
+        "after_unknown": {
+          "arn": true
+        },
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "aws_secretsmanager_secret_version.config",
+      "mode": "managed",
+      "type": "aws_secretsmanager_secret_version",
+      "name": "config",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "secret_string": {"db_pass": "old", "api_key": "old"}
+        },
+        "after": {
+          "secret_string": {"db_pass": "new", "api_key": "new"}
+        },
+        "before_sensitive": {
+          "secret_string": true
+        },
+        "after_sensitive": {
+          "secret_string": true
+        },
+        "after_unknown": {},
+        "replace_paths": []
+      }
+    }
+  ]
+}

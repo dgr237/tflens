@@ -4,6 +4,14 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens diff --enrich-with-plan` — sensitive value redaction.** Plan attributes flagged via `before_sensitive` / `after_sensitive` (anything that flowed through a sensitive variable, sensitive output, or `sensitive = true` resource attribute) now render as `(sensitive)` instead of the raw value. Without this fix, a plan touching e.g. an RDS password would write the password into CI logs the moment a reviewer ran `tflens diff --enrich-with-plan` against the PR. New `BeforeSensitive`/`AfterSensitive` fields on `pkg/plan.AttrDelta`; `pkg/plan` walker drills the sensitive-shadow trees in parallel with the data so per-leaf flags are exact even when the shadow has structured content. Subtree-wide sensitive markers (the entire structured value is sensitive — e.g. an `aws_secretsmanager_secret_version.secret_string` map) emit a single `(sensitive)` row at the subtree level rather than descending into placeholder children. `pkg/diff/enrich.go`'s renderer substitutes the marker before the value reaches Detail, so no renderer downstream can accidentally leak it.
+
+- **`tflens diff --enrich-with-plan` — `(known after apply)` rendering.** Plan attributes whose post-apply value is computed by the provider (flagged via the plan's `after_unknown` shadow) now render as `(known after apply)` instead of `<nil>`. Previously a `null`-valued After looked indistinguishable from "the attribute is being unset", which misled reviewers reading enrichment output for resources with provider-computed fields (`arn`, `id`, etc.). New `AfterUnknown` field on `pkg/plan.AttrDelta`; the walker emits a delta for unknown leaves even when before/after compare equal (both are placeholder nulls until apply fills the value in).
+
+- **`tflens diff --enrich-with-plan` — per-module routing of plan-derived findings.** Plan-derived rows whose module address matches a paired module call now land under that pair's section in the rendered output instead of all collapsing into the project-root section. Previously reviewers had to mentally join the static-side findings for `module.network` with the plan-side findings for the same module that were sitting in a separate root-level block. New `diff.EnrichResultsFromPlan(results, rootChanges, plan, project)` entry point routes each plan ResourceChange by converting its `module_address` (`module.X.module.Y`, with count/for_each indices stripped) to the dotted-key form `loader.ModuleCallPair` uses (`X.Y`); unmatched module addresses fall through to rootChanges so a stale plan referencing a missing module is still visible. `cmd/diff.go` swapped to the new helper. Existing flat `EnrichFromPlan` retained as a thin wrapper around the now-shared `changesForResourceChange` helper for callers that don't have a results slice.
+
 ## [0.11.1] — 2026-04-25
 
 ### Fixed

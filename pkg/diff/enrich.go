@@ -80,55 +80,174 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 		if rc.Change.IsNoOp() {
 			continue
 		}
-		entityID := rc.EntityID()
-		// Strip count/for_each indices from each module segment when
-		// looking up the source-side entity — the source-side module
-		// tree has one node per module CALL, not per instance, so
-		// `module.foo[0].aws_vpc.main` and `module.foo[1].aws_vpc.main`
-		// both need to find the same `module.foo`. Resource indices
-		// (the trailing `[idx]` on the resource itself) are already
-		// stripped by EntityID(), which goes through the entity's
-		// canonical ID without index decoration.
-		_, exists := projectEntities[matchKey(stripIndices(rc.ModuleAddress), entityID)]
-
-		switch {
-		case rc.Change.IsCreate():
-			out = append(out, Change{
-				Kind:    Informational,
-				Subject: planSubject(rc),
-				Detail:  fmt.Sprintf("plan creates %s%s", planAddressDescriptor(rc), entityHint(exists)),
-				Source:  SourcePlan,
-			})
-		case rc.Change.IsDelete():
-			out = append(out, Change{
-				Kind:    Breaking,
-				Subject: planSubject(rc),
-				Detail:  fmt.Sprintf("plan destroys %s — uncommitted state will be lost", planAddressDescriptor(rc)),
-				Source:  SourcePlan,
-			})
-		case rc.Change.IsReplace():
-			// Replace = destroy + recreate. Already Breaking by
-			// definition. Surface the per-attribute deltas
-			// underneath so reviewers see WHICH change forced it.
-			out = append(out, Change{
-				Kind:    Breaking,
-				Subject: planSubject(rc),
-				Detail:  fmt.Sprintf("plan replaces %s (destroy + recreate)", planAddressDescriptor(rc)),
-				Source:  SourcePlan,
-			})
-			out = append(out, attrDeltaChanges(rc)...)
-		case rc.Change.IsUpdate():
-			out = append(out, attrDeltaChanges(rc)...)
-		}
+		out = append(out, changesForResourceChange(rc, lookupEntity(projectEntities, rc))...)
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Kind != out[j].Kind {
-			return out[i].Kind < out[j].Kind
-		}
-		return out[i].Subject < out[j].Subject
-	})
+	sortChanges(out)
 	return out
+}
+
+// EnrichResultsFromPlan is the per-module-aware variant of
+// EnrichFromPlan. Findings whose module_address matches a paired
+// module call land in that PairResult.Changes; findings for the
+// root module (or for a module that doesn't have a paired call —
+// typically a module added or removed entirely between sides) fall
+// back to rootChanges.
+//
+// The motivation: with the flat EnrichFromPlan, a plan describing
+// a `cidr_block` change inside `module.network` shows up under the
+// project root in the rendered output, even though the source-side
+// findings for `module.network` already have their own per-pair
+// section. Reviewers had to mentally join the two. This routing
+// puts plan-derived rows next to the matching static-side rows.
+//
+// Each result's Changes gets re-sorted after enrichment so the
+// merged (static, plan) rows interleave by (Kind, Subject) — the
+// same ordering AnalyzeProjects produces for the original list.
+//
+// Returns the (possibly modified) results slice + the merged
+// rootChanges. The results slice is mutated in place; callers that
+// need the originals untouched should clone first.
+func EnrichResultsFromPlan(results []PairResult, rootChanges []Change,
+	p *plan.Plan, newProj *loader.Project) ([]PairResult, []Change) {
+	if p == nil {
+		return results, rootChanges
+	}
+	// Pair key → results index. Empty-key entries (root pairs, if any
+	// ever existed) skip routing — root-module findings always go
+	// through rootChanges.
+	pairIdx := map[string]int{}
+	for i, r := range results {
+		if r.Pair.Key != "" {
+			pairIdx[r.Pair.Key] = i
+		}
+	}
+	projectEntities := buildEntityIndex(newProj)
+	mergedRoot := append([]Change(nil), rootChanges...)
+
+	for _, rc := range p.ResourceChanges {
+		if rc.Change.IsNoOp() {
+			continue
+		}
+		rcChanges := changesForResourceChange(rc, lookupEntity(projectEntities, rc))
+		if len(rcChanges) == 0 {
+			continue
+		}
+		key := planModuleKey(rc.ModuleAddress)
+		if i, ok := pairIdx[key]; ok {
+			results[i].Changes = append(results[i].Changes, rcChanges...)
+			continue
+		}
+		mergedRoot = append(mergedRoot, rcChanges...)
+	}
+
+	for i := range results {
+		sortChanges(results[i].Changes)
+	}
+	sortChanges(mergedRoot)
+	return results, mergedRoot
+}
+
+// changesForResourceChange returns the plan-derived Change entries for
+// one ResourceChange. Centralised so EnrichFromPlan and the per-
+// module routing variant produce identical Detail / Kind / Subject
+// shapes — the only difference between the two callers is which
+// bucket the result lands in.
+//
+// `exists` is the precomputed entity-index lookup result so callers
+// don't repeat the work; it controls the "no matching source-side
+// entity" hint on create entries.
+func changesForResourceChange(rc plan.ResourceChange, exists bool) []Change {
+	var out []Change
+	switch {
+	case rc.Change.IsCreate():
+		out = append(out, Change{
+			Kind:    Informational,
+			Subject: planSubject(rc),
+			Detail:  fmt.Sprintf("plan creates %s%s", planAddressDescriptor(rc), entityHint(exists)),
+			Source:  SourcePlan,
+		})
+	case rc.Change.IsDelete():
+		out = append(out, Change{
+			Kind:    Breaking,
+			Subject: planSubject(rc),
+			Detail:  fmt.Sprintf("plan destroys %s — uncommitted state will be lost", planAddressDescriptor(rc)),
+			Source:  SourcePlan,
+		})
+	case rc.Change.IsReplace():
+		// Replace = destroy + recreate. Already Breaking by
+		// definition. Surface the per-attribute deltas underneath so
+		// reviewers see WHICH change forced it.
+		out = append(out, Change{
+			Kind:    Breaking,
+			Subject: planSubject(rc),
+			Detail:  fmt.Sprintf("plan replaces %s (destroy + recreate)", planAddressDescriptor(rc)),
+			Source:  SourcePlan,
+		})
+		out = append(out, attrDeltaChanges(rc)...)
+	case rc.Change.IsUpdate():
+		out = append(out, attrDeltaChanges(rc)...)
+	}
+	return out
+}
+
+// lookupEntity hides the index-stripping detail so both enrichment
+// entry points share a single way to ask "does this plan's resource
+// match a known source-side entity?".
+func lookupEntity(index map[string]bool, rc plan.ResourceChange) bool {
+	// Strip count/for_each indices from each module segment when
+	// looking up the source-side entity — the source-side module tree
+	// has one node per module CALL, not per instance, so
+	// `module.foo[0].aws_vpc.main` and `module.foo[1].aws_vpc.main`
+	// both need to find the same `module.foo`. Resource indices on
+	// the trailing `[idx]` are already stripped by EntityID(), which
+	// goes through the entity's canonical ID without index decoration.
+	return index[matchKey(stripIndices(rc.ModuleAddress), rc.EntityID())]
+}
+
+// sortChanges orders a slice by (Kind, Subject) so Breaking findings
+// come first and ties break alphabetically. SliceStable preserves
+// insertion order within a (Kind, Subject) tie — useful when a single
+// resource emits a summary row + per-attribute rows that share the
+// same Subject prefix.
+func sortChanges(s []Change) {
+	sort.SliceStable(s, func(i, j int) bool {
+		if s[i].Kind != s[j].Kind {
+			return s[i].Kind < s[j].Kind
+		}
+		return s[i].Subject < s[j].Subject
+	})
+}
+
+// planModuleKey converts a plan's module_address (e.g.
+// `module.regions["us-east-1"].module.subnets`) into the dotted-key
+// form loader.ModuleCallPair uses (`regions.subnets`). Returns "" for
+// an empty input (root module).
+//
+// count/for_each indices are stripped first so multiple instances of
+// the same module call route to the same pair — there's only ever one
+// PairResult per call regardless of how many instances it expands to.
+//
+// If the input doesn't fit the `module.X.module.Y...` shape (e.g. a
+// malformed address), returns "" so the caller falls back to root
+// rather than risk routing to a wrong pair.
+func planModuleKey(moduleAddress string) string {
+	stripped := stripIndices(moduleAddress)
+	if stripped == "" {
+		return ""
+	}
+	parts := strings.Split(stripped, ".")
+	if len(parts)%2 != 0 {
+		return ""
+	}
+	keyParts := make([]string, 0, len(parts)/2)
+	for i := 0; i < len(parts); i += 2 {
+		if parts[i] != "module" {
+			return ""
+		}
+		keyParts = append(keyParts, parts[i+1])
+	}
+	return strings.Join(keyParts, ".")
 }
 
 // attrDeltaChanges turns each AttrDelta on a ResourceChange into a
@@ -136,6 +255,12 @@ func EnrichFromPlan(changes []Change, p *plan.Plan, newProj *loader.Project) []C
 // Informational. Each Change carries Subject = "<plan-address>:<attr-path>"
 // so the output is unique even when multiple attributes change on
 // the same resource.
+//
+// Sensitive markers redact the rendered value before it lands in
+// Detail — without this, a `tflens diff --enrich-with-plan` against
+// a plan touching e.g. an RDS password would write the password into
+// CI logs. AfterUnknown surfaces as "(known after apply)" so the
+// reader can tell a placeholder apart from an unset attribute.
 func attrDeltaChanges(rc plan.ResourceChange) []Change {
 	deltas := rc.Change.AttrDeltas()
 	out := make([]Change, 0, len(deltas))
@@ -149,12 +274,35 @@ func attrDeltaChanges(rc plan.ResourceChange) []Change {
 		out = append(out, Change{
 			Kind:    kind,
 			Subject: fmt.Sprintf("%s:%s", rc.Address, d.Path),
-			Detail:  fmt.Sprintf("plan attribute change: %s → %s", formatValue(d.Before), formatValue(d.After)),
+			Detail:  fmt.Sprintf("plan attribute change: %s → %s", renderBefore(d), renderAfter(d)),
 			Hint:    hint,
 			Source:  SourcePlan,
 		})
 	}
 	return out
+}
+
+// renderBefore formats the AttrDelta's Before value for inclusion in
+// Detail. Sensitive markers take precedence — we never want the raw
+// value in the output even if a renderer is being permissive.
+func renderBefore(d plan.AttrDelta) string {
+	if d.BeforeSensitive {
+		return "(sensitive)"
+	}
+	return formatValue(d.Before)
+}
+
+// renderAfter formats the AttrDelta's After value for inclusion in
+// Detail. Unknown beats sensitive (the value isn't computed yet, so
+// "sensitive" would be misleading); both beat the raw value.
+func renderAfter(d plan.AttrDelta) string {
+	switch {
+	case d.AfterUnknown:
+		return "(known after apply)"
+	case d.AfterSensitive:
+		return "(sensitive)"
+	}
+	return formatValue(d.After)
 }
 
 // planSubject returns the Subject for a top-level plan-derived Change

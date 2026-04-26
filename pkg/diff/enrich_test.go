@@ -221,6 +221,157 @@ resource "aws_vpc" "main" {}
 	}
 }
 
+// TestEnrichResultsFromPlanRoutesByModule pins the per-module routing.
+// The fixture has:
+//   - module.network.aws_vpc.main update     → routes to PairResult{Key: "network"}
+//   - module.network.module.subnets.aws_subnet.public[east] create
+//     → routes to PairResult{Key: "network.subnets"}
+//   - data.aws_ami.latest read               → filtered (no-op-equivalent)
+//
+// We pre-stage two empty PairResults with matching keys; the routing
+// should land each plan-derived row inside the right one without
+// touching rootChanges.
+func TestEnrichResultsFromPlanRoutesByModule(t *testing.T) {
+	results := []diff.PairResult{
+		{Pair: loader.ModuleCallPair{Key: "network", LocalName: "network"}},
+		{Pair: loader.ModuleCallPair{Key: "network.subnets", LocalName: "subnets"}},
+	}
+	rootChanges := []diff.Change{
+		{Kind: diff.Informational, Subject: "out.docs", Detail: "static-side root finding", Source: diff.SourceStatic},
+	}
+
+	p := planFixture(t, "nested_module.json")
+	gotResults, gotRoot := diff.EnrichResultsFromPlan(results, rootChanges, p, nil)
+
+	// rootChanges should still contain only the original static-side
+	// finding — every plan row had a matching pair so nothing
+	// fell through.
+	if len(gotRoot) != 1 || gotRoot[0].Subject != "out.docs" {
+		t.Errorf("rootChanges should be unchanged; got %+v", gotRoot)
+	}
+	// `network` pair should have one update row (vpc.cidr_block).
+	if got := len(gotResults[0].Changes); got != 1 {
+		t.Fatalf("network pair Changes len = %d, want 1; got %+v", got, gotResults[0].Changes)
+	}
+	if !strings.HasPrefix(gotResults[0].Changes[0].Subject, "module.network.aws_vpc.main") {
+		t.Errorf("network pair routed wrong row: %q", gotResults[0].Changes[0].Subject)
+	}
+	// `network.subnets` pair should have one create summary.
+	if got := len(gotResults[1].Changes); got != 1 {
+		t.Fatalf("subnets pair Changes len = %d, want 1; got %+v", got, gotResults[1].Changes)
+	}
+	if !strings.Contains(gotResults[1].Changes[0].Detail, "plan creates") {
+		t.Errorf("subnets pair routed wrong row: %+v", gotResults[1].Changes[0])
+	}
+}
+
+// TestEnrichResultsFromPlanFallsBackToRoot covers the case where a
+// plan describes a module not in the pair list — typically a stale
+// plan or a module that doesn't appear in the diff. Those rows should
+// land in rootChanges with the full plan address as Subject so
+// reviewers can still see them.
+func TestEnrichResultsFromPlanFallsBackToRoot(t *testing.T) {
+	// No paired module calls — every plan row will fall through to root.
+	var results []diff.PairResult
+	p := planFixture(t, "nested_module.json")
+	gotResults, gotRoot := diff.EnrichResultsFromPlan(results, nil, p, nil)
+
+	if len(gotResults) != 0 {
+		t.Errorf("results should remain empty; got %+v", gotResults)
+	}
+	// nested_module.json has 2 non-no-op changes (vpc update + subnet
+	// create) → 1 + 1 = 2 plan-derived entries in rootChanges.
+	if got, want := len(gotRoot), 2; got != want {
+		t.Fatalf("rootChanges len = %d, want %d; got %+v", got, want, gotRoot)
+	}
+	for _, c := range gotRoot {
+		if c.Source != diff.SourcePlan {
+			t.Errorf("rootChanges entry %q should be Source=plan; got %q", c.Subject, c.Source)
+		}
+	}
+}
+
+// TestEnrichResultsFromPlanNilNoop pins the early-return contract:
+// passing nil plan returns the inputs verbatim so cmd/diff doesn't
+// have to branch on the --enrich-with-plan flag at every call site.
+func TestEnrichResultsFromPlanNilNoop(t *testing.T) {
+	results := []diff.PairResult{
+		{Pair: loader.ModuleCallPair{Key: "x"}, Changes: []diff.Change{{Subject: "x"}}},
+	}
+	rootChanges := []diff.Change{{Subject: "y"}}
+	gotResults, gotRoot := diff.EnrichResultsFromPlan(results, rootChanges, nil, nil)
+	if len(gotResults) != 1 || gotResults[0].Pair.Key != "x" {
+		t.Errorf("nil plan should leave results unchanged; got %+v", gotResults)
+	}
+	if len(gotRoot) != 1 || gotRoot[0].Subject != "y" {
+		t.Errorf("nil plan should leave rootChanges unchanged; got %+v", gotRoot)
+	}
+}
+
+// TestEnrichFromPlanRedactsSensitiveAndUnknown pins the renderer
+// substitution behaviour: a plan touching a sensitive attribute
+// must NOT spill the value into the Detail (it would land in CI
+// logs), and a `(known after apply)` attribute must show that text
+// instead of `<nil>` (which looks like the attribute is being unset).
+func TestEnrichFromPlanRedactsSensitiveAndUnknown(t *testing.T) {
+	p := planFixture(t, "sensitive_and_unknown.json")
+	out := diff.EnrichFromPlan(nil, p, nil)
+
+	// Find the password and arn rows for the RDS resource.
+	var passwordEntry, arnEntry, engineEntry, secretEntry *diff.Change
+	for i := range out {
+		switch out[i].Subject {
+		case "aws_db_instance.main:password":
+			passwordEntry = &out[i]
+		case "aws_db_instance.main:arn":
+			arnEntry = &out[i]
+		case "aws_db_instance.main:engine_version":
+			engineEntry = &out[i]
+		case "aws_secretsmanager_secret_version.config:secret_string":
+			secretEntry = &out[i]
+		}
+	}
+
+	if passwordEntry == nil {
+		t.Fatal("missing password entry")
+	}
+	if strings.Contains(passwordEntry.Detail, "hunter2") ||
+		strings.Contains(passwordEntry.Detail, "correcthorsebatterystaple") {
+		t.Errorf("password Detail leaked the value: %q", passwordEntry.Detail)
+	}
+	if !strings.Contains(passwordEntry.Detail, "(sensitive)") {
+		t.Errorf("password Detail should contain (sensitive); got %q", passwordEntry.Detail)
+	}
+
+	if arnEntry == nil {
+		t.Fatal("missing arn entry")
+	}
+	if !strings.Contains(arnEntry.Detail, "(known after apply)") {
+		t.Errorf("arn Detail should contain (known after apply); got %q", arnEntry.Detail)
+	}
+
+	if engineEntry == nil {
+		t.Fatal("missing engine_version entry")
+	}
+	if !strings.Contains(engineEntry.Detail, "14.5") || !strings.Contains(engineEntry.Detail, "15.1") {
+		t.Errorf("engine_version Detail should contain raw values; got %q", engineEntry.Detail)
+	}
+
+	if secretEntry == nil {
+		t.Fatal("missing secret_string entry — should emit ONE subtree-level delta, not per-leaf rows")
+	}
+	if strings.Contains(secretEntry.Detail, "db_pass") ||
+		strings.Contains(secretEntry.Detail, "api_key") {
+		t.Errorf("secret subtree leaked inner keys: %q", secretEntry.Detail)
+	}
+	// And no per-leaf rows for the inner keys leaked through.
+	for _, c := range out {
+		if strings.HasPrefix(c.Subject, "aws_secretsmanager_secret_version.config:secret_string.") {
+			t.Errorf("unexpected per-leaf row inside masked subtree: %q", c.Subject)
+		}
+	}
+}
+
 // TestEnrichFromPlanPreservesExisting confirms enrichment doesn't
 // drop or modify the static-side changes — they should appear in
 // the output verbatim alongside the new plan-derived entries, and
