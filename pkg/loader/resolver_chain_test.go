@@ -256,6 +256,31 @@ var loaderProjectsForDiffCases = []loaderProjectsForDiffCase{
 			cleanup()
 		},
 	},
+	{
+		// PR adds a new module directory: the worktree at baseRef
+		// resolves cleanly (the ref exists), but the path-within-
+		// workspace doesn't exist there yet. Should return a nil
+		// oldProj — NOT an error — so the diff machinery reports
+		// every HEAD entity as added.
+		Name:    "new_subdir_added_in_pr_returns_nil_old",
+		BaseRef: "main",
+		Setup:   setupRepoWithSubdirAddedAfterBase,
+		Custom: func(t *testing.T, old, newp *loader.Project, cleanup func(), err error) {
+			if err != nil {
+				t.Fatalf("ProjectsForDiff should succeed when subdir is missing on base; got %v", err)
+			}
+			if cleanup == nil {
+				t.Fatal("cleanup should be non-nil")
+			}
+			defer cleanup()
+			if old != nil {
+				t.Errorf("old project should be nil when subdir didn't exist on base ref; got %+v", old)
+			}
+			if newp == nil {
+				t.Error("new project should be non-nil — the working tree HAS the subdir")
+			}
+		},
+	},
 }
 
 // ---- helpers ----
@@ -274,6 +299,37 @@ func setupRepoWithFixture(t *testing.T) string {
 	runGit(t, dir, "add", ".")
 	runGit(t, dir, "commit", "--quiet", "-m", "init")
 	return dir
+}
+
+// setupRepoWithSubdirAddedAfterBase initialises main with one root-
+// level main.tf, then on a feature branch adds a NEW subdir/main.tf
+// — and returns the subdir path (not the repo root). The ProjectsForDiff
+// case using this setup exercises the "directory exists on HEAD but
+// not on baseRef" path.
+func setupRepoWithSubdirAddedAfterBase(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "--quiet", "-b", "main")
+	// Baseline commit on main — repo has one root-level file, no subdir.
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"),
+		[]byte("variable \"x\" { type = string }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "--quiet", "-m", "init")
+	// Feature branch — add a brand-new subdir with its own module.
+	runGit(t, dir, "checkout", "--quiet", "-b", "feature")
+	subdir := filepath.Join(dir, "newmod")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subdir, "main.tf"),
+		[]byte("variable \"y\" { type = string }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "--quiet", "-m", "add new module")
+	return subdir
 }
 
 // projectFixtureForValidate builds a temp project where the parent
