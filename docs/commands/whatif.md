@@ -138,6 +138,8 @@ Plan-derived Breaking findings count toward the CI exit code in addition to Dire
 
 The DirectImpact list is NOT modified — it stays strictly the cross-validation result. Plan deltas appear under "API changes (context)" tagged with `[plan]` / 📋 so reviewers can tell the signal sources apart.
 
+**Stale `moved {}` block detection** is shared with `diff` (the two commands route through the same plan-walking helper). When the source declares `moved { from = X; to = Y }` AND the plan still shows X-as-delete + Y-as-create, the pair collapses into a single Informational entry inside the matching call's API-changes section. Both resource/data renames AND module-call renames are handled. See [`diff` § Stale `moved {}` block detection](diff.md#plan-enrichment) for the full behaviour — `whatif` inherits it by construction.
+
 ## Output formats
 
 `--format json` emits a per-call array with the gating signal under `direct_impact` and context under `api_changes`:

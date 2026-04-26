@@ -155,6 +155,8 @@ That turns "this change touches a count expression" into "this change destroys a
 
 Resources with no plan match leave `PlanInstances` empty. Possible reasons: count expanded to 0, plan is stale, or terraform didn't touch the resource.
 
+> **Note on moved blocks.** `diff` and `whatif` collapse stale `moved {}` blocks (source declares the rename but the plan still shows destroy + create) into a single Informational entry — including module-call renames. `statediff --enrich-with-plan` does NOT do that collapse: its enrichment is purely about correlating the static-side `AffectedResource` items with concrete plan instances (a different shape). Statediff's static side ALREADY recognises moved-block renames and lists them under "Renames (moved block handled)" with no exit-code impact, so the moved-block / stale-plan case is covered by the static analysis rather than the plan-enrichment path here.
+
 ## What it does NOT do
 
 - **Plan simulation.** Attribute-level diffs (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`) need provider schemas and expression evaluation — that's `terraform plan`'s job. `statediff` is a complementary, cheap, schema-free check that catches a different class of hazard than plan.

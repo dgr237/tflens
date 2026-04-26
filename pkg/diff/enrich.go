@@ -67,8 +67,10 @@ const SourcePlan = "plan"
 // hinting that the plan is stale and should be regenerated. (When the
 // plan correctly honours the moved block, terraform emits a no-op /
 // update at the new address rather than delete+create — those pass
-// through unchanged.) Currently scoped to resource/data renames;
-// module-call renames are more complex and deferred.
+// through unchanged.) Both resource/data renames AND module-call
+// renames are handled — module renames collapse the whole cluster
+// of nested resources into one entry with a count; partial matches
+// flow through normally.
 //
 // Returns the merged change list, sorted by (Kind, Subject) so the
 // output is deterministic and Breaking findings sort first regardless
@@ -121,8 +123,36 @@ func walkPlanChanges(p *plan.Plan, newProj *loader.Project, route func(moduleAdd
 	}
 	for _, m := range stale {
 		c := stalePlanMoveChange(m, projectEntities)
-		route(moduleAddressOf(m.To), c)
+		route(stalePlanMoveRouteAddress(m.Pair), c)
 	}
+}
+
+// stalePlanMoveRouteAddress returns the plan-style module address
+// that the stale-move entry should be routed under. For a resource/
+// data move that's the leading `module.X` portion of the To address;
+// for a module-call move (`moved { from = module.old; to = module.new }`)
+// the entry routes under the parent of `module.new` — the module
+// that DECLARES the moved block, not the renamed module itself —
+// because the moved {} declaration lives in the parent and the
+// reviewer expects to see it next to the parent's other findings.
+func stalePlanMoveRouteAddress(p movedPair) string {
+	if p.Kind == "module" {
+		return parentModuleAddress(p.To)
+	}
+	return moduleAddressOf(p.To)
+}
+
+// parentModuleAddress strips the trailing `module.<name>` segment
+// from a plan-style module address. Returns "" for a top-level
+// module (`module.X` → "" because the moved {} sits at the root).
+func parentModuleAddress(planAddress string) string {
+	stripped := stripIndices(planAddress)
+	parts := strings.Split(stripped, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	parts = parts[:len(parts)-2] // drop the trailing `module.<name>` pair
+	return strings.Join(parts, ".")
 }
 
 // EnrichResultsFromPlan is the per-module-aware variant of
@@ -518,20 +548,46 @@ func stripIndices(modulePath string) string {
 // module's path so they can be compared directly against plan
 // ResourceChange addresses.
 //
-// Currently scoped to resource/data renames — module-call renames
-// (`moved { from = module.old; to = module.new }`) shift the module
-// prefix on every nested resource, so detecting the corresponding
-// plan-side delete+create cluster requires per-resource walking.
-// Out of scope for the first cut.
+// Kind distinguishes:
+//
+//   - "resource" — `moved { from = aws_vpc.old; to = aws_vpc.new }`. The
+//     plan-side stale signature is one delete at From + one create at To.
+//   - "module" — `moved { from = module.old; to = module.new }`. The
+//     plan-side stale signature is N deletes whose addresses start with
+//     From + N creates whose addresses start with To, with matching
+//     "inner" suffixes (`module.old.aws_vpc.main` ↔
+//     `module.new.aws_vpc.main`, etc.).
+//
+// Indexed module moves (`moved { from = module.X[0]; to = module.X[1] }`)
+// aren't recognised by the source-side parser (only bare references
+// in from/to are accepted) so they don't appear here either.
 type movedPair struct {
 	From string
 	To   string
+	Kind string // "resource" or "module"
 }
 
-// buildMovedIndex collects every resource/data `moved {}` block in
-// the project. Module-call moves are skipped — they need different
-// matching machinery (every nested resource shifts prefix). Empty
-// when newProj is nil.
+// stalePlanMove records one detected stale-move event together with
+// the concrete plan addresses it covers. For a resource/data move
+// this is a single (delete, create) pair; for a module-call rename
+// it can cover N nested-resource pairs from the same parent
+// declaration.
+type stalePlanMove struct {
+	Pair    movedPair
+	Matches []stalePlanMatch
+}
+
+// stalePlanMatch is one paired (delete, create) plan ResourceChange
+// that belongs to a stale-move event. Addresses keep their original
+// indexes so renderers can show the precise instances the move
+// affects.
+type stalePlanMatch struct {
+	DeleteAddress string
+	CreateAddress string
+}
+
+// buildMovedIndex collects every `moved {}` block in the project
+// (resource/data and module-call kinds). Empty when newProj is nil.
 func buildMovedIndex(p *loader.Project) []movedPair {
 	if p == nil {
 		return nil
@@ -547,13 +603,19 @@ func buildMovedIndex(p *loader.Project) []movedPair {
 			fromAddr := entityIDToPlanAddress(from)
 			toAddr := entityIDToPlanAddress(to)
 			if fromAddr == "" || toAddr == "" {
-				continue // skip module-call moves and any unhandled kinds
+				continue // unhandled kind (variable / output / local)
+			}
+			kind := movedPairKind(from)
+			if kind != movedPairKind(to) {
+				// Mismatched kinds (resource ↔ module) — invalid in
+				// real Terraform but be defensive.
+				continue
 			}
 			if prefix != "" {
 				fromAddr = prefix + "." + fromAddr
 				toAddr = prefix + "." + toAddr
 			}
-			out = append(out, movedPair{From: fromAddr, To: toAddr})
+			out = append(out, movedPair{From: fromAddr, To: toAddr, Kind: kind})
 		}
 		return true
 	})
@@ -562,69 +624,147 @@ func buildMovedIndex(p *loader.Project) []movedPair {
 
 // entityIDToPlanAddress converts a canonical entity ID
 // (`resource.aws_vpc.main`, `data.aws_ami.latest`, `module.X`) to the
-// Terraform plan address form (`aws_vpc.main`, `data.aws_ami.latest`).
-// Returns "" for kinds that don't appear in plan resource_changes
-// addresses (variables, outputs, locals) or for module-call moves
-// (deferred — see movedPair docs).
+// Terraform plan address form (`aws_vpc.main`, `data.aws_ami.latest`,
+// `module.X`). Returns "" for kinds that don't appear in plan
+// resource_changes addresses (variables, outputs, locals).
 func entityIDToPlanAddress(entityID string) string {
 	switch {
 	case strings.HasPrefix(entityID, "resource."):
 		return entityID[len("resource."):]
 	case strings.HasPrefix(entityID, "data."):
 		return entityID
+	case strings.HasPrefix(entityID, "module."):
+		return entityID
 	}
 	return ""
 }
 
-// detectStalePlanMoves finds plan delete+create pairs whose addresses
-// match the From/To of a source-side moved block. Their existence
-// means the plan was generated BEFORE the moved block was added (or
-// the block didn't take effect for some reason) — in either case the
-// recommended action is "regenerate the plan".
+// movedPairKind returns "resource" or "module" based on the entity
+// ID's prefix. data sources are grouped with resources because the
+// plan-side stale signature is identical: one delete + one create at
+// the literal addresses.
+func movedPairKind(entityID string) string {
+	if strings.HasPrefix(entityID, "module.") {
+		return "module"
+	}
+	return "resource"
+}
+
+// detectStalePlanMoves finds plan delete + create combinations whose
+// addresses match a source-side moved block. Their existence means
+// the plan was generated BEFORE the moved block was added (or the
+// block didn't take effect for some reason) — in either case the
+// recommended action is "regenerate the plan."
 //
-// When the moved block IS being honoured by the plan, terraform emits
-// a no-op or update at the new address rather than delete+create —
-// those flow through the normal path unchanged.
-func detectStalePlanMoves(rcs []plan.ResourceChange, moved []movedPair) []movedPair {
+// Resource/data moves match a single (delete, create) pair at the
+// literal From/To addresses. Module-call moves match a CLUSTER:
+// every plan delete whose address starts with `From.` paired with a
+// plan create at the matching `To.<inner>` address. Partial matches
+// are tracked — only the matched halves are skipped from the normal
+// output, so unmatched deletes/creates inside a module-rename
+// cluster (e.g. a resource that was added during the same PR as the
+// rename) flow through the normal path as their own findings.
+//
+// When the moved block IS being honoured by the plan, terraform
+// emits a no-op or update at the new address rather than
+// delete+create — nothing matches and nothing collapses.
+func detectStalePlanMoves(rcs []plan.ResourceChange, moved []movedPair) []stalePlanMove {
 	if len(moved) == 0 {
 		return nil
 	}
-	deletes := map[string]bool{}
-	creates := map[string]bool{}
+	// Index plan changes by stripped address so module-rename matching
+	// works against indexed instances too. Keep the original (possibly
+	// indexed) address as the value — that's what renderers display.
+	deletes := map[string]string{} // stripped address → original address
+	creates := map[string]string{}
 	for _, rc := range rcs {
+		stripped := stripIndices(rc.Address)
 		switch {
 		case rc.Change.IsDelete():
-			deletes[rc.Address] = true
+			deletes[stripped] = rc.Address
 		case rc.Change.IsCreate():
-			creates[rc.Address] = true
+			creates[stripped] = rc.Address
 		}
 	}
-	var out []movedPair
+	var out []stalePlanMove
 	for _, m := range moved {
-		if deletes[m.From] && creates[m.To] {
-			out = append(out, m)
+		switch m.Kind {
+		case "module":
+			matches := matchModuleMove(m, deletes, creates)
+			if len(matches) > 0 {
+				out = append(out, stalePlanMove{Pair: m, Matches: matches})
+			}
+		default: // "resource"
+			delAddr, hasDel := deletes[m.From]
+			creAddr, hasCre := creates[m.To]
+			if hasDel && hasCre {
+				out = append(out, stalePlanMove{
+					Pair: m,
+					Matches: []stalePlanMatch{{
+						DeleteAddress: delAddr,
+						CreateAddress: creAddr,
+					}},
+				})
+			}
 		}
 	}
 	return out
 }
 
-// stalePlanMoveSkipSets returns the address sets used to suppress the
-// individual delete + create entries that the stale-move detector
-// will replace with a single hint. Lookups are O(1).
-func stalePlanMoveSkipSets(matches []movedPair) (deleteSkip, createSkip map[string]bool) {
+// matchModuleMove pairs plan deletes under `From.<inner>` with plan
+// creates under `To.<inner>` — the signature of a stale plan that
+// pre-dates a `moved { from = module.X; to = module.Y }` declaration.
+// Only inner addresses that exist on BOTH sides are returned;
+// unmatched halves (a delete with no create twin or vice versa) are
+// left out so they fall through to the normal output as their own
+// findings.
+func matchModuleMove(m movedPair, deletes, creates map[string]string) []stalePlanMatch {
+	fromPrefix := m.From + "."
+	toPrefix := m.To + "."
+	var out []stalePlanMatch
+	for delStripped, delAddr := range deletes {
+		if !strings.HasPrefix(delStripped, fromPrefix) {
+			continue
+		}
+		inner := delStripped[len(fromPrefix):]
+		creStripped := toPrefix + inner
+		creAddr, ok := creates[creStripped]
+		if !ok {
+			continue
+		}
+		out = append(out, stalePlanMatch{
+			DeleteAddress: delAddr,
+			CreateAddress: creAddr,
+		})
+	}
+	// Sort for deterministic output — map iteration order is random.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].DeleteAddress < out[j].DeleteAddress
+	})
+	return out
+}
+
+// stalePlanMoveSkipSets returns the address sets used to suppress
+// the individual delete + create entries that the stale-move
+// detector will replace with collapsed Informational entries.
+// Walks every Match across every detected move so module-rename
+// clusters skip all their N halves, not just one.
+func stalePlanMoveSkipSets(matches []stalePlanMove) (deleteSkip, createSkip map[string]bool) {
 	deleteSkip = map[string]bool{}
 	createSkip = map[string]bool{}
 	for _, m := range matches {
-		deleteSkip[m.From] = true
-		createSkip[m.To] = true
+		for _, mm := range m.Matches {
+			deleteSkip[mm.DeleteAddress] = true
+			createSkip[mm.CreateAddress] = true
+		}
 	}
 	return deleteSkip, createSkip
 }
 
 // shouldSkipForStaleMove reports whether the given ResourceChange is
 // the delete or create half of a detected stale-move pair, in which
-// case the main loop omits it (the pair will be replaced with a
-// single Informational entry by stalePlanMoveChange).
+// case the main loop omits it (it'll be replaced with a single
+// Informational entry by stalePlanMoveChange).
 func shouldSkipForStaleMove(rc plan.ResourceChange, deleteSkip, createSkip map[string]bool) bool {
 	switch {
 	case rc.Change.IsDelete():
@@ -636,26 +776,52 @@ func shouldSkipForStaleMove(rc plan.ResourceChange, deleteSkip, createSkip map[s
 }
 
 // stalePlanMoveChange produces a single Informational Change for a
-// detected stale-move pair: source declares the rename, plan still
-// shows destroy+create. NewPos points at the destination entity (when
-// found in the source-side index) so the renderer can link to the
-// `moved` block's resource declaration.
-func stalePlanMoveChange(m movedPair, projectEntities map[string]entityRef) Change {
-	// Lookup the destination entity by the To address. The To address
-	// is plan-form (`module.X.aws_vpc.new`); we need to convert it to
-	// (modulePath, entityID) for the index.
-	modulePath, entityID := splitPlanAddress(m.To)
+// detected stale-move event. Resource/data moves get a one-line
+// "regenerate the plan" hint with the from/to identifiers; module
+// moves get the same hint plus a count of how many nested resources
+// the rename would have covered (so the reviewer can sanity-check
+// the scope before regenerating).
+//
+// NewPos points at the destination entity when found in the source-
+// side index, so the markdown renderer can link to the new module
+// call (resource/data) or the new module call's declaration (module).
+func stalePlanMoveChange(m stalePlanMove, projectEntities map[string]entityRef) Change {
+	pair := m.Pair
+	modulePath, entityID := splitPlanAddress(pair.To)
 	pos := projectEntities[matchKey(modulePath, entityID)].Pos
+
+	if pair.Kind == "module" {
+		return Change{
+			Kind:    Informational,
+			Subject: fmt.Sprintf("%s → %s", pair.From, pair.To),
+			Detail: fmt.Sprintf(
+				"source declares `moved { from = %s; to = %s }` but plan still shows %d nested %s being recreated under the new path — regenerate the plan to honour the moved block",
+				planAddressIdentifier(pair.From), planAddressIdentifier(pair.To),
+				len(m.Matches), pluralResources(len(m.Matches)),
+			),
+			NewPos: pos,
+			Source: SourcePlan,
+		}
+	}
 	return Change{
 		Kind:    Informational,
-		Subject: fmt.Sprintf("%s → %s", m.From, m.To),
+		Subject: fmt.Sprintf("%s → %s", pair.From, pair.To),
 		Detail: fmt.Sprintf(
 			"source declares `moved { from = %s; to = %s }` but plan still shows destroy + recreate — regenerate the plan to honour the moved block",
-			planAddressIdentifier(m.From), planAddressIdentifier(m.To),
+			planAddressIdentifier(pair.From), planAddressIdentifier(pair.To),
 		),
 		NewPos: pos,
 		Source: SourcePlan,
 	}
+}
+
+// pluralResources picks "resource" or "resources" for the count.
+// Tiny helper kept local so the message construction stays readable.
+func pluralResources(n int) string {
+	if n == 1 {
+		return "resource"
+	}
+	return "resources"
 }
 
 // planAddressIdentifier returns the local resource address (without
