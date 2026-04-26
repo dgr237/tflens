@@ -4,6 +4,12 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+### Added
+
+- **`tflens whatif --enrich-with-plan plan.json`** — plan enrichment is no longer diff-only. Plan-derived findings whose module address matches a call's pair key land inside that call's `APIChanges`, alongside the static-side API diff for the same call. Plan rows whose module address has no matching call are dropped silently — whatif is per-call only; root-level coverage stays with `tflens diff --enrich-with-plan`. Plan-derived Breaking findings are added to the existing DirectImpact total so the CI exit code reflects them too — a force-new attribute change in a child IS a consumer concern even when the parent's USE cross-validates cleanly. New `diff.EnrichWhatifsFromPlan(calls, plan, project)` entry point. The shared per-rc loop (no-op + stale-move skipping, source-position attribution) was extracted into a new `walkPlanChanges(p, project, route)` helper that all three of `EnrichFromPlan` / `EnrichResultsFromPlan` / `EnrichWhatifsFromPlan` now compose with their own routing strategy.
+
+- **`tflens statediff --enrich-with-plan plan.json`** — the higher-value half of the change. Statediff's static analysis flags resources whose `count` / `for_each` expression depends on a changed local or variable default — the "this CAN recompute" signal. Plan enrichment pairs that with the plan's "here are the N concrete instances that WILL be affected": each `AffectedResource` gets a `PlanInstances` list with per-instance plan addresses (including count/for_each indices) and the action list terraform will take (`["update"]`, `["delete", "create"]`, etc.). Turns "this change touches a count expression" into "this change destroys aws_subnet.foo[0], updates aws_subnet.foo[1] in place, and creates aws_subnet.foo[2]" — much more actionable for the reviewer. New `(*statediff.Result).EnrichWithPlan(plan)` method; `cmd/statediff.go` gains the `--enrich-with-plan` flag. New `Mode string` field on `AffectedResource` (`"managed"` / `"data"`, with `omitempty` so existing JSON consumers aren't broken) — needed to reconstruct the plan-side address shape correctly for data sources (which carry a `data.` prefix). New `PlanInstance` type + `PlanInstances []PlanInstance` field on `AffectedResource`. Console renderer adds a `• plan: <address> [actions]` line under each affected resource; markdown renderer adds a `📋 plan:` row.
+
 ## [0.14.0] — 2026-04-26
 
 ### Added

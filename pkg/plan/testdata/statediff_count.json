@@ -1,0 +1,31 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.0",
+  "resource_changes": [
+    {
+      "address": "aws_vpc.main[0]",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "main",
+      "index": 0,
+      "change": {
+        "actions": ["delete"],
+        "before": {"cidr_block": "10.0.0.0/16"},
+        "after": null,
+        "replace_paths": []
+      }
+    },
+    {
+      "address": "aws_vpc.unrelated",
+      "mode": "managed",
+      "type": "aws_vpc",
+      "name": "unrelated",
+      "change": {
+        "actions": ["update"],
+        "before": {"tags": {"Env": "dev"}},
+        "after": {"tags": {"Env": "prod"}},
+        "replace_paths": []
+      }
+    }
+  ]
+}

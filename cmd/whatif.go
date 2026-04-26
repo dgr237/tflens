@@ -9,6 +9,7 @@ import (
 	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/diff"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/plan"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -52,6 +53,8 @@ The ref defaults to 'auto', which resolves to @{upstream} → origin/HEAD
 func init() {
 	whatifCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
+	whatifCmd.Flags().String("enrich-with-plan", "",
+		"path to a `terraform show -json` plan file. Plan-derived attribute deltas (force-new attribute changes, replaces, deletes) get layered onto each call's API-changes section so reviewers see the full picture per call. Plan rows whose module address has no matching call are dropped (whatif is per-call only — use `tflens diff --enrich-with-plan` for root-level coverage). Plan-derived Breaking findings count toward the CI exit code in addition to DirectImpact.")
 	rootCmd.AddCommand(whatifCmd)
 }
 
@@ -69,6 +72,19 @@ func runWhatifRef(s config.Settings) error {
 	if filtered {
 		return fmt.Errorf("no module call named %q differs between %s and the path (or call does not exist)", s.OnlyName, s.BaseRef)
 	}
+	if s.PlanPath != "" {
+		p, err := plan.Load(s.PlanPath)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		calls = diff.EnrichWhatifsFromPlan(calls, p, newProj)
+		// Plan-derived Breaking findings count toward the CI gate
+		// in addition to DirectImpact: a force-new attribute change
+		// in a child IS a consumer concern even when the parent's
+		// USE doesn't break (the resource will physically rebuild).
+		totalImpact = countWhatifBreaking(calls)
+	}
 	render.New(s).Whatif(s.BaseRef, s.Path, calls)
 	if totalImpact > 0 {
 		// os.Exit skips the deferred cleanup, so run it explicitly
@@ -78,4 +94,24 @@ func runWhatifRef(s config.Settings) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+// countWhatifBreaking sums the gating signals across every call:
+// DirectImpact entries (cross-validation failures from the static
+// side) plus plan-derived Breaking findings inside APIChanges. Used
+// after EnrichWhatifsFromPlan to refresh the CI exit-code count so
+// plan-only Breaking changes (e.g. a child resource's force-new
+// attribute) still gate the merge even when the parent's USE
+// cross-validates cleanly.
+func countWhatifBreaking(calls []diff.WhatifResult) int {
+	n := 0
+	for _, r := range calls {
+		n += len(r.DirectImpact)
+		for _, c := range r.APIChanges {
+			if c.Kind == diff.Breaking && c.Source == diff.SourcePlan {
+				n++
+			}
+		}
+	}
+	return n
 }

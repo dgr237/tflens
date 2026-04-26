@@ -8,6 +8,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/plan"
 	"github.com/dgr237/tflens/pkg/render"
 	"github.com/dgr237/tflens/pkg/statediff"
 	"github.com/dgr237/tflens/pkg/tfstate"
@@ -53,6 +54,8 @@ func init() {
 	statediffCmd.Flags().String("ref", config.RefAutoKeyword,
 		"git ref to compare against (branch, tag, SHA, …); 'auto' detects @{upstream} → origin/HEAD → main → master")
 	statediffCmd.Flags().String("state", "", "optional Terraform state v4 JSON file for instance cross-reference")
+	statediffCmd.Flags().String("enrich-with-plan", "",
+		"path to a `terraform show -json` plan file. For each AffectedResource flagged by the static analysis, attaches the per-instance actions terraform will actually take ({delete, create}, [update], etc.) so reviewers see 'this change replaces these N concrete instances' instead of just 'this change touches a count expression'.")
 	rootCmd.AddCommand(statediffCmd)
 }
 
@@ -68,6 +71,14 @@ func runStatediff(s config.Settings) error {
 	}
 	result := statediff.Analyze(oldProj, newProj, state)
 	result.BaseRef, result.Path = s.BaseRef, s.Path
+	if s.PlanPath != "" {
+		p, err := plan.Load(s.PlanPath)
+		if err != nil {
+			cleanup()
+			return err
+		}
+		result.EnrichWithPlan(p)
+	}
 	render.New(s).Statediff(&result)
 	if result.FlaggedCount() > 0 {
 		// os.Exit skips the deferred cleanup, so run it explicitly

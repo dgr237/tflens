@@ -167,6 +167,9 @@ func (m *MarkdownRenderer) Statediff(result *statediff.Result) {
 					for _, inst := range a.StateInstances {
 						fmt.Fprintf(m.W, "  - state instance: `%s`\n", inst)
 					}
+					for _, pi := range a.PlanInstances {
+						fmt.Fprintf(m.W, "  - 📋 plan: `%s` — %s\n", pi.Address, strings.Join(pi.Actions, ", "))
+					}
 				}
 				fmt.Fprintln(m.W)
 			}

@@ -454,6 +454,72 @@ func TestEnrichResultsFromPlanNilNoop(t *testing.T) {
 	}
 }
 
+// TestEnrichWhatifsFromPlanRoutesIntoAPIChanges confirms plan-derived
+// findings whose module address matches a call's pair key land
+// inside that call's APIChanges, while plan rows with no matching
+// call are dropped silently. (Whatif is per-call only — root-level
+// rows have no home there.)
+func TestEnrichWhatifsFromPlanRoutesIntoAPIChanges(t *testing.T) {
+	calls := []diff.WhatifResult{
+		{Pair: loader.ModuleCallPair{Key: "network", LocalName: "network"}},
+		{Pair: loader.ModuleCallPair{Key: "network.subnets", LocalName: "subnets"}},
+	}
+	p := planFixture(t, "nested_module.json")
+	got := diff.EnrichWhatifsFromPlan(calls, p, nil)
+
+	// network pair gets the vpc attribute delta from update on
+	// module.network.aws_vpc.main.
+	if n := len(got[0].APIChanges); n != 1 {
+		t.Fatalf("network APIChanges len = %d, want 1; got %+v", n, got[0].APIChanges)
+	}
+	if !strings.HasPrefix(got[0].APIChanges[0].Subject, "module.network.aws_vpc.main") {
+		t.Errorf("network APIChanges[0] routed wrong row: %q", got[0].APIChanges[0].Subject)
+	}
+	// network.subnets pair gets the create summary for the new subnet.
+	if n := len(got[1].APIChanges); n != 1 {
+		t.Fatalf("subnets APIChanges len = %d, want 1; got %+v", n, got[1].APIChanges)
+	}
+	if !strings.Contains(got[1].APIChanges[0].Detail, "plan creates") {
+		t.Errorf("subnets APIChanges[0] routed wrong row: %+v", got[1].APIChanges[0])
+	}
+	// DirectImpact untouched on every call — plan deltas don't
+	// constitute cross-validation failures.
+	for i, r := range got {
+		if len(r.DirectImpact) != 0 {
+			t.Errorf("call[%d] DirectImpact polluted by enrichment: %+v", i, r.DirectImpact)
+		}
+	}
+}
+
+// TestEnrichWhatifsFromPlanDropsUnmatched confirms plan rows for
+// modules that don't exist as calls are silently dropped (whatif is
+// per-call only) — they don't blow up, they don't show up in some
+// other call's APIChanges, and they don't leak into DirectImpact.
+func TestEnrichWhatifsFromPlanDropsUnmatched(t *testing.T) {
+	// No calls — every plan row is unmatched.
+	var calls []diff.WhatifResult
+	p := planFixture(t, "nested_module.json")
+	got := diff.EnrichWhatifsFromPlan(calls, p, nil)
+	if len(got) != 0 {
+		t.Errorf("calls should remain empty; got %+v", got)
+	}
+}
+
+// TestEnrichWhatifsFromPlanNilNoop pins the early-return contract:
+// nil plan returns the input verbatim.
+func TestEnrichWhatifsFromPlanNilNoop(t *testing.T) {
+	calls := []diff.WhatifResult{
+		{
+			Pair:       loader.ModuleCallPair{Key: "x"},
+			APIChanges: []diff.Change{{Subject: "preserved"}},
+		},
+	}
+	got := diff.EnrichWhatifsFromPlan(calls, nil, nil)
+	if len(got) != 1 || len(got[0].APIChanges) != 1 || got[0].APIChanges[0].Subject != "preserved" {
+		t.Errorf("nil plan should leave calls unchanged; got %+v", got)
+	}
+}
+
 // TestEnrichFromPlanRedactsSensitiveAndUnknown pins the renderer
 // substitution behaviour: a plan touching a sensitive attribute
 // must NOT spill the value into the Detail (it would land in CI

@@ -24,6 +24,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/plan"
 	"github.com/dgr237/tflens/pkg/tfstate"
 )
 
@@ -100,13 +101,40 @@ type SensitiveChange struct {
 // AffectedResource is one resource expansion (count / for_each) whose
 // underlying expression reaches a SensitiveChange. StateInstances is
 // populated when Analyze was given a state — these are the concrete
-// addresses currently tracked in state.
+// addresses currently tracked in state. PlanInstances is populated
+// by Result.EnrichWithPlan when a terraform plan JSON is supplied —
+// these are the concrete plan-side actions terraform will take.
+//
+// Mode distinguishes managed resources ("managed") from data sources
+// ("data"). Required to reconstruct the plan-side address shape for
+// data sources (which carry a `data.` prefix in plan addresses).
+// Older callers that don't populate Mode get the zero value, omitted
+// from JSON via omitempty so existing wire-format consumers aren't
+// broken.
 type AffectedResource struct {
-	Module         string   `json:"module"`
-	Type           string   `json:"type"`
-	Name           string   `json:"name"`
-	MetaArg        string   `json:"meta_arg"` // "count" or "for_each"
-	StateInstances []string `json:"state_instances,omitempty"`
+	Module         string         `json:"module"`
+	Type           string         `json:"type"`
+	Name           string         `json:"name"`
+	Mode           string         `json:"mode,omitempty"` // "managed" or "data"
+	MetaArg        string         `json:"meta_arg"`       // "count" or "for_each"
+	StateInstances []string       `json:"state_instances,omitempty"`
+	PlanInstances  []PlanInstance `json:"plan_instances,omitempty"`
+}
+
+// PlanInstance is one concrete plan ResourceChange that maps to an
+// AffectedResource. Address is the full plan address (including any
+// count/for_each index, so each instance is distinguishable);
+// Actions is the plan's actions list — `["update"]` for in-place,
+// `["delete", "create"]` for replace, etc.
+//
+// Used by `tflens statediff --enrich-with-plan`: the static side
+// flagged a count/for_each expression as touched by a sensitive
+// change; the plan side confirms which concrete instances WILL be
+// affected (not just COULD be). Pairs the "may break" signal with
+// the "will break" signal so reviewers see both at once.
+type PlanInstance struct {
+	Address string   `json:"address"`
+	Actions []string `json:"actions"`
 }
 
 // Address returns the resource's Terraform-style address (without
@@ -135,14 +163,117 @@ func Analyze(oldProj, newProj *loader.Project, state *tfstate.State) Result {
 	return result
 }
 
+// EnrichWithPlan augments the Result with concrete plan-derived
+// information. For each AffectedResource, looks up matching plan
+// ResourceChanges (by reconstructed plan address — module.X.Y.type.name,
+// with the data. prefix when applicable) and populates PlanInstances
+// with the per-instance actions terraform will take.
+//
+// The motivation: statediff's static analysis flags resources whose
+// count/for_each expression depends on a changed local/variable —
+// the "this CAN recompute" signal. The plan tells you which concrete
+// instances WILL recompute. Pairing them turns "the change touches
+// these N resources" into "the change replaces aws_subnet.foo[0],
+// updates aws_subnet.foo[1] in place, and creates aws_subnet.foo[2]"
+// — a much more actionable summary for the reviewer.
+//
+// AffectedResources with no plan match leave PlanInstances nil.
+// Possible reasons: the count expanded to 0 in the new plan, the
+// resource isn't in the plan at all, or the plan is stale. Renderers
+// can choose to flag this as a discrepancy.
+//
+// Index handling: plan addresses with `[0]` / `["us-east-1"]`
+// indices on the resource are kept VERBATIM in PlanInstance.Address
+// so each instance is visible. Module-path indices are stripped on
+// the lookup side because the source-side AffectedResource has only
+// the dotted module path with no index.
+//
+// Nil-safe on both sides: nil result or nil plan is a no-op.
+func (r *Result) EnrichWithPlan(p *plan.Plan) {
+	if r == nil || p == nil {
+		return
+	}
+	byStripped := map[string][]plan.ResourceChange{}
+	for _, rc := range p.ResourceChanges {
+		if rc.Change.IsNoOp() {
+			continue
+		}
+		byStripped[stripIndices(rc.Address)] = append(byStripped[stripIndices(rc.Address)], rc)
+	}
+	for sci := range r.SensitiveChanges {
+		sc := &r.SensitiveChanges[sci]
+		for ari := range sc.AffectedResources {
+			ar := &sc.AffectedResources[ari]
+			expected := affectedResourceFullAddress(*ar)
+			for _, rc := range byStripped[expected] {
+				ar.PlanInstances = append(ar.PlanInstances, PlanInstance{
+					Address: rc.Address,
+					Actions: append([]string(nil), rc.Change.Actions...),
+				})
+			}
+		}
+	}
+}
+
+// affectedResourceFullAddress reconstructs the Terraform plan address
+// shape for an AffectedResource so it can be matched against the
+// plan's ResourceChanges. statediff stores Module as a dotted path
+// without `module.` prefixes (e.g. "vpc.subnets") — the plan uses
+// fully-prefixed addresses (e.g. "module.vpc.module.subnets"), so
+// we re-add the prefixes here. Data sources gain the `data.` infix.
+func affectedResourceFullAddress(ar AffectedResource) string {
+	var modPrefix string
+	if ar.Module != "" {
+		parts := strings.Split(ar.Module, ".")
+		prefixed := make([]string, 0, 2*len(parts))
+		for _, p := range parts {
+			prefixed = append(prefixed, "module", p)
+		}
+		modPrefix = strings.Join(prefixed, ".")
+	}
+	base := ar.Type + "." + ar.Name
+	if ar.Mode == "data" {
+		base = "data." + base
+	}
+	if modPrefix == "" {
+		return base
+	}
+	return modPrefix + "." + base
+}
+
+// stripIndices removes count/for_each `[idx]` suffixes from any
+// segment of a Terraform address. Duplicated from pkg/diff/enrich.go's
+// helper rather than imported to avoid a statediff → diff dependency
+// just for this single function.
+func stripIndices(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				b.WriteByte(s[i])
+			}
+		}
+	}
+	return b.String()
+}
+
 // formatEntityAddress turns "resource.aws_vpc.main" + module prefix
 // into a Terraform-style address "module.vpc.aws_vpc.main". Returns
 // the raw ID if the shape is unfamiliar.
 func formatEntityAddress(modPath, entityID string) string {
-	addr := entityID
-	if strings.HasPrefix(entityID, "resource.") {
-		addr = strings.TrimPrefix(entityID, "resource.")
-	}
+	addr, _ := strings.CutPrefix(entityID, "resource.")
 	if modPath == "" {
 		return addr
 	}
@@ -384,10 +515,15 @@ func flagResource(
 			if !triggered[cand.entityID()] {
 				continue
 			}
+			mode := "managed"
+			if e.Kind == analysis.KindData {
+				mode = "data"
+			}
 			affected := AffectedResource{
 				Module:  modPath,
 				Type:    e.Type,
 				Name:    e.Name,
+				Mode:    mode,
 				MetaArg: metaArg.name,
 			}
 			if state != nil {
