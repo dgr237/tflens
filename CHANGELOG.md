@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-04-26
+
 ### Added
 
 - **`tflens diff` and `tflens whatif` (with `--enrich-with-plan`) — module-call rename detection in `moved {}` blocks.** Completes the moved-block awareness story. When source declares `moved { from = module.old; to = module.new }` AND the plan still shows ALL the old module's nested resources being destroyed plus the new module's nested resources being created, the entire cluster collapses into ONE Informational entry naming the module rename — with a count of nested resources so the reviewer can sanity-check the scope before regenerating. Previously module-call moves were silently ignored (they shift the prefix on every nested resource so the matching machinery is different from resource/data moves). Both `diff` and `whatif` benefit because they share the underlying `walkPlanChanges` helper. (`statediff --enrich-with-plan` is unchanged — its enrichment shape is different and its static-side analysis already recognises moved-block renames separately under "Renames (moved block handled).") New `Kind` field on the internal `movedPair` distinguishes resource/data moves from module moves; new `stalePlanMove` + `stalePlanMatch` types carry the matched (delete, create) pairs so renderer + skip-set machinery can suppress every half. New `matchModuleMove` helper pairs plan deletes under `From.<inner>` with plan creates under `To.<inner>` — partial matches are honest: a resource deleted from `module.old` with no matching create under `module.new` (e.g. removed during the same PR as the rename) flows through the normal path as its own finding rather than being silently swept under the move-collapse rug. Index-aware: indexed plan addresses (`module.regions["us-east-1"].aws_vpc.main`) match against the index-stripped form so the cluster detection works against `for_each` / `count` instances too.
@@ -271,7 +273,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.15.2...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/dgr237/tflens/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/dgr237/tflens/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/dgr237/tflens/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/dgr237/tflens/compare/v0.14.0...v0.15.0
