@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest a new check, flag, output mode, or anything else
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about how to make tflens better.
+
+        **Scope reminder:** tflens is a static, schema-free Terraform analyser focused on change-impact detection across refs. See [docs/comparison.md](https://github.com/dgr237/tflens/blob/main/docs/comparison.md) for what tflens deliberately doesn't try to do (security posture → Checkov; provider-rule linting → TFLint; behaviour preview → terraform plan). Features inside that scope are very welcome; features outside it usually aren't a good fit.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The user-facing situation, not the proposed solution. "I'm trying to X but tflens does Y" is the right shape.
+      placeholder: "When I rename a module call, the diff reports both a removed and added module — I'd like it to be recognised as a rename."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape (optional)
+      description: If you have a concrete idea of what the fix or feature would look like — flag, check, output format, etc. — describe it here. Skip if you'd rather discuss the problem first.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workarounds
+    attributes:
+      label: Existing workarounds
+      description: What are you doing today to work around the missing feature? (Even "manually reviewing every PR diff" is useful context.)
+    validations:
+      required: false
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: Do other tools (TFLint, Checkov, terraform-docs, etc.) solve this? How? Links + brief notes welcome.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: subcommand
+    attributes:
+      label: Which subcommand would this affect?
+      multiple: true
+      options:
+        - validate
+        - diff
+        - whatif
+        - statediff
+        - export
+        - tracked attributes (# tflens:track)
+        - GitHub Action wrapper
+        - new subcommand
+        - cross-cutting / not sure
+    validations:
+      required: false
