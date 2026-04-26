@@ -1,6 +1,6 @@
 # Command reference
 
-Per-command documentation for `tflens`. New to the tool? Start with [Getting started](../getting-started.md).
+Per-command documentation for `tflens`. New to the tool? Start with [Getting started](../getting-started.md). Comparing tflens against other tools? See [tflens vs other Terraform tools](../comparison.md).
 
 ## Comparison commands (work against a git ref)
 

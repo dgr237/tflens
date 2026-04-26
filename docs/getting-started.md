@@ -167,5 +167,6 @@ Findings get posted as a sticky PR comment (re-runs edit in place), appended to 
 
 - **[`docs/commands/`](commands/)** — full per-command reference with examples and CI patterns
 - **[`docs/commands/tracked-attributes.md`](commands/tracked-attributes.md)** — the marker, the indirection rules, the cross-module flow
+- **[`docs/comparison.md`](comparison.md)** — tflens vs TFLint / Checkov / Terrascan / `terraform validate` / `terraform plan`. Where each tool fits and what to run alongside.
 - **[main README — Module resolution](../README.md#module-resolution)** — how `source = "..."` resolves, private registries, the cache
 - **[main README — Fundamental limitations](../README.md#fundamental-limitations)** — what tflens deliberately doesn't do
