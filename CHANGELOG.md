@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-04-26
+
 ### Added
 
 - **`tflens diff --enrich-with-plan` — sensitive value redaction.** Plan attributes flagged via `before_sensitive` / `after_sensitive` (anything that flowed through a sensitive variable, sensitive output, or `sensitive = true` resource attribute) now render as `(sensitive)` instead of the raw value. Without this fix, a plan touching e.g. an RDS password would write the password into CI logs the moment a reviewer ran `tflens diff --enrich-with-plan` against the PR. New `BeforeSensitive`/`AfterSensitive` fields on `pkg/plan.AttrDelta`; `pkg/plan` walker drills the sensitive-shadow trees in parallel with the data so per-leaf flags are exact even when the shadow has structured content. Subtree-wide sensitive markers (the entire structured value is sensitive — e.g. an `aws_secretsmanager_secret_version.secret_string` map) emit a single `(sensitive)` row at the subtree level rather than descending into placeholder children. `pkg/diff/enrich.go`'s renderer substitutes the marker before the value reaches Detail, so no renderer downstream can accidentally leak it.
@@ -226,7 +228,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/dgr237/tflens/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/dgr237/tflens/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dgr237/tflens/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dgr237/tflens/compare/v0.9.1...v0.10.0
