@@ -44,6 +44,15 @@ type TFType struct {
 	// precise cty type isn't available. Used by pkg/diff to run
 	// cty.Convert-based assignability checks.
 	Cty cty.Type
+
+	// Defaults is the recursive per-attribute default tree returned by
+	// typeexpr.TypeConstraintWithDefaults — non-nil only on TFTypes
+	// produced by ParseTypeExpr from a type constraint that uses the
+	// two-arg `optional(T, default)` form. Walked by pkg/render to emit
+	// the variable_type_defaults field on the export. Only set on the
+	// root TFType (the top of the type constraint), not on nested Elem
+	// / Fields / Elems — the nesting is reflected in Defaults.Children.
+	Defaults *typeexpr.Defaults
 }
 
 // HasCty reports whether this TFType carries a precise underlying cty.Type
@@ -123,12 +132,25 @@ func (m *Module) TypeErrors() []TypeCheckError {
 // ParseTypeExpr interprets the value of a variable block's "type" attribute
 // and returns the corresponding TFType. Unrecognised expressions yield a
 // TFType with Kind = TypeUnknown.
+//
+// Uses TypeConstraintWithDefaults rather than TypeConstraint so the
+// two-arg `optional(T, default)` form parses cleanly — TypeConstraint
+// errors on the second argument and would mark the entire variable type
+// as Unknown. The returned Defaults are discarded (per-attribute type
+// defaults are a separate concept from variable-level `default = ...`
+// and aren't surfaced today); the optional-attribute markers are
+// preserved on the returned cty.Type so cty/json.MarshalType emits
+// them as the third element of the object tuple.
 func ParseTypeExpr(expr hclsyntax.Expression) *TFType {
-	t, diags := typeexpr.TypeConstraint(expr)
+	t, defs, diags := typeexpr.TypeConstraintWithDefaults(expr)
 	if diags.HasErrors() {
 		return &TFType{Kind: TypeUnknown}
 	}
-	return ctyToTFType(t)
+	out := ctyToTFType(t)
+	if out != nil {
+		out.Defaults = defs
+	}
+	return out
 }
 
 // ctyToTFType maps a cty.Type into the internal TFType representation. The
@@ -422,7 +444,7 @@ func checkDefaultConvertible(e Entity, typeExpr hclsyntax.Expression) *TypeCheck
 	if e.DefaultExpr == nil || typeExpr == nil {
 		return nil
 	}
-	declared, diags := typeexpr.TypeConstraint(typeExpr)
+	declared, _, diags := typeexpr.TypeConstraintWithDefaults(typeExpr)
 	if diags.HasErrors() {
 		return nil
 	}

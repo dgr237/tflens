@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.4.0-prototype",
+  "schema_version": "0.7.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "nested_blocks_eks",
@@ -10,6 +10,7 @@
         {
           "name": "cluster_name",
           "type": "string",
+          "variable_type": "string",
           "has_default": true,
           "default": {
             "text": "\"prod-eks\"",
@@ -31,6 +32,7 @@
         {
           "name": "k8s_version",
           "type": "string",
+          "variable_type": "string",
           "has_default": true,
           "default": {
             "text": "\"1.31\"",

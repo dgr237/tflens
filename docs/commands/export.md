@@ -43,7 +43,7 @@ tflens export .
 
 ```json
 {
-  "schema_version": "0.4.0-prototype",
+  "schema_version": "0.7.0-prototype",
   "_experimental": true,
   "root": {
     "module": {
@@ -85,8 +85,8 @@ tflens export .
   Tracked-attribute records (`# tflens:track` markers) emit only `expression_text` — they're diff-machinery, not converter input, so the text-only shape is appropriate.
 
 - **Per module:**
-  - **Variables** — parsed type + default expression + sensitivity flags + structured `validations` list (each with `condition` and optional `error_message` as expressions).
-  - **Outputs** — value expression + sensitivity + `preconditions` / `postconditions` lists.
+  - **Variables** — parsed type (both the friendly `type: "map(string)"` rendering and the structural `variable_type: ["map", "string"]` shape that mirrors `cty/json`'s type encoding, so converters building a type tree never have to re-parse the friendly form or fall back to the default value's runtime type; for object attributes declared `optional(T, default)`, a sibling `variable_type_defaults` tree carries the per-attribute default values keyed by `values` / `attrs` / `element`) + default expression + sensitivity flags + `description` (when declared as a string literal) + structured `validations` list (each with `condition` and optional `error_message` as expressions).
+  - **Outputs** — value expression + sensitivity + `description` (when declared as a string literal) + `preconditions` / `postconditions` lists.
   - **Resources + data sources** — every meta-arg + per-attribute map + recursive `blocks` map for nested blocks like EKS's `vpc_config { ... }` / `encryption_config { provider { key_arn = ... } }`. Repeated blocks (`ingress { ... } × N`) come back as a list of instances in source order. **`dynamic_blocks` map** alongside `blocks` for `dynamic "name" { for_each = ..., iterator = ..., content { ... } }` constructs — for_each, iterator name, and recursive content body all surfaced. **`preconditions` / `postconditions` lists** with full condition + error_message expressions.
   - **Locals** — value expression with `evaluated_value` when the curated stdlib resolves it.
   - **Module calls** — source, version, count/for_each, full argument map.

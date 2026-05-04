@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
@@ -31,6 +32,32 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
+// 0.7.0-prototype adds ExportVariable.VariableTypeDefaults: a recursive
+// tree of the per-attribute default values declared via the two-arg
+// `optional(T, default)` form. The variable_type field already encodes
+// *which* attributes are optional (third element of the object tuple);
+// this new field gives consumers the corresponding default values so
+// they can fill missing fields when generating downstream schemas.
+// Pure addition — pruned when no defaults exist anywhere in the type
+// tree, so existing fixtures without optional defaults round-trip
+// unchanged apart from the schema bump.
+//
+// 0.6.0-prototype adds ExportVariable.VariableType: the *declared* type
+// constraint encoded as cty/json's structural shape (`"string"`,
+// `["map","string"]`, `["list",["object",{...}]]`, …). Sibling to the
+// existing friendly Type ("map(string)") so consumers building a type
+// tree (kro RGD schemas, Crossplane XRDs, Pulumi component schemas)
+// don't have to re-parse the friendly form. Crucial when a default
+// like `{}` would otherwise lose its declared shape: the runtime
+// type of the empty literal is `object({})`, but the declared type
+// might be `map(string)` or `list(object({...}))`. Pure addition.
+//
+// 0.5.0-prototype adds variable / output `description` strings as a
+// top-level field on ExportVariable and ExportOutput. Only emitted
+// when the source declared a constant-string description (omitempty
+// drops it otherwise), so the field is purely additive — every prior
+// 0.4.0 fixture round-trips unchanged.
+//
 // 0.4.0-prototype closes the last two "still deferred" items from
 // the prototype's documented gap list:
 //
@@ -63,7 +90,7 @@ import (
 // wherever an HCL expression appears in the export. Schema bumped
 // from 0.1.0-prototype because the *_text string fields were
 // removed in favour of nested objects.
-const ExportSchemaVersion = "0.4.0-prototype"
+const ExportSchemaVersion = "0.7.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -94,19 +121,62 @@ type ExportModule struct {
 }
 
 type ExportVariable struct {
-	Name        string                 `json:"name"`
-	Type        string                 `json:"type,omitempty"`
-	HasDefault  bool                   `json:"has_default"`
-	Default     *ExportExpression      `json:"default,omitempty"`
-	Sensitive   bool                   `json:"sensitive,omitempty"`
-	Ephemeral   bool                   `json:"ephemeral,omitempty"`
-	Nullable    bool                   `json:"nullable"`
-	Validations []ExportConditionBlock `json:"validations,omitempty"`
-	Location    string                 `json:"location,omitempty"`
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+	// VariableType is the *declared* type constraint encoded in the same
+	// shape cty/json uses for value types — `"string"`, `["map","string"]`,
+	// `["list",["object",{...}]]`, etc. Sibling to Type (the friendly
+	// "map(string)" rendering) so consumers building a type tree don't
+	// have to re-parse the friendly form. Crucial when a default like
+	// `{}` would otherwise lose its declared shape: the runtime type of
+	// the empty literal is `object({})`, but the declared type might be
+	// `map(string)` or `list(object({...}))`. Emitted as RawMessage —
+	// cty/json.MarshalType already produces valid JSON, so re-encoding
+	// would double-quote.
+	VariableType json.RawMessage `json:"variable_type,omitempty"`
+	// VariableTypeDefaults captures the per-attribute default values
+	// declared via the two-arg `optional(T, default)` form, as a
+	// recursive tree that mirrors the type tree:
+	//   - `values` — at object levels, attribute-name → default value
+	//     (using the same {type, value} cty/json shape as evaluated
+	//     expressions elsewhere in the export)
+	//   - `attrs` — at object levels, attribute-name → recursive node
+	//     for nested object attributes that themselves carry defaults
+	//   - `element` — at list/set/map levels, the element-type's
+	//     recursive defaults node
+	// Nodes with no defaults at any depth are pruned, so an absent
+	// `variable_type_defaults` field means "no per-attribute defaults
+	// are declared anywhere in the type tree." Crucially, the Terraform-
+	// level `default = ...` on the variable itself (the `default` field
+	// above) is a separate concept from these per-attribute type defaults
+	// and is unaffected.
+	VariableTypeDefaults *ExportTypeDefaults    `json:"variable_type_defaults,omitempty"`
+	Description          string                 `json:"description,omitempty"`
+	HasDefault           bool                   `json:"has_default"`
+	Default              *ExportExpression      `json:"default,omitempty"`
+	Sensitive            bool                   `json:"sensitive,omitempty"`
+	Ephemeral            bool                   `json:"ephemeral,omitempty"`
+	Nullable             bool                   `json:"nullable"`
+	Validations          []ExportConditionBlock `json:"validations,omitempty"`
+	Location             string                 `json:"location,omitempty"`
+}
+
+// ExportTypeDefaults is one node of the recursive default-value tree
+// surfaced under variable_type_defaults. See ExportVariable.VariableTypeDefaults
+// for the shape. This is a translation of hashicorp's typeexpr.Defaults
+// — same information, but the internal `Children` map (which keys
+// nested-object attrs by name and list/set/map element-types by the
+// empty string) is split into the dedicated `Attrs` and `Element`
+// fields so consumers don't have to special-case the empty key.
+type ExportTypeDefaults struct {
+	Values  map[string]*ExportCtyJSON      `json:"values,omitempty"`
+	Attrs   map[string]*ExportTypeDefaults `json:"attrs,omitempty"`
+	Element *ExportTypeDefaults            `json:"element,omitempty"`
 }
 
 type ExportOutput struct {
 	Name           string                 `json:"name"`
+	Description    string                 `json:"description,omitempty"`
 	Value          *ExportExpression      `json:"value,omitempty"`
 	Sensitive      bool                   `json:"sensitive,omitempty"`
 	Ephemeral      bool                   `json:"ephemeral,omitempty"`
@@ -432,6 +502,7 @@ func exprToExport(e *analysis.Expr, ctx *hcl.EvalContext) *ExportExpression {
 func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 	v := ExportVariable{
 		Name:        e.Name,
+		Description: e.Description,
 		HasDefault:  e.HasDefault,
 		Sensitive:   e.Sensitive,
 		Ephemeral:   e.Ephemeral,
@@ -441,14 +512,60 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 	}
 	if e.DeclaredType != nil {
 		v.Type = e.DeclaredType.String()
+		if e.DeclaredType.HasCty() {
+			if raw, err := ctyjson.MarshalType(e.DeclaredType.Cty); err == nil {
+				v.VariableType = raw
+			}
+		}
+		v.VariableTypeDefaults = exportTypeDefaults(e.DeclaredType.Defaults)
 	}
 	v.Default = exprToExport(e.DefaultExpr, ctx)
 	return v
 }
 
+// exportTypeDefaults walks hashicorp's typeexpr.Defaults tree into the
+// export's ExportTypeDefaults shape. Returns nil when the input has no
+// defaults at any depth — including the case where a Children entry
+// recurses into a subtree whose own defaults are empty — so that the
+// `omitempty` tag prunes empty branches all the way up to the root.
+// Element-type defaults (Children keyed by the empty string for
+// list/set/map types) are split out into the dedicated Element field
+// so consumers don't have to special-case the empty key.
+func exportTypeDefaults(d *typeexpr.Defaults) *ExportTypeDefaults {
+	if d == nil {
+		return nil
+	}
+	out := &ExportTypeDefaults{}
+	if len(d.DefaultValues) > 0 {
+		out.Values = make(map[string]*ExportCtyJSON, len(d.DefaultValues))
+		for k, val := range d.DefaultValues {
+			out.Values[k] = ctyToExport(val)
+		}
+	}
+	for k, child := range d.Children {
+		sub := exportTypeDefaults(child)
+		if sub == nil {
+			continue
+		}
+		if k == "" {
+			out.Element = sub
+			continue
+		}
+		if out.Attrs == nil {
+			out.Attrs = make(map[string]*ExportTypeDefaults)
+		}
+		out.Attrs[k] = sub
+	}
+	if len(out.Values) == 0 && len(out.Attrs) == 0 && out.Element == nil {
+		return nil
+	}
+	return out
+}
+
 func exportOutput(e analysis.Entity, ctx *hcl.EvalContext) ExportOutput {
 	return ExportOutput{
 		Name:           e.Name,
+		Description:    e.Description,
 		Value:          exprToExport(e.ValueExpr, ctx),
 		Sensitive:      e.Sensitive,
 		Ephemeral:      e.Ephemeral,

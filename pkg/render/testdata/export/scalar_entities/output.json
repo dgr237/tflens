@@ -1,23 +1,90 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.4.0-prototype",
+  "schema_version": "0.7.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "scalar_entities",
     "module": {
       "variables": [
         {
+          "name": "cluster",
+          "type": "object(...)",
+          "variable_type": [
+            "object",
+            {
+              "addons": [
+                "object",
+                {
+                  "coredns": "bool",
+                  "kube_proxy": "bool"
+                },
+                [
+                  "coredns",
+                  "kube_proxy"
+                ]
+              ],
+              "name": "string",
+              "version": "string"
+            },
+            [
+              "addons",
+              "version"
+            ]
+          ],
+          "variable_type_defaults": {
+            "values": {
+              "addons": {
+                "type": [
+                  "object",
+                  {
+                    "coredns": "bool",
+                    "kube_proxy": "bool"
+                  }
+                ],
+                "value": {
+                  "coredns": null,
+                  "kube_proxy": null
+                }
+              },
+              "version": {
+                "type": "string",
+                "value": "1.30"
+              }
+            },
+            "attrs": {
+              "addons": {
+                "values": {
+                  "coredns": {
+                    "type": "bool",
+                    "value": true
+                  },
+                  "kube_proxy": {
+                    "type": "bool",
+                    "value": true
+                  }
+                }
+              }
+            }
+          },
+          "has_default": false,
+          "nullable": true,
+          "location": "main.tf:27"
+        },
+        {
           "name": "instance_count",
           "type": "number",
+          "variable_type": "number",
           "has_default": false,
           "sensitive": true,
           "nullable": true,
-          "location": "main.tf:6"
+          "location": "main.tf:7"
         },
         {
           "name": "region",
           "type": "string",
+          "variable_type": "string",
+          "description": "AWS region the stack is deployed into",
           "has_default": true,
           "default": {
             "text": "\"us-east-1\"",
@@ -35,11 +102,94 @@
           },
           "nullable": true,
           "location": "main.tf:1"
+        },
+        {
+          "name": "subnets",
+          "type": "list(object(...))",
+          "variable_type": [
+            "list",
+            [
+              "object",
+              {
+                "additional_cidrs": [
+                  "list",
+                  "string"
+                ],
+                "az": "string",
+                "cidr": "string",
+                "public": "bool"
+              },
+              [
+                "additional_cidrs",
+                "public"
+              ]
+            ]
+          ],
+          "variable_type_defaults": {
+            "element": {
+              "values": {
+                "additional_cidrs": {
+                  "type": [
+                    "list",
+                    "string"
+                  ],
+                  "value": []
+                },
+                "public": {
+                  "type": "bool",
+                  "value": false
+                }
+              }
+            }
+          },
+          "has_default": true,
+          "default": {
+            "text": "[]",
+            "value": {
+              "type": [
+                "tuple",
+                []
+              ],
+              "value": []
+            },
+            "ast": {
+              "elements": [],
+              "node": "tuple_cons"
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:17"
+        },
+        {
+          "name": "tags",
+          "type": "map(string)",
+          "variable_type": [
+            "map",
+            "string"
+          ],
+          "has_default": true,
+          "default": {
+            "text": "{}",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "items": [],
+              "node": "object_cons"
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:12"
         }
       ],
       "outputs": [
         {
           "name": "image",
+          "description": "AMI image identifier consumers should plug into aws_instance.ami",
           "value": {
             "text": "local.image",
             "value": {
@@ -60,7 +210,7 @@
               ]
             }
           },
-          "location": "main.tf:20"
+          "location": "main.tf:47"
         },
         {
           "name": "instance_count",
@@ -81,7 +231,7 @@
             }
           },
           "sensitive": true,
-          "location": "main.tf:24"
+          "location": "main.tf:52"
         }
       ],
       "resources": [],
@@ -105,7 +255,7 @@
               }
             }
           },
-          "location": "main.tf:16"
+          "location": "main.tf:43"
         }
       ],
       "locals": [
@@ -145,7 +295,7 @@
               "node": "function_call"
             }
           },
-          "location": "main.tf:12"
+          "location": "main.tf:39"
         },
         {
           "name": "unevaled",
@@ -173,7 +323,7 @@
               ]
             }
           },
-          "location": "main.tf:13"
+          "location": "main.tf:40"
         }
       ],
       "module_calls": [],
@@ -183,7 +333,7 @@
           "subject": "local.image.value",
           "expression_text": "format(\"ec2-%s-v%d\", \"small\", 3)",
           "marker": "AMI image identifier",
-          "location": "main.tf:12"
+          "location": "main.tf:39"
         }
       ],
       "dependencies": {
