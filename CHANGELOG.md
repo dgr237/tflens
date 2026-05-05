@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-05-05
+
 ### Added
 
 - **`tflens export`: variable / output `description` strings now surface on `ExportVariable` and `ExportOutput` as a top-level `description` field.** Previously the export captured every other declared trait of a variable (type, default, sensitive, ephemeral, nullable, validations) but silently dropped the human-readable description — even though every downstream converter use-case (kro RGD, Crossplane XRD, Pulumi component schemas) wants to forward it as the field's UI / API doc string. Now the analysis pass reads `description = "..."` literals on both `variable {}` and `output {}` blocks into the existing `analysis.Entity.Description` (new field, populated only when the source is a constant string), and the export emits it under `description` with `omitempty` so existing fixtures without descriptions are byte-identical apart from the schema bump. Pure addition — no field renames or removals.
@@ -309,7 +311,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/dgr237/tflens/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/dgr237/tflens/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/dgr237/tflens/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/dgr237/tflens/compare/v0.16.0...v0.16.1
