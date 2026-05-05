@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.4.0-prototype",
+  "schema_version": "0.7.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "resources_and_data",
@@ -10,6 +10,10 @@
         {
           "name": "regions",
           "type": "list(string)",
+          "variable_type": [
+            "list",
+            "string"
+          ],
           "has_default": false,
           "nullable": true,
           "location": "main.tf:1"

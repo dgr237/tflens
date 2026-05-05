@@ -83,6 +83,7 @@ type Entity struct {
 	NonNullable  bool           // variables: `nullable = false` explicitly set
 	Sensitive    bool           // variables/outputs: `sensitive = true` set
 	Ephemeral    bool           // variables/outputs: `ephemeral = true` (Terraform 1.10+)
+	Description  string         // variables/outputs: `description = "..."` literal (empty when omitted or non-constant)
 	// Validations / Preconditions / Postconditions capture every
 	// `validation {}` / `precondition {}` / `postcondition {}` block
 	// declared on this entity, in source order. Each carries the
@@ -736,6 +737,10 @@ func variableEntity(block *hclsyntax.Block, src []byte) (Entity, *TypeCheckError
 			if b, ok := constantBool(attr.Expr); ok && b {
 				e.Ephemeral = true
 			}
+		case "description":
+			if s, ok := constantString(attr.Expr); ok {
+				e.Description = s
+			}
 		}
 	}
 	for _, b := range block.Body.Blocks {
@@ -777,6 +782,10 @@ func outputEntity(block *hclsyntax.Block, src []byte) Entity {
 			e.ValueExpr = &Expr{E: attr.Expr, Source: src}
 		case "depends_on":
 			e.DependsOnExpr = &Expr{E: attr.Expr, Source: src}
+		case "description":
+			if s, ok := constantString(attr.Expr); ok {
+				e.Description = s
+			}
 		}
 	}
 	for _, b := range block.Body.Blocks {

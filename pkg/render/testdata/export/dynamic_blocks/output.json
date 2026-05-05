@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.4.0-prototype",
+  "schema_version": "0.7.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "dynamic_blocks",
@@ -10,6 +10,20 @@
         {
           "name": "ingress_rules",
           "type": "list(object(...))",
+          "variable_type": [
+            "list",
+            [
+              "object",
+              {
+                "cidrs": [
+                  "list",
+                  "string"
+                ],
+                "from_port": "number",
+                "to_port": "number"
+              }
+            ]
+          ],
           "has_default": true,
           "default": {
             "text": "[\n  { from_port = 443, to_port = 443, cidrs = [\"10.0.0.0/8\"] },\n  { from_port = 22, to_port = 22, cidrs = [\"10.1.0.0/16\"] },\n]",
