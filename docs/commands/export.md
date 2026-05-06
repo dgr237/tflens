@@ -43,7 +43,7 @@ tflens export .
 
 ```json
 {
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.8.0-prototype",
   "_experimental": true,
   "root": {
     "module": {
@@ -77,12 +77,19 @@ tflens export .
 
 ## What it emits
 
-- **Unified expression shape.** Every field that holds an HCL expression — resource attributes, `count`, `for_each`, `depends_on`, lifecycle (`ignore_changes`, `replace_triggered_by`), module-call arguments, locals, outputs, variable defaults — emits as `{text, value?, ast?}`:
+- **Unified expression shape.** Every field that holds an HCL expression — resource attributes, `count`, `for_each`, `depends_on`, lifecycle (`ignore_changes`, `replace_triggered_by`), module-call arguments, locals, outputs, variable defaults — emits as `{text, value?, ast?, references?}`:
   - `text` — the canonical source bytes
   - `value` — the cty-marshalled JSON when the curated stdlib resolves the expression
   - `ast` — the structural decomposition as a tagged JSON tree (`function_call`, `scope_traversal`, `binary_op`, `conditional`, `for`, `splat`, `object_cons`, …) so non-Go consumers can translate expressions without re-parsing the text
+  - `references` — pre-computed index of every `var.X` / `<resource_type>.<name>` / `module.M.O` / `data.<type>.<name>` / `local.L` referenced anywhere in this expression, with the post-prefix attribute path and (for resources) any leading `[k]` index or `[*]` splat. Lets converters do reference work without walking the AST.
 
   Tracked-attribute records (`# tflens:track` markers) emit only `expression_text` — they're diff-machinery, not converter input, so the text-only shape is appropriate.
+
+- **Classification hints alongside the expression.** Where converters routinely need the same downstream classification, the export pre-computes it:
+  - `count_kind` on resources / module calls — `include_when` (cond ? 1 : 0 either order, with the condition surfaced separately), `scalar` (literal number), or `expression` (anything else). Saves keeping parallel classifiers in sync.
+  - `for_each_kind` on resources / dynamic blocks / module calls — `{kind: list|map|set|object|tuple|invalid|unknown, reason?}`. Catches the ECS-style ternary-empty-fallback bug class (`for_each = X.metric_stat != null ? X.metric_stat : []` where `X.metric_stat` is a single object) at the producer side and emits `kind: "invalid"` with a human-readable reason.
+  - `folded` on `validation` blocks (not preconditions / postconditions) — named-shape hint for common patterns: `enum` (`contains([…], var.X)`), `min_length` / `max_length` / `length_range` (`length(x)` bounds), `minimum` / `maximum` (numeric bounds), `pattern` (regex). Falls back to `{kind: "complex"}` so the AST stays the source of truth.
+  - `child_variable_type` on each module-call argument — when the called child module is loaded, the child's declared type constraint for the argument's name (in the same `cty/json` shape used by `variable_type`). Lets converters render argument expressions correctly without resolving the child path themselves. Omitted when the child wasn't loaded.
 
 - **Per module:**
   - **Variables** — parsed type (both the friendly `type: "map(string)"` rendering and the structural `variable_type: ["map", "string"]` shape that mirrors `cty/json`'s type encoding, so converters building a type tree never have to re-parse the friendly form or fall back to the default value's runtime type; for object attributes declared `optional(T, default)`, a sibling `variable_type_defaults` tree carries the per-attribute default values keyed by `values` / `attrs` / `element`) + default expression + sensitivity flags + `description` (when declared as a string literal) + structured `validations` list (each with `condition` and optional `error_message` as expressions).

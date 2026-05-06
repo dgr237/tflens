@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.8.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "nested_blocks_eks",
@@ -77,6 +77,13 @@
                     "step": "attr"
                   }
                 ]
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "cluster_name"
+                  }
+                ]
               }
             },
             "role_arn": {
@@ -115,6 +122,13 @@
                   {
                     "name": "k8s_version",
                     "step": "attr"
+                  }
+                ]
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "k8s_version"
                   }
                 ]
               }
@@ -343,6 +357,13 @@
                 ],
                 "name": "format",
                 "node": "function_call"
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "cluster_name"
+                  }
+                ]
               }
             }
           },

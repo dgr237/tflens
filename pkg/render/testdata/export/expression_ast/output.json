@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.8.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "expression_ast",
@@ -101,6 +101,13 @@
                     "value": 2
                   }
                 }
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "scale"
+                  }
+                ]
               }
             },
             "instance_type": {
@@ -119,6 +126,13 @@
                   {
                     "name": "env",
                     "step": "attr"
+                  }
+                ]
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "env"
                   }
                 ]
               }
@@ -169,6 +183,13 @@
                     "value": true
                   }
                 }
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "env"
+                  }
+                ]
               }
             },
             "name": {
@@ -215,6 +236,16 @@
                 ],
                 "name": "format",
                 "node": "function_call"
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "env"
+                  },
+                  {
+                    "name": "scale"
+                  }
+                ]
               }
             },
             "security_group_ids": {
@@ -246,6 +277,14 @@
                     }
                   ]
                 }
+              },
+              "references": {
+                "resources": [
+                  {
+                    "type": "aws_security_group",
+                    "name": "sg"
+                  }
+                ]
               }
             },
             "tags": {
@@ -324,6 +363,13 @@
                   }
                 ],
                 "node": "object_cons"
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "env"
+                  }
+                ]
               }
             }
           },
@@ -345,6 +391,10 @@
                 "value": 2
               }
             }
+          },
+          "count_kind": {
+            "kind": "scalar",
+            "count_expr_text": "2"
           },
           "attributes": {
             "description": {

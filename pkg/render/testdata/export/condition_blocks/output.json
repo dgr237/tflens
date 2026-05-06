@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.8.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "condition_blocks",
@@ -58,6 +58,13 @@
                       "value": 0
                     }
                   }
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "instance_count"
+                    }
+                  ]
                 }
               },
               "error_message": {
@@ -72,6 +79,12 @@
                     "type": "string",
                     "value": "instance_count must be positive"
                   }
+                }
+              },
+              "folded": {
+                "kind": "minimum",
+                "params": {
+                  "min": 1
                 }
               },
               "location": "main.tf:5"
@@ -106,6 +119,13 @@
                       "value": 100
                     }
                   }
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "instance_count"
+                    }
+                  ]
                 }
               },
               "error_message": {
@@ -139,6 +159,19 @@
                   ],
                   "name": "format",
                   "node": "function_call"
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "instance_count"
+                    }
+                  ]
+                }
+              },
+              "folded": {
+                "kind": "maximum",
+                "params": {
+                  "max": 100
                 }
               },
               "location": "main.tf:10"
@@ -173,6 +206,18 @@
                 {
                   "name": "id",
                   "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "resources": [
+                {
+                  "type": "aws_instance",
+                  "name": "web",
+                  "path": [
+                    "id"
+                  ],
+                  "index": 0
                 }
               ]
             }
@@ -210,6 +255,14 @@
                       "value": 0
                     }
                   }
+                },
+                "references": {
+                  "resources": [
+                    {
+                      "type": "aws_instance",
+                      "name": "web"
+                    }
+                  ]
                 }
               },
               "error_message": {
@@ -254,7 +307,18 @@
                   "step": "attr"
                 }
               ]
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "instance_count"
+                }
+              ]
             }
+          },
+          "count_kind": {
+            "kind": "expression",
+            "count_expr_text": "var.instance_count"
           },
           "preconditions": [
             {
@@ -287,6 +351,13 @@
                       "value": 50
                     }
                   }
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "instance_count"
+                    }
+                  ]
                 }
               },
               "error_message": {
