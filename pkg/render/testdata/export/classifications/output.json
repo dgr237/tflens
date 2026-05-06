@@ -122,6 +122,80 @@
           "location": "main.tf:32"
         },
         {
+          "name": "fingerprint",
+          "type": "string",
+          "variable_type": "string",
+          "has_default": false,
+          "nullable": true,
+          "validations": [
+            {
+              "condition": {
+                "text": "length(var.fingerprint) == 64",
+                "ast": {
+                  "lhs": {
+                    "args": [
+                      {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "var",
+                            "step": "root"
+                          },
+                          {
+                            "name": "fingerprint",
+                            "step": "attr"
+                          }
+                        ]
+                      }
+                    ],
+                    "name": "length",
+                    "node": "function_call"
+                  },
+                  "node": "binary_op",
+                  "op": "==",
+                  "rhs": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "number",
+                      "value": 64
+                    }
+                  }
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "fingerprint"
+                    }
+                  ]
+                }
+              },
+              "error_message": {
+                "text": "\"fingerprint must be exactly 64 chars\"",
+                "value": {
+                  "type": "string",
+                  "value": "fingerprint must be exactly 64 chars"
+                },
+                "ast": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "fingerprint must be exactly 64 chars"
+                  }
+                }
+              },
+              "folded": {
+                "kind": "length_range",
+                "params": {
+                  "max": 64,
+                  "min": 64
+                }
+              },
+              "location": "main.tf:60"
+            }
+          ],
+          "location": "main.tf:55"
+        },
+        {
           "name": "instances",
           "type": "map(object(...))",
           "variable_type": [
@@ -197,7 +271,7 @@
             }
           },
           "nullable": true,
-          "location": "main.tf:124"
+          "location": "main.tf:135"
         },
         {
           "name": "name",
@@ -558,7 +632,7 @@
                   "min": 1
                 }
               },
-              "location": "main.tf:59"
+              "location": "main.tf:70"
             },
             {
               "condition": {
@@ -619,10 +693,10 @@
                   "max": 100
                 }
               },
-              "location": "main.tf:64"
+              "location": "main.tf:75"
             }
           ],
-          "location": "main.tf:55"
+          "location": "main.tf:66"
         },
         {
           "name": "tag_overlay",
@@ -647,7 +721,7 @@
             }
           },
           "nullable": true,
-          "location": "main.tf:134"
+          "location": "main.tf:145"
         }
       ],
       "outputs": [
@@ -692,7 +766,7 @@
               ]
             }
           },
-          "location": "main.tf:106"
+          "location": "main.tf:117"
         },
         {
           "name": "first_subnet",
@@ -735,7 +809,7 @@
               ]
             }
           },
-          "location": "main.tf:102"
+          "location": "main.tf:113"
         }
       ],
       "resources": [
@@ -807,7 +881,7 @@
               }
             }
           },
-          "location": "main.tf:71"
+          "location": "main.tf:82"
         },
         {
           "type": "aws_cloudwatch_metric_alarm",
@@ -909,7 +983,7 @@
               }
             }
           },
-          "location": "main.tf:96"
+          "location": "main.tf:107"
         },
         {
           "type": "aws_cloudwatch_metric_alarm",
@@ -1072,19 +1146,19 @@
                               }
                             }
                           },
-                          "location": "main.tf:161"
+                          "location": "main.tf:172"
                         },
-                        "location": "main.tf:159"
+                        "location": "main.tf:170"
                       }
                     ]
                   },
-                  "location": "main.tf:151"
+                  "location": "main.tf:162"
                 },
-                "location": "main.tf:149"
+                "location": "main.tf:160"
               }
             ]
           },
-          "location": "main.tf:145"
+          "location": "main.tf:156"
         },
         {
           "type": "aws_iam_policy",
@@ -1161,7 +1235,7 @@
               }
             }
           },
-          "location": "main.tf:139"
+          "location": "main.tf:150"
         },
         {
           "type": "aws_iam_role",
@@ -1231,7 +1305,7 @@
               }
             }
           },
-          "location": "main.tf:77"
+          "location": "main.tf:88"
         },
         {
           "type": "aws_instance",
@@ -1285,7 +1359,7 @@
               }
             }
           },
-          "location": "main.tf:89"
+          "location": "main.tf:100"
         },
         {
           "type": "aws_subnet",
@@ -1345,7 +1419,7 @@
               }
             }
           },
-          "location": "main.tf:83"
+          "location": "main.tf:94"
         }
       ],
       "data_sources": [],
@@ -1458,7 +1532,7 @@
               ]
             }
           },
-          "location": "main.tf:110"
+          "location": "main.tf:121"
         }
       ],
       "terraform": {},

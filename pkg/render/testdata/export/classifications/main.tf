@@ -52,6 +52,17 @@ variable "name" {
   }
 }
 
+variable "fingerprint" {
+  type = string
+
+  # Fixed-length constraint — composegen §4.1 folds == to a degenerate
+  # length_range with min == max.
+  validation {
+    condition     = length(var.fingerprint) == 64
+    error_message = "fingerprint must be exactly 64 chars"
+  }
+}
+
 variable "replicas" {
   type    = number
   default = 1

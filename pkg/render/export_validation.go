@@ -81,17 +81,20 @@ func foldEnum(expr hclsyntax.Expression) *ExportValidationFolded {
 	}
 }
 
-// foldLength recognises four shapes:
+// foldLength recognises five shapes:
 //
 //	length(<x>) >= <n>           → min_length
 //	length(<x>) <= <n>           → max_length
+//	length(<x>) == <n>           → length_range with min == max == n
 //	length(<x>) >= <a> && length(<x>) <= <b>   → length_range
 //	length(<x>) <= <b> && length(<x>) >= <a>   → length_range
 //
 // The conjunction shape is a single BinaryOpExpr with Op = OpLogicalAnd
-// whose LHS / RHS are themselves recognisable bound shapes. Only the
-// bounds are surfaced; the subject `<x>` isn't checked (always var.X
-// in practice).
+// whose LHS / RHS are themselves recognisable bound shapes. The
+// equality shape is a degenerate range collapsing to a single fixed
+// length — composegen's docs (§4.1) treat it identically to
+// minLength=N + maxLength=N. Only the bounds are surfaced; the subject
+// `<x>` isn't checked (always var.X in practice).
 func foldLength(expr hclsyntax.Expression) *ExportValidationFolded {
 	if and, ok := expr.(*hclsyntax.BinaryOpExpr); ok && and.Op == hclsyntax.OpLogicalAnd {
 		left := lengthBound(and.LHS)
@@ -110,6 +113,12 @@ func foldLength(expr hclsyntax.Expression) *ExportValidationFolded {
 			}
 		}
 	}
+	if n, ok := lengthEquality(expr); ok {
+		return &ExportValidationFolded{
+			Kind:   "length_range",
+			Params: map[string]any{"min": n, "max": n},
+		}
+	}
 	if b := lengthBound(expr); b != nil {
 		if b.isMin {
 			return &ExportValidationFolded{Kind: "min_length", Params: map[string]any{"min": b.n}}
@@ -117,6 +126,23 @@ func foldLength(expr hclsyntax.Expression) *ExportValidationFolded {
 		return &ExportValidationFolded{Kind: "max_length", Params: map[string]any{"max": b.n}}
 	}
 	return nil
+}
+
+// lengthEquality matches `length(<x>) == <n>` and returns (n, true).
+// Folds to length_range with min == max so the wire shape stays
+// consistent with the bounded forms — consumers expressing the
+// constraint as a JSON-schema length range get a uniform shape
+// regardless of whether the source used `==` or `>= && <=`.
+func lengthEquality(expr hclsyntax.Expression) (int64, bool) {
+	bin, ok := expr.(*hclsyntax.BinaryOpExpr)
+	if !ok || bin.Op != hclsyntax.OpEqual {
+		return 0, false
+	}
+	call, ok := bin.LHS.(*hclsyntax.FunctionCallExpr)
+	if !ok || call.Name != "length" || len(call.Args) != 1 {
+		return 0, false
+	}
+	return literalNumber(bin.RHS)
 }
 
 type lengthBoundResult struct {
