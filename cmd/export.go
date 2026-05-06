@@ -50,6 +50,7 @@ func runExport(s config.Settings) error {
 		return err
 	}
 	printFileErrs(s, fileErrs)
+	p.AttachProviderSchema(loadProviderSchema(s))
 	exp := render.BuildExport(p, tflensVersion)
 	return render.WriteExport(exp, s.Out)
 }

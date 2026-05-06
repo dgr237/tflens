@@ -14,6 +14,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/providerschema"
 )
 
 // ---- Experimental: export schema ----
@@ -541,16 +542,16 @@ func BuildExport(p *loader.Project, tflensVersion string) Export {
 	if p == nil || p.Root == nil {
 		return exp
 	}
-	exp.Root = exportNode(p.Root, "", "")
+	exp.Root = exportNode(p.Root, "", "", p.ProviderSchema)
 	return exp
 }
 
-func exportNode(n *loader.ModuleNode, source, version string) ExportNode {
+func exportNode(n *loader.ModuleNode, source, version string, schema *providerschema.Schema) ExportNode {
 	out := ExportNode{
 		Dir:     n.Dir,
 		Source:  source,
 		Version: version,
-		Module:  exportModule(n.Module, n.Children),
+		Module:  exportModule(n.Module, n.Children, schema),
 	}
 	if len(n.Children) > 0 {
 		out.Children = make(map[string]ExportNode, len(n.Children))
@@ -560,13 +561,13 @@ func exportNode(n *loader.ModuleNode, source, version string) ExportNode {
 				cs = n.Module.ModuleSource(name)
 				cv = n.Module.ModuleVersion(name)
 			}
-			out.Children[name] = exportNode(child, cs, cv)
+			out.Children[name] = exportNode(child, cs, cv, schema)
 		}
 	}
 	return out
 }
 
-func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode) ExportModule {
+func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode, schema *providerschema.Schema) ExportModule {
 	out := ExportModule{
 		Variables:    []ExportVariable{},
 		Outputs:      []ExportOutput{},
@@ -580,16 +581,18 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode) Ex
 	if m == nil {
 		return out
 	}
-	resolver := m.Resolver().WithChildModuleGetter(func(name string) *analysis.Module {
-		if children == nil {
-			return nil
-		}
-		cn, ok := children[name]
-		if !ok || cn == nil {
-			return nil
-		}
-		return cn.Module
-	})
+	resolver := m.Resolver().
+		WithChildModuleGetter(func(name string) *analysis.Module {
+			if children == nil {
+				return nil
+			}
+			cn, ok := children[name]
+			if !ok || cn == nil {
+				return nil
+			}
+			return cn.Module
+		}).
+		WithProviderSchema(schema)
 	rc := &renderCtx{
 		m:        m,
 		resolver: resolver,

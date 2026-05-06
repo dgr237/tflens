@@ -7,6 +7,7 @@ import (
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/providerschema"
 )
 
 // pathArg returns args[i] if present, otherwise ".". Used by every
@@ -50,6 +51,24 @@ func mustLoadModule(s config.Settings) *analysis.Module {
 		os.Exit(1)
 	}
 	return mod
+}
+
+// loadProviderSchema reads s.ProviderSchemaPath when non-empty.
+// Returns nil for the empty path (no flag supplied) so callers can
+// pass the result straight into Project.AttachProviderSchema or
+// analysis.CheckResourceAttrRefs without an additional check. Fatal
+// on parse errors — supplying a non-empty path that doesn't decode
+// is a user error worth surfacing immediately rather than silently
+// degrading to schema-less behaviour.
+func loadProviderSchema(s config.Settings) *providerschema.Schema {
+	if s.ProviderSchemaPath == "" {
+		return nil
+	}
+	schema, err := providerschema.Load(s.ProviderSchemaPath)
+	if err != nil {
+		fatalf("loading provider schema: %v", err)
+	}
+	return schema
 }
 
 func fatalf(format string, args ...any) {

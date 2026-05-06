@@ -4,6 +4,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/dgr237/tflens/pkg/providerschema"
 )
 
 // Resolver provides type inference + for_each classification on top of
@@ -29,6 +31,14 @@ type Resolver struct {
 	iterators       []IteratorScope
 	resolvingLocals map[string]bool
 	childModuleFn   func(string) *Module
+	// providerSchema is optional. When set, ResolveTraversalType
+	// resolves `<resource_type>.<name>(.path...)` and
+	// `data.<type>.<name>(.path...)` references through the provider's
+	// declared schema, populating leaf attribute types. When nil, those
+	// roots fall through to the iterator-scope check (which won't
+	// match) and ultimately return nil — i.e. unchanged behaviour for
+	// callers running without `--provider-schema`.
+	providerSchema *providerschema.Schema
 }
 
 // IteratorScope is one dynamic-block iterator binding: the iterator
@@ -50,6 +60,31 @@ func (m *Module) Resolver() *Resolver {
 		return nil
 	}
 	return &Resolver{m: m, resolvingLocals: map[string]bool{}}
+}
+
+// WithProviderSchema returns a copy of r with the given provider
+// schema installed. When non-nil, ResolveTraversalType resolves
+// resource and data-source attribute references through the schema;
+// otherwise behaviour is unchanged. Pass nil to drop a previously-
+// installed schema.
+func (r *Resolver) WithProviderSchema(s *providerschema.Schema) *Resolver {
+	if r == nil {
+		return nil
+	}
+	out := *r
+	out.providerSchema = s
+	return &out
+}
+
+// ProviderSchema returns the resolver's installed provider schema,
+// or nil when none was supplied. Convenience for callers that need
+// to consult the schema directly (e.g. the validate-side attribute
+// reference checker).
+func (r *Resolver) ProviderSchema() *providerschema.Schema {
+	if r == nil {
+		return nil
+	}
+	return r.providerSchema
 }
 
 // WithChildModuleGetter returns a copy of r with the given child
@@ -189,11 +224,201 @@ func (r *Resolver) ResolveTraversalType(trav hcl.Traversal) *TFType {
 		return r.resolveLocalTraversal(trav)
 	case "module":
 		return r.resolveModuleTraversal(trav)
+	case "data":
+		if t := r.resolveDataTraversal(trav); t != nil {
+			return t
+		}
 	}
+	// Iterator scope is checked before resource lookup: an iterator
+	// name like `each` or a custom dynamic-block iterator could
+	// shadow a resource type name (rare but possible).
 	if t := r.resolveIteratorTraversal(root.Name, trav); t != nil {
 		return t
 	}
+	if t := r.resolveResourceTraversal(trav); t != nil {
+		return t
+	}
 	return nil
+}
+
+// resolveResourceTraversal handles `<resource_type>.<name>(.path...)`
+// when a provider schema is installed and the module declares the
+// referenced resource. Strips leading instance-selector steps
+// (count/for_each `[k]`, `[*]` splats), looks the remaining attribute
+// path up in the schema, and descends through any trailing index
+// steps via the cty type tree.
+//
+// Returns nil when no schema is installed, the resource isn't in
+// this module, or the schema doesn't cover the resource type — the
+// conservative path that prevents false positives for multi-cloud
+// configs supplying only an AWS schema.
+func (r *Resolver) resolveResourceTraversal(trav hcl.Traversal) *TFType {
+	if r.providerSchema == nil || r.m == nil || len(trav) < 3 {
+		return nil
+	}
+	root, ok := trav[0].(hcl.TraverseRoot)
+	if !ok {
+		return nil
+	}
+	nameStep, ok := trav[1].(hcl.TraverseAttr)
+	if !ok {
+		return nil
+	}
+	if !r.m.HasEntity((Entity{Kind: KindResource, Type: root.Name, Name: nameStep.Name}).ID()) {
+		return nil
+	}
+	if !r.providerSchema.HasResource(root.Name) {
+		return nil
+	}
+	rest, splat := skipInstanceSelectors(trav[2:])
+	t := r.resolveSchemaPath(root.Name, false, rest)
+	return wrapForSplat(t, splat)
+}
+
+// resolveDataTraversal handles `data.<type>.<name>(.path...)`. Same
+// shape as resolveResourceTraversal but the entity kind is KindData
+// and the schema lookup goes through DataSource() rather than
+// Resource(). Needs at least four steps (data.<type>.<name>.<attr>).
+func (r *Resolver) resolveDataTraversal(trav hcl.Traversal) *TFType {
+	if r.providerSchema == nil || r.m == nil || len(trav) < 4 {
+		return nil
+	}
+	typeStep, ok := trav[1].(hcl.TraverseAttr)
+	if !ok {
+		return nil
+	}
+	nameStep, ok := trav[2].(hcl.TraverseAttr)
+	if !ok {
+		return nil
+	}
+	if !r.m.HasEntity((Entity{Kind: KindData, Type: typeStep.Name, Name: nameStep.Name}).ID()) {
+		return nil
+	}
+	if !r.providerSchema.HasDataSource(typeStep.Name) {
+		return nil
+	}
+	rest, splat := skipInstanceSelectors(trav[3:])
+	t := r.resolveSchemaPath(typeStep.Name, true, rest)
+	return wrapForSplat(t, splat)
+}
+
+// resolveSchemaPath walks the provided path through the schema's
+// attribute / nested-block tree, stopping at the first leaf
+// attribute. From that attribute's cty.Type, the remainder of the
+// path is descended via descendType (which handles cty-level index /
+// attr steps for object / map / list / tuple types).
+//
+// Pure attr chains hit the leaf and return its type directly; mixed
+// attr+index chains (e.g. `tags["foo"]` where tags is a map) hit
+// the leaf at attr "tags", descend the remaining index step through
+// the map type, and return the element type. Mixed chains that need
+// to descend through a list/set/map nested block via index aren't
+// handled — those cases return nil rather than producing a wrong
+// type.
+func (r *Resolver) resolveSchemaPath(typeName string, isData bool, steps []hcl.Traverser) *TFType {
+	var b *providerschema.Block
+	if isData {
+		b = r.providerSchema.DataSource(typeName)
+	} else {
+		b = r.providerSchema.Resource(typeName)
+	}
+	if b == nil || len(steps) == 0 {
+		return nil
+	}
+	cur := b
+	for i, step := range steps {
+		attrStep, ok := step.(hcl.TraverseAttr)
+		if !ok {
+			return nil
+		}
+		if attr, found := cur.Attributes[attrStep.Name]; found {
+			t := ctyToTFType(attr.Type)
+			if t == nil {
+				return nil
+			}
+			if i+1 < len(steps) {
+				return descendType(t, steps[i+1:])
+			}
+			return t
+		}
+		if nb, found := cur.BlockTypes[attrStep.Name]; found {
+			if i+1 == len(steps) {
+				// Bare reference to a nested block — return the
+				// inferred cty type of the whole sub-block. For
+				// "single" / "group" nesting that's an object;
+				// for list/set/map it's the corresponding container
+				// of an object.
+				return blockToTFType(nb)
+			}
+			cur = nb.Block
+			continue
+		}
+		return nil
+	}
+	return nil
+}
+
+// skipInstanceSelectors strips leading `[k]` index and `[*]` splat
+// steps from a resource's post-name traversal. Resource references
+// with count or for_each have an instance selector before the
+// attribute path (`aws_X.y[0].cidr` or `aws_X.y["primary"].cidr`),
+// and splats yield a list-of-attr (`aws_X.y[*].cidr`). The returned
+// `splat` bool tells the caller to wrap the resolved type in a list.
+func skipInstanceSelectors(steps []hcl.Traverser) (rest []hcl.Traverser, splat bool) {
+	for i, step := range steps {
+		switch step.(type) {
+		case hcl.TraverseAttr:
+			return steps[i:], splat
+		case hcl.TraverseSplat:
+			splat = true
+		case hcl.TraverseIndex:
+			// skip
+		default:
+			return nil, splat
+		}
+	}
+	return nil, splat
+}
+
+// wrapForSplat wraps t in a list type when splat is true. Used by
+// the resource/data-source resolvers to project an attribute list
+// across all instances when the caller used `aws_X.y[*].attr`.
+func wrapForSplat(t *TFType, splat bool) *TFType {
+	if t == nil || !splat {
+		return t
+	}
+	out := &TFType{Kind: TypeList, Elem: t}
+	if t.HasCty() {
+		out.Cty = cty.List(t.Cty)
+	}
+	return out
+}
+
+// blockToTFType returns the TFType corresponding to a whole nested
+// block, taking nesting mode into account. A "single" or "group"
+// block becomes an object type; "list" / "set" / "map" wrap the
+// object in the corresponding collection. Used when a traversal
+// references a nested block by name without descending into its
+// attributes (rare but legal — `aws_X.y.timeouts` returns the
+// timeouts object as a whole).
+func blockToTFType(nb *providerschema.NestedBlock) *TFType {
+	if nb == nil || nb.Block == nil {
+		return nil
+	}
+	attrTypes := make(map[string]cty.Type, len(nb.Block.Attributes))
+	for name, a := range nb.Block.Attributes {
+		attrTypes[name] = a.Type
+	}
+	objType := cty.Object(attrTypes)
+	switch nb.NestingMode {
+	case "list":
+		return ctyToTFType(cty.List(objType))
+	case "set":
+		return ctyToTFType(cty.Set(objType))
+	case "map":
+		return ctyToTFType(cty.Map(objType))
+	}
+	return ctyToTFType(objType)
 }
 
 func (r *Resolver) resolveVarTraversal(trav hcl.Traversal) *TFType {

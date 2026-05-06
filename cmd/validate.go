@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/config"
 	"github.com/dgr237/tflens/pkg/loader"
 	"github.com/dgr237/tflens/pkg/render"
@@ -39,6 +40,9 @@ func runValidate(s config.Settings) {
 		fatalf("%v", err)
 	}
 	printFileErrs(s, fileErrs)
+	if schema := loadProviderSchema(s); schema != nil {
+		analysis.CheckResourceAttrRefs(mod, schema)
+	}
 	refErrs := mod.Validate()
 	typeErrs := mod.TypeErrors()
 	total := len(refErrs) + len(typeErrs) + len(crossErrs)
