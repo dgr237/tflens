@@ -52,10 +52,21 @@ type ExportForEachKind struct {
 // Returns nil for nil expressions so omitempty drops the field for
 // resources / dynamic blocks / module calls without `for_each`.
 //
-// The conditional-rule classifier handles the ternary-empty-fallback
-// shapes; everything else falls through to type inference. When rc is
-// nil callers should not invoke this — every call site guarantees a
-// renderCtx.
+// Three classifier paths in order:
+//
+//  1. Conditional rule — for ternary expressions with an empty list /
+//     object fallback, applies the empty-branch-anchored
+//     expected-vs-actual shape comparison (classifyConditionalForEach).
+//  2. Single-value bug — for a non-conditional traversal that resolves
+//     through a declared `object({...})` constraint (or a scalar),
+//     emits kind: "invalid". Catches the §7 sibling pattern where
+//     a for_each source is a single struct rather than a collection
+//     (e.g. `for_each = metric_stat.value.metric` where `.metric` is
+//     an object field, not a list-of-objects).
+//  3. Plain type inference — everything else maps via tfTypeKindString.
+//
+// When rc is nil callers should not invoke this — every call site
+// guarantees a renderCtx.
 func classifyForEach(e *analysis.Expr, rc *renderCtx) *ExportForEachKind {
 	if e == nil || e.E == nil {
 		return nil
@@ -66,7 +77,66 @@ func classifyForEach(e *analysis.Expr, rc *renderCtx) *ExportForEachKind {
 		}
 	}
 	t := resolveExprType(e.E, rc)
+	if reason, bad := classifySingleValueForEach(e.E, t); bad {
+		return &ExportForEachKind{Kind: "invalid", Reason: reason}
+	}
 	return &ExportForEachKind{Kind: tfTypeKindString(t)}
+}
+
+// classifySingleValueForEach detects the §7 sibling bug class:
+// a for_each source that resolves to a single value — typically a
+// struct-shaped object field declared via `object({...})`, but also
+// scalars — instead of a collection. Common shape:
+//
+//	for_each = metric_stat.value.metric  // .metric is `object(...)`
+//
+// Terraform iterates the object's attributes (each.key = attr name,
+// each.value = attr value) which almost never matches the author's
+// intent; the body usually treats each.value as if it were a
+// collection element rather than a scalar attribute value.
+//
+// Recognition requires the source to be a traversal expression (var.X,
+// <iter>.value.X, local.X, module.M.O, or any chain of those) AND the
+// resolved type to carry a declared cty type (HasCty true) — i.e. not
+// inferred from a literal value. This excludes valid in-line literal
+// shapes like `for_each = { foo = "bar" }`, where the object-typed
+// constructor is the standard way to express a small map.
+//
+// Returns (reason, true) when the bug is detected; (nil, false) on a
+// safe shape. Lower confidence than the conditional rule — only fires
+// when both the AST shape (entity reference) and the declared type
+// (object / scalar) line up.
+func classifySingleValueForEach(expr hclsyntax.Expression, t *analysis.TFType) (string, bool) {
+	if t == nil || !t.HasCty() {
+		return "", false
+	}
+	switch expr.(type) {
+	case *hclsyntax.ScopeTraversalExpr, *hclsyntax.RelativeTraversalExpr:
+	default:
+		return "", false
+	}
+	switch t.Kind {
+	case analysis.TypeObject:
+		return "for_each source is a single object — Terraform would iterate the object's attributes, not the object itself", true
+	case analysis.TypeString, analysis.TypeNumber, analysis.TypeBool:
+		return fmt.Sprintf("for_each source is a %s — single value used where a collection is required", scalarTypeName(t.Kind)), true
+	}
+	return "", false
+}
+
+// scalarTypeName returns the wire-format friendly name for a scalar
+// TypeKind. Only used in the singleValueForEach reason text — TFType
+// has its own String method but TypeKind alone doesn't expose one.
+func scalarTypeName(k analysis.TypeKind) string {
+	switch k {
+	case analysis.TypeString:
+		return "string"
+	case analysis.TypeNumber:
+		return "number"
+	case analysis.TypeBool:
+		return "bool"
+	}
+	return "scalar"
 }
 
 // classifyConditionalForEach applies the empty-tuple/empty-object rule
@@ -500,11 +570,21 @@ func iteratorElementType(expr hclsyntax.Expression, rc *renderCtx) *analysis.TFT
 	case analysis.TypeList, analysis.TypeSet, analysis.TypeMap:
 		return t.Elem
 	case analysis.TypeObject:
-		// Iterating an object yields heterogeneous values; we can't
-		// emit a single element type cleanly. Return nil so the
-		// binding doesn't push and downstream traversals fall back
-		// to "unknown" rather than misclassifying.
-		return nil
+		// Bug-pattern accommodation: push the object itself as the
+		// iterator's synthetic element type. Terraform's actual
+		// semantics for `for_each = <object>` is to iterate
+		// attribute key/value pairs (each.key = attr name,
+		// each.value = the attribute's value), so this binding is
+		// "wrong" relative to runtime — but the for_each itself is
+		// already flagged invalid by classifySingleValueForEach in
+		// those cases, and pushing the object lets downstream
+		// `<iter>.value.X` resolve into the declared object's
+		// fields so cascading single-object bugs surface their own
+		// invalid classifications instead of cascading to unknown.
+		// Literal `{...}` constructors have no Fields populated so
+		// downstream resolution naturally falls back to unknown for
+		// legitimate object-as-map for_each idioms.
+		return t
 	}
 	return nil
 }

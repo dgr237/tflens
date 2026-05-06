@@ -614,6 +614,62 @@
                                                       }
                                                     }
                                                   },
+                                                  "dynamic_blocks": {
+                                                    "metric_inner_buggy_capacity": [
+                                                      {
+                                                        "for_each": {
+                                                          "text": "metric_stat_buggy_capacity.value.metric",
+                                                          "ast": {
+                                                            "node": "scope_traversal",
+                                                            "traversal": [
+                                                              {
+                                                                "name": "metric_stat_buggy_capacity",
+                                                                "step": "root"
+                                                              },
+                                                              {
+                                                                "name": "value",
+                                                                "step": "attr"
+                                                              },
+                                                              {
+                                                                "name": "metric",
+                                                                "step": "attr"
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        "for_each_kind": {
+                                                          "kind": "invalid",
+                                                          "reason": "for_each source is a single object — Terraform would iterate the object's attributes, not the object itself"
+                                                        },
+                                                        "content": {
+                                                          "attributes": {
+                                                            "metric_name": {
+                                                              "text": "metric_inner_buggy_capacity.value.metric_name",
+                                                              "ast": {
+                                                                "node": "scope_traversal",
+                                                                "traversal": [
+                                                                  {
+                                                                    "name": "metric_inner_buggy_capacity",
+                                                                    "step": "root"
+                                                                  },
+                                                                  {
+                                                                    "name": "value",
+                                                                    "step": "attr"
+                                                                  },
+                                                                  {
+                                                                    "name": "metric_name",
+                                                                    "step": "attr"
+                                                                  }
+                                                                ]
+                                                              }
+                                                            }
+                                                          },
+                                                          "location": "main.tf:104"
+                                                        },
+                                                        "location": "main.tf:102"
+                                                      }
+                                                    ]
+                                                  },
                                                   "location": "main.tf:94"
                                                 },
                                                 "location": "main.tf:92"
@@ -826,21 +882,21 @@
                                                       }
                                                     }
                                                   },
-                                                  "location": "main.tf:117"
+                                                  "location": "main.tf:129"
                                                 },
-                                                "location": "main.tf:115"
+                                                "location": "main.tf:127"
                                               }
                                             ]
                                           },
-                                          "location": "main.tf:110"
+                                          "location": "main.tf:122"
                                         },
-                                        "location": "main.tf:107"
+                                        "location": "main.tf:119"
                                       }
                                     ]
                                   },
-                                  "location": "main.tf:106"
+                                  "location": "main.tf:118"
                                 },
-                                "location": "main.tf:103"
+                                "location": "main.tf:115"
                               }
                             ],
                             "customized_scaling_metric_specification": [
@@ -1041,21 +1097,21 @@
                                                       }
                                                     }
                                                   },
-                                                  "location": "main.tf:140"
+                                                  "location": "main.tf:152"
                                                 },
-                                                "location": "main.tf:138"
+                                                "location": "main.tf:150"
                                               }
                                             ]
                                           },
-                                          "location": "main.tf:133"
+                                          "location": "main.tf:145"
                                         },
-                                        "location": "main.tf:130"
+                                        "location": "main.tf:142"
                                       }
                                     ]
                                   },
-                                  "location": "main.tf:129"
+                                  "location": "main.tf:141"
                                 },
-                                "location": "main.tf:126"
+                                "location": "main.tf:138"
                               }
                             ]
                           },

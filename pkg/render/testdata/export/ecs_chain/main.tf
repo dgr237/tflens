@@ -93,6 +93,18 @@ resource "aws_appautoscaling_policy" "this" {
                     for_each = metric_data_query.value.metric_stat != null ? metric_data_query.value.metric_stat : []
                     content {
                       stat = metric_stat_buggy_capacity.value.stat
+
+                      # SIBLING BUG (mirrors upstream main.tf:1712):
+                      # bare singleton object as for_each (no ternary)
+                      # — `.metric` is `object(...)` per the type
+                      # declaration, not a list. Detected without
+                      # ternary anchor via the single-value rule.
+                      dynamic "metric_inner_buggy_capacity" {
+                        for_each = metric_stat_buggy_capacity.value.metric
+                        content {
+                          metric_name = metric_inner_buggy_capacity.value.metric_name
+                        }
+                      }
                     }
                   }
                 }
