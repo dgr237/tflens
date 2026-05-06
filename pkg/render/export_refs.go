@@ -352,14 +352,18 @@ func ctyKeyToInterface(v cty.Value) any {
 // local entity, collecting every var / resource / data source / module
 // / local reachable through chains of `local.X → local.Y → ...`.
 // Returns the merged ExportReferences plus a bool that's true when the
-// walk hit a cycle.
+// walk hit a real cycle.
 //
-// Cycle handling: each local is visited at most once via the visited
-// set; encountering an already-visited local short-circuits and flips
-// the cycle flag. The returned graph is therefore conservative
-// (everything reachable before the cycle was detected) — Terraform
-// itself rejects local cycles at validate time, so the cycle flag is
-// the actionable signal.
+// Cycle handling is classical DFS-coloured: inStack tracks names
+// currently mid-recursion (push on entry, pop on return) — re-entering
+// one is a back-edge and flips the cycle flag. fullyResolved marks
+// names whose entire subtree has already been merged into out, so a
+// diamond like `a → combined → shared` plus `a → shared` short-circuits
+// the second visit instead of false-positiving as a cycle. Crucially,
+// "ref to the same target local appearing twice in one expression"
+// (e.g. `local.X.foo + local.X.bar`) is also a non-cycle: the second
+// ref is filtered by fullyResolved after the first ref's recursion
+// completes.
 //
 // Used by exportLocal to populate the DependsOn / Cycle fields on
 // each ExportLocal so consumers (composegen's resolveLocal walker)
@@ -370,9 +374,10 @@ func transitiveLocalRefs(root analysis.Entity, m *analysis.Module) (*ExportRefer
 	}
 	out := &ExportReferences{}
 	seen := map[string]bool{}
-	visited := map[string]bool{root.Name: true}
+	inStack := map[string]bool{}
+	fullyResolved := map[string]bool{}
 	cycle := false
-	visitLocal(root, m, out, seen, visited, &cycle)
+	visitLocal(root, m, out, seen, inStack, fullyResolved, &cycle)
 	if len(out.Variables) == 0 && len(out.Resources) == 0 && len(out.Modules) == 0 && len(out.DataSources) == 0 && len(out.Locals) == 0 {
 		return nil, cycle
 	}
@@ -382,13 +387,35 @@ func transitiveLocalRefs(root analysis.Entity, m *analysis.Module) (*ExportRefer
 
 // visitLocal extracts direct refs from one local's expression and
 // recurses into any local refs found, accumulating into the shared
-// out / seen / visited maps. Splits the recursion off from the
-// public entry so the cycle bool is shared across the whole walk
+// out / seen maps and threading the inStack / fullyResolved DFS state
+// for cycle detection. The cycle bool is shared across the whole walk
 // via pointer.
-func visitLocal(e analysis.Entity, m *analysis.Module, out *ExportReferences, seen map[string]bool, visited map[string]bool, cycle *bool) {
+//
+// Two short-circuit conditions on each child ref:
+//
+//   - inStack[child] → true cycle (back-edge into the active path);
+//     flip *cycle and skip recursion.
+//   - fullyResolved[child] → already-walked subtree; skip recursion
+//     because every transitive ref is already in out via seen. NOT a
+//     cycle — this is the diamond / sibling-multi-ref case.
+//
+// On entry: push e.Name onto inStack. On return (defer): pop from
+// inStack and add to fullyResolved. The defer ordering matters —
+// inStack must be popped before fullyResolved is set, so the next
+// sibling sees the child as resolved rather than still-active.
+func visitLocal(e analysis.Entity, m *analysis.Module, out *ExportReferences, seen map[string]bool, inStack map[string]bool, fullyResolved map[string]bool, cycle *bool) {
 	if e.LocalExpr == nil || e.LocalExpr.E == nil {
 		return
 	}
+	if fullyResolved[e.Name] {
+		return
+	}
+	inStack[e.Name] = true
+	defer func() {
+		delete(inStack, e.Name)
+		fullyResolved[e.Name] = true
+	}()
+
 	direct := extractReferences(e.LocalExpr, m)
 	if direct == nil {
 		return
@@ -427,13 +454,15 @@ func visitLocal(e analysis.Entity, m *analysis.Module, out *ExportReferences, se
 			seen[key] = true
 			out.Locals = append(out.Locals, ref)
 		}
-		if visited[ref.Name] {
+		if inStack[ref.Name] {
 			*cycle = true
 			continue
 		}
-		visited[ref.Name] = true
+		if fullyResolved[ref.Name] {
+			continue
+		}
 		if child, ok := m.EntityByID((analysis.Entity{Kind: analysis.KindLocal, Name: ref.Name}).ID()); ok {
-			visitLocal(child, m, out, seen, visited, cycle)
+			visitLocal(child, m, out, seen, inStack, fullyResolved, cycle)
 		}
 	}
 }

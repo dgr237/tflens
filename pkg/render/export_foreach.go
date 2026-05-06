@@ -388,17 +388,37 @@ var builtinFuncShape = map[string]string{
 }
 
 // resolveExprType is the dispatcher that classifyForEach's fallback
-// path uses for non-conditional expressions. Prefers the index-aware
-// resolveTraversalType for traversal expressions (the analyser's
-// stock InferExprType truncates traversals at the first non-attr
-// step, which loses information for shapes like
-// `var.instances["primary"].metric_stat`); peers through passthrough
-// function wrappers (try/lookup/coalesce) so common defensive idioms
-// don't break inference; falls back to the analyser's inference for
-// everything else.
+// path uses for non-conditional expressions, and that exportLocal /
+// exportOutput call to populate inferred_type fields. Five resolution
+// strategies in order:
+//
+//  1. Passthrough function unwrap (try/lookup/coalesce) — recover the
+//     wrapped expression's type so common defensive idioms don't lose
+//     inference.
+//  2. ConditionalExpr — peer through ternaries with an empty `[]` or
+//     `{}` fallback to the non-empty branch (the common
+//     defensive-default idiom for optional collections), and pick a
+//     branch when both type-agree (the `cond ? var.x : null` shape
+//     where one side is null).
+//  3. ScopeTraversalExpr — index-aware resolveTraversalType (the
+//     analyser's stock InferExprType truncates traversals at the
+//     first non-attr step, which loses information for shapes like
+//     `var.instances["primary"].metric_stat`).
+//  4. RelativeTraversalExpr with ScopeTraversal source — same as (3)
+//     after concatenating the source's traversal with the relative
+//     chain.
+//  5. Analyser's stock InferExprType — fallback for everything else.
+//
+// Returns nil when no path yields a known type. Caller treats nil as
+// "unknown" — the conservative interpretation.
 func resolveExprType(expr hclsyntax.Expression, rc *renderCtx) *analysis.TFType {
 	if inner, ok := unwrapPassthrough(expr); ok {
 		if t := resolveExprType(inner, rc); t != nil {
+			return t
+		}
+	}
+	if cond, ok := expr.(*hclsyntax.ConditionalExpr); ok {
+		if t := resolveConditionalType(cond, rc); t != nil {
 			return t
 		}
 	}
@@ -422,6 +442,51 @@ func resolveExprType(expr hclsyntax.Expression, rc *renderCtx) *analysis.TFType 
 		}
 	}
 	return nil
+}
+
+// resolveConditionalType infers the result type of a ternary by
+// picking the more informative branch. Strategy:
+//
+//   - One branch is `[]` or `{}` (empty literal) — return the non-empty
+//     branch's type. The fallback's empty-literal type would be
+//     `tuple([])` / `object({})` which carries less information.
+//   - One branch is null literal — return the non-null branch's type.
+//     `cond ? var.x : null` is the common nullable-passthrough idiom.
+//   - Both branches resolve and types agree — return that type.
+//   - Otherwise — nil.
+//
+// This is the type-inference counterpart to classifyConditionalForEach
+// (which classifies the *shape* the user intended for for_each); both
+// converge on "the non-empty branch's type is what the expression
+// represents at runtime" but resolveConditionalType returns a TFType
+// for type cascading, while classifyConditionalForEach returns a
+// for_each-specific kind for diagnostic purposes.
+func resolveConditionalType(cond *hclsyntax.ConditionalExpr, rc *renderCtx) *analysis.TFType {
+	tEmpty := isEmptyTuple(cond.TrueResult) || isEmptyObject(cond.TrueResult)
+	fEmpty := isEmptyTuple(cond.FalseResult) || isEmptyObject(cond.FalseResult)
+	if tEmpty && !fEmpty {
+		return resolveExprType(cond.FalseResult, rc)
+	}
+	if fEmpty && !tEmpty {
+		return resolveExprType(cond.TrueResult, rc)
+	}
+	tNull := isNullLiteral(cond.TrueResult)
+	fNull := isNullLiteral(cond.FalseResult)
+	if tNull && !fNull {
+		return resolveExprType(cond.FalseResult, rc)
+	}
+	if fNull && !tNull {
+		return resolveExprType(cond.TrueResult, rc)
+	}
+	tType := resolveExprType(cond.TrueResult, rc)
+	fType := resolveExprType(cond.FalseResult, rc)
+	if tType != nil && fType != nil && tType.Kind == fType.Kind {
+		return tType
+	}
+	if tType != nil {
+		return tType
+	}
+	return fType
 }
 
 // unwrapPassthrough recognises Terraform idioms where an expression

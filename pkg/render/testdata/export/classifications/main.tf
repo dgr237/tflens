@@ -158,12 +158,52 @@ resource "aws_iam_policy" "tagged" {
 #   derived     →  pure_const + var.replicas
 #   layered     →  derived (transitively pulls var.replicas)
 #   cycle_a / cycle_b — deliberate cycle to exercise the marker
+#
+# Plus two false-cycle regressions that the previous walker
+# incorrectly flagged:
+#   diamond_root — refs both diamond_branch and pure_const directly,
+#                  AND diamond_branch transitively refs pure_const
+#                  (classical diamond — must NOT cycle).
+#   multi_path   — refs the same target local twice with different
+#                  paths (`local.shape.alpha` + `local.shape`).
+#                  Both shape refs map to the same local; the walker
+#                  must not flag the second occurrence as a cycle.
 locals {
-  pure_const = "static"
-  derived    = "${local.pure_const}-${var.replicas}"
-  layered    = "wrap-${local.derived}"
-  cycle_a    = local.cycle_b
-  cycle_b    = local.cycle_a
+  pure_const     = "static"
+  derived        = "${local.pure_const}-${var.replicas}"
+  layered        = "wrap-${local.derived}"
+  cycle_a        = local.cycle_b
+  cycle_b        = local.cycle_a
+  shape          = { alpha = "a", beta = "b" }
+  diamond_branch = "${local.pure_const}-leaf"
+  diamond_root   = "${local.diamond_branch}/${local.pure_const}"
+  multi_path     = "${local.shape.alpha}-${local.shape}"
+  # EKS-style: a local whose value is itself a ternary. Previously
+  # the resolver couldn't see through this so `for_each_kind` against
+  # `local.network_interfaces` fell back to "unknown". With the
+  # ConditionalExpr handling, the ternary's empty-list fallback gets
+  # peered through and the local's inferred_type populates as
+  # list(string).
+  network_interfaces = length(var.regions) > 0 ? var.regions : []
+}
+
+# Outputs exercising the new ConditionalExpr type-inference path.
+# Both should now carry inferred_type — previously fell back to
+# unknown and the field was omitted.
+output "ternary_to_var" {
+  value = var.enable_logs ? var.tag_overlay : {}
+}
+
+output "ternary_to_local" {
+  value = length(var.regions) > 0 ? local.network_interfaces : []
+}
+
+# For-each on the inferred-type local. Should classify as "list"
+# (vs the previous "unknown") because resolveExprType now resolves
+# local.network_interfaces through its ternary value to list(string).
+resource "aws_route" "via_local" {
+  for_each = toset(local.network_interfaces)
+  name     = each.key
 }
 
 # Output exercising inferred_type — value resolves through a variable

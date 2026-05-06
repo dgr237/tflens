@@ -863,7 +863,8 @@
               ]
             }
           },
-          "location": "main.tf:200"
+          "inferred_type": "string",
+          "location": "main.tf:240"
         },
         {
           "name": "pattern_drop_when_true",
@@ -914,7 +915,8 @@
               ]
             }
           },
-          "location": "main.tf:196"
+          "inferred_type": "string",
+          "location": "main.tf:236"
         },
         {
           "name": "pattern_null_check_lhs",
@@ -979,7 +981,7 @@
               ]
             }
           },
-          "location": "main.tf:204"
+          "location": "main.tf:244"
         },
         {
           "name": "single_binder_list",
@@ -1038,7 +1040,7 @@
               ]
             }
           },
-          "location": "main.tf:185"
+          "location": "main.tf:225"
         },
         {
           "name": "splat_with_attr_path",
@@ -1084,7 +1086,7 @@
               ]
             }
           },
-          "location": "main.tf:179"
+          "location": "main.tf:219"
         },
         {
           "name": "tag_overlay_echo",
@@ -1122,7 +1124,152 @@
             "map",
             "string"
           ],
-          "location": "main.tf:172"
+          "location": "main.tf:212"
+        },
+        {
+          "name": "ternary_to_local",
+          "value": {
+            "text": "length(var.regions) \u003e 0 ? local.network_interfaces : []",
+            "value": {
+              "type": [
+                "list",
+                "string"
+              ],
+              "value": [
+                "us-east-1"
+              ]
+            },
+            "ast": {
+              "condition": {
+                "lhs": {
+                  "args": [
+                    {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "var",
+                          "step": "root"
+                        },
+                        {
+                          "name": "regions",
+                          "step": "attr"
+                        }
+                      ]
+                    }
+                  ],
+                  "name": "length",
+                  "node": "function_call"
+                },
+                "node": "binary_op",
+                "op": "\u003e",
+                "rhs": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "number",
+                    "value": 0
+                  }
+                }
+              },
+              "false": {
+                "elements": [],
+                "node": "tuple_cons"
+              },
+              "node": "conditional",
+              "pattern": "empty_fallback",
+              "true": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "local",
+                    "step": "root"
+                  },
+                  {
+                    "name": "network_interfaces",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "regions"
+                }
+              ],
+              "locals": [
+                {
+                  "name": "network_interfaces"
+                }
+              ]
+            }
+          },
+          "inferred_type": [
+            "list",
+            "string"
+          ],
+          "location": "main.tf:197"
+        },
+        {
+          "name": "ternary_to_var",
+          "value": {
+            "text": "var.enable_logs ? var.tag_overlay : {}",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "condition": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "enable_logs",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "false": {
+                "items": [],
+                "node": "object_cons"
+              },
+              "node": "conditional",
+              "pattern": "empty_fallback",
+              "true": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "tag_overlay",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "enable_logs"
+                },
+                {
+                  "name": "tag_overlay"
+                }
+              ]
+            }
+          },
+          "inferred_type": [
+            "map",
+            "string"
+          ],
+          "location": "main.tf:193"
         },
         {
           "name": "two_binder_object",
@@ -1187,7 +1334,7 @@
               ]
             }
           },
-          "location": "main.tf:189"
+          "location": "main.tf:229"
         }
       ],
       "resources": [
@@ -1527,19 +1674,19 @@
                               }
                             }
                           },
-                          "location": "main.tf:224"
+                          "location": "main.tf:264"
                         },
-                        "location": "main.tf:222"
+                        "location": "main.tf:262"
                       }
                     ]
                   },
-                  "location": "main.tf:214"
+                  "location": "main.tf:254"
                 },
-                "location": "main.tf:212"
+                "location": "main.tf:252"
               }
             ]
           },
-          "location": "main.tf:208"
+          "location": "main.tf:248"
         },
         {
           "type": "aws_iam_policy",
@@ -1745,6 +1892,70 @@
           "location": "main.tf:100"
         },
         {
+          "type": "aws_route",
+          "name": "via_local",
+          "for_each": {
+            "text": "toset(local.network_interfaces)",
+            "value": {
+              "type": [
+                "set",
+                "string"
+              ],
+              "value": [
+                "us-east-1"
+              ]
+            },
+            "ast": {
+              "args": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "network_interfaces",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ],
+              "name": "toset",
+              "node": "function_call"
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "network_interfaces"
+                }
+              ]
+            }
+          },
+          "for_each_kind": {
+            "kind": "set"
+          },
+          "attributes": {
+            "name": {
+              "text": "each.key",
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "each",
+                    "step": "root"
+                  },
+                  {
+                    "name": "key",
+                    "step": "attr"
+                  }
+                ]
+              }
+            }
+          },
+          "location": "main.tf:204"
+        },
+        {
           "type": "aws_subnet",
           "name": "static",
           "count": {
@@ -1843,7 +2054,7 @@
             ]
           },
           "cycle": true,
-          "location": "main.tf:165"
+          "location": "main.tf:175"
         },
         {
           "name": "cycle_b",
@@ -1881,7 +2092,7 @@
             ]
           },
           "cycle": true,
-          "location": "main.tf:166"
+          "location": "main.tf:176"
         },
         {
           "name": "derived",
@@ -1954,7 +2165,126 @@
               }
             ]
           },
-          "location": "main.tf:163"
+          "location": "main.tf:173"
+        },
+        {
+          "name": "diamond_branch",
+          "value": {
+            "text": "\"${local.pure_const}-leaf\"",
+            "value": {
+              "type": "string",
+              "value": "static-leaf"
+            },
+            "ast": {
+              "node": "template",
+              "parts": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "pure_const",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "-leaf"
+                  }
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "pure_const"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "locals": [
+              {
+                "name": "pure_const"
+              }
+            ]
+          },
+          "location": "main.tf:178"
+        },
+        {
+          "name": "diamond_root",
+          "value": {
+            "text": "\"${local.diamond_branch}/${local.pure_const}\"",
+            "value": {
+              "type": "string",
+              "value": "static-leaf/static"
+            },
+            "ast": {
+              "node": "template",
+              "parts": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "diamond_branch",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "/"
+                  }
+                },
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "pure_const",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "diamond_branch"
+                },
+                {
+                  "name": "pure_const"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "locals": [
+              {
+                "name": "diamond_branch"
+              },
+              {
+                "name": "pure_const"
+              }
+            ]
+          },
+          "location": "main.tf:179"
         },
         {
           "name": "layered",
@@ -2012,7 +2342,167 @@
               }
             ]
           },
-          "location": "main.tf:164"
+          "location": "main.tf:174"
+        },
+        {
+          "name": "multi_path",
+          "value": {
+            "text": "\"${local.shape.alpha}-${local.shape}\"",
+            "ast": {
+              "node": "template",
+              "parts": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "shape",
+                      "step": "attr"
+                    },
+                    {
+                      "name": "alpha",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "-"
+                  }
+                },
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "shape",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "shape"
+                },
+                {
+                  "name": "shape",
+                  "path": [
+                    "alpha"
+                  ]
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "locals": [
+              {
+                "name": "shape"
+              },
+              {
+                "name": "shape",
+                "path": [
+                  "alpha"
+                ]
+              }
+            ]
+          },
+          "location": "main.tf:180"
+        },
+        {
+          "name": "network_interfaces",
+          "value": {
+            "text": "length(var.regions) \u003e 0 ? var.regions : []",
+            "value": {
+              "type": [
+                "list",
+                "string"
+              ],
+              "value": [
+                "us-east-1"
+              ]
+            },
+            "ast": {
+              "condition": {
+                "lhs": {
+                  "args": [
+                    {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "var",
+                          "step": "root"
+                        },
+                        {
+                          "name": "regions",
+                          "step": "attr"
+                        }
+                      ]
+                    }
+                  ],
+                  "name": "length",
+                  "node": "function_call"
+                },
+                "node": "binary_op",
+                "op": "\u003e",
+                "rhs": {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "number",
+                    "value": 0
+                  }
+                }
+              },
+              "false": {
+                "elements": [],
+                "node": "tuple_cons"
+              },
+              "node": "conditional",
+              "pattern": "empty_fallback",
+              "true": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "regions",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "regions"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "variables": [
+              {
+                "name": "regions"
+              }
+            ]
+          },
+          "inferred_type": [
+            "list",
+            "string"
+          ],
+          "location": "main.tf:187"
         },
         {
           "name": "pure_const",
@@ -2030,7 +2520,64 @@
               }
             }
           },
-          "location": "main.tf:162"
+          "location": "main.tf:172"
+        },
+        {
+          "name": "shape",
+          "value": {
+            "text": "{ alpha = \"a\", beta = \"b\" }",
+            "value": {
+              "type": [
+                "object",
+                {
+                  "alpha": "string",
+                  "beta": "string"
+                }
+              ],
+              "value": {
+                "alpha": "a",
+                "beta": "b"
+              }
+            },
+            "ast": {
+              "items": [
+                {
+                  "key": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "alpha"
+                    }
+                  },
+                  "value": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "a"
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "beta"
+                    }
+                  },
+                  "value": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "b"
+                    }
+                  }
+                }
+              ],
+              "node": "object_cons"
+            }
+          },
+          "location": "main.tf:177"
         }
       ],
       "module_calls": [
@@ -2157,8 +2704,21 @@
           "local.pure_const",
           "variable.replicas"
         ],
+        "local.diamond_branch": [
+          "local.pure_const"
+        ],
+        "local.diamond_root": [
+          "local.diamond_branch",
+          "local.pure_const"
+        ],
         "local.layered": [
           "local.derived"
+        ],
+        "local.multi_path": [
+          "local.shape"
+        ],
+        "local.network_interfaces": [
+          "variable.regions"
         ],
         "module.child": [
           "variable.regions",
@@ -2190,6 +2750,14 @@
         "output.tag_overlay_echo": [
           "variable.tag_overlay"
         ],
+        "output.ternary_to_local": [
+          "local.network_interfaces",
+          "variable.regions"
+        ],
+        "output.ternary_to_var": [
+          "variable.enable_logs",
+          "variable.tag_overlay"
+        ],
         "output.two_binder_object": [
           "variable.tag_overlay"
         ],
@@ -2211,6 +2779,9 @@
         ],
         "resource.aws_instance.web": [
           "variable.instances"
+        ],
+        "resource.aws_route.via_local": [
+          "local.network_interfaces"
         ]
       }
     },
