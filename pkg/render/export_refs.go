@@ -348,6 +348,96 @@ func ctyKeyToInterface(v cty.Value) any {
 	return nil
 }
 
+// transitiveLocalRefs walks the dependency graph rooted at the given
+// local entity, collecting every var / resource / data source / module
+// / local reachable through chains of `local.X → local.Y → ...`.
+// Returns the merged ExportReferences plus a bool that's true when the
+// walk hit a cycle.
+//
+// Cycle handling: each local is visited at most once via the visited
+// set; encountering an already-visited local short-circuits and flips
+// the cycle flag. The returned graph is therefore conservative
+// (everything reachable before the cycle was detected) — Terraform
+// itself rejects local cycles at validate time, so the cycle flag is
+// the actionable signal.
+//
+// Used by exportLocal to populate the DependsOn / Cycle fields on
+// each ExportLocal so consumers (composegen's resolveLocal walker)
+// don't have to recurse through sub-locals themselves.
+func transitiveLocalRefs(root analysis.Entity, m *analysis.Module) (*ExportReferences, bool) {
+	if root.Kind != analysis.KindLocal || root.LocalExpr == nil || root.LocalExpr.E == nil {
+		return nil, false
+	}
+	out := &ExportReferences{}
+	seen := map[string]bool{}
+	visited := map[string]bool{root.Name: true}
+	cycle := false
+	visitLocal(root, m, out, seen, visited, &cycle)
+	if len(out.Variables) == 0 && len(out.Resources) == 0 && len(out.Modules) == 0 && len(out.DataSources) == 0 && len(out.Locals) == 0 {
+		return nil, cycle
+	}
+	sortRefs(out)
+	return out, cycle
+}
+
+// visitLocal extracts direct refs from one local's expression and
+// recurses into any local refs found, accumulating into the shared
+// out / seen / visited maps. Splits the recursion off from the
+// public entry so the cycle bool is shared across the whole walk
+// via pointer.
+func visitLocal(e analysis.Entity, m *analysis.Module, out *ExportReferences, seen map[string]bool, visited map[string]bool, cycle *bool) {
+	if e.LocalExpr == nil || e.LocalExpr.E == nil {
+		return
+	}
+	direct := extractReferences(e.LocalExpr, m)
+	if direct == nil {
+		return
+	}
+	for _, ref := range direct.Variables {
+		key := "var:" + ref.Name + ":" + strings.Join(ref.Path, ".")
+		if !seen[key] {
+			seen[key] = true
+			out.Variables = append(out.Variables, ref)
+		}
+	}
+	for _, ref := range direct.Resources {
+		key := "resource:" + ref.Type + ":" + ref.Name + ":" + indexKey(ref.Index) + ":" + strings.Join(ref.Path, ".")
+		if !seen[key] {
+			seen[key] = true
+			out.Resources = append(out.Resources, ref)
+		}
+	}
+	for _, ref := range direct.Modules {
+		key := "module:" + ref.Call + ":" + ref.Output + ":" + strings.Join(ref.Path, ".")
+		if !seen[key] {
+			seen[key] = true
+			out.Modules = append(out.Modules, ref)
+		}
+	}
+	for _, ref := range direct.DataSources {
+		key := "data:" + ref.Type + ":" + ref.Name + ":" + strings.Join(ref.Path, ".")
+		if !seen[key] {
+			seen[key] = true
+			out.DataSources = append(out.DataSources, ref)
+		}
+	}
+	for _, ref := range direct.Locals {
+		key := "local:" + ref.Name + ":" + strings.Join(ref.Path, ".")
+		if !seen[key] {
+			seen[key] = true
+			out.Locals = append(out.Locals, ref)
+		}
+		if visited[ref.Name] {
+			*cycle = true
+			continue
+		}
+		visited[ref.Name] = true
+		if child, ok := m.EntityByID((analysis.Entity{Kind: analysis.KindLocal, Name: ref.Name}).ID()); ok {
+			visitLocal(child, m, out, seen, visited, cycle)
+		}
+	}
+}
+
 func sortRefs(r *ExportReferences) {
 	sort.Slice(r.Variables, func(i, j int) bool {
 		if r.Variables[i].Name != r.Variables[j].Name {

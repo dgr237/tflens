@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.8.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "ecs_chain",
@@ -195,6 +195,7 @@
               "value": {}
             },
             "ast": {
+              "binder_count": 2,
               "collection": {
                 "node": "scope_traversal",
                 "traversal": [
@@ -231,6 +232,7 @@
                 ]
               },
               "key_var": "k",
+              "kind": "object",
               "node": "for",
               "value_result": {
                 "node": "scope_traversal",
@@ -363,6 +365,7 @@
                       "node": "tuple_cons"
                     },
                     "node": "conditional",
+                    "pattern": "empty_fallback",
                     "true": {
                       "elements": [
                         {
@@ -454,6 +457,7 @@
                                       "node": "tuple_cons"
                                     },
                                     "node": "conditional",
+                                    "pattern": "empty_fallback",
                                     "true": {
                                       "elements": [
                                         {
@@ -567,6 +571,7 @@
                                                       "node": "tuple_cons"
                                                     },
                                                     "node": "conditional",
+                                                    "pattern": "empty_fallback",
                                                     "true": {
                                                       "node": "scope_traversal",
                                                       "traversal": [
@@ -722,6 +727,7 @@
                                       "node": "tuple_cons"
                                     },
                                     "node": "conditional",
+                                    "pattern": "empty_fallback",
                                     "true": {
                                       "elements": [
                                         {
@@ -835,6 +841,7 @@
                                                       "node": "tuple_cons"
                                                     },
                                                     "node": "conditional",
+                                                    "pattern": "empty_fallback",
                                                     "true": {
                                                       "node": "scope_traversal",
                                                       "traversal": [
@@ -934,6 +941,7 @@
                                       "node": "tuple_cons"
                                     },
                                     "node": "conditional",
+                                    "pattern": "empty_fallback",
                                     "true": {
                                       "elements": [
                                         {
@@ -1047,6 +1055,7 @@
                                                       "node": "tuple_cons"
                                                     },
                                                     "node": "conditional",
+                                                    "pattern": "empty_fallback",
                                                     "true": {
                                                       "elements": [
                                                         {

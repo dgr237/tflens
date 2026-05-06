@@ -32,6 +32,43 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
+// 0.9.0-prototype adds five further fields/markers, all targeted at
+// downstream converters that today re-implement classification on top
+// of the raw export. Pure additions — every prior fixture round-trips
+// unchanged apart from the schema bump.
+//
+//   - ExportLocal.DependsOn / InferredType / Cycle: transitive
+//     reference graph (every var/resource/data/module/local reachable
+//     through chains of `local.X → local.Y → ...`), inferred type via
+//     the same machinery used for variables, and a cycle marker when
+//     the walk hits `local.A → ... → local.A`. Replaces composegen's
+//     resolveLocal recursive walker with a single field read and
+//     gives consumers a structured failure mode for cycles. Also
+//     enables the for_each_kind classifier to recognise local refs
+//     it previously couldn't trace.
+//
+//   - ExportOutput.InferredType: cty/json type marker for the
+//     output's value expression. Mirrors ExportVariable.VariableType
+//     but inferred rather than declared. Lets schema renderers (kro
+//     status fields, Crossplane composite outputs) emit properly
+//     typed outputs without re-running inference.
+//
+//   - ConditionalExpr.pattern (in ast): named-shape hint —
+//     "drop_when_true" / "drop_when_false" / "empty_fallback" /
+//     "null_check_lhs" / "null_check_rhs" / "normal" — so consumers
+//     short-circuit to the right rewrite without re-inspecting
+//     branches. Mirrors composegen §4.11's conditional table.
+//
+//   - SplatExpr.attr_path (in ast): chain of attribute names when
+//     the splat's projection is a pure `.attr1.attr2` traversal
+//     (the common `aws_T.X[*].id` shape). Lets consumers render
+//     CEL/JS projections directly without ASCII-pattern detection.
+//
+//   - ForExpr.binder_count + kind (in ast): explicit `1`|`2` and
+//     `"list"`|`"object"` markers (today implicit in key_var /
+//     key_result presence). Lets consumers gate-check against the
+//     kro-incompatible two-binder form without inspecting branches.
+//
 // 0.8.0-prototype adds five fields targeted at downstream converters
 // that today re-implement the same classification logic on top of the
 // raw AST. All are pure additions — old consumers ignore them and
@@ -128,7 +165,7 @@ import (
 // wherever an HCL expression appears in the export. Schema bumped
 // from 0.1.0-prototype because the *_text string fields were
 // removed in favour of nested objects.
-const ExportSchemaVersion = "0.8.0-prototype"
+const ExportSchemaVersion = "0.9.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -213,9 +250,20 @@ type ExportTypeDefaults struct {
 }
 
 type ExportOutput struct {
-	Name           string                 `json:"name"`
-	Description    string                 `json:"description,omitempty"`
-	Value          *ExportExpression      `json:"value,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Value       *ExportExpression `json:"value,omitempty"`
+	// InferredType is the cty/json type marker for this output's value
+	// expression — same machinery the variable / for_each classifiers
+	// use, applied to outputs. Lets schema renderers (e.g. kro status
+	// fields, Crossplane composite outputs) emit properly-typed
+	// outputs without re-running inference. Mirrors
+	// ExportVariable.VariableType but inferred rather than declared.
+	// Omitted when the inference returns unknown — most outputs
+	// reference computed resource attributes whose types the analyser
+	// can't statically determine, so absence of this field is the
+	// common case rather than the exception.
+	InferredType   json.RawMessage        `json:"inferred_type,omitempty"`
 	Sensitive      bool                   `json:"sensitive,omitempty"`
 	Ephemeral      bool                   `json:"ephemeral,omitempty"`
 	DependsOn      *ExportExpression      `json:"depends_on,omitempty"`
@@ -350,9 +398,32 @@ type ExportDynamicBlock struct {
 }
 
 type ExportLocal struct {
-	Name     string            `json:"name"`
-	Value    *ExportExpression `json:"value,omitempty"`
-	Location string            `json:"location,omitempty"`
+	Name  string            `json:"name"`
+	Value *ExportExpression `json:"value,omitempty"`
+	// DependsOn is the *transitive* reference index for this local —
+	// every var / resource / data source / module / local reachable
+	// through chains of `local.X → local.Y → ...`. Distinct from
+	// Value.References (which is direct only): consumers walking a
+	// local's dependency graph (e.g. composegen's resolveLocal) can
+	// read DependsOn instead of recursing through sub-locals
+	// themselves.
+	DependsOn *ExportReferences `json:"depends_on,omitempty"`
+	// InferredType is the cty/json type marker for this local's value,
+	// computed via Module.InferExprType against the value expression
+	// (same machinery the variable / for_each classifiers use). Lets
+	// consumers gate-check the local's shape without re-running
+	// inference. Mirrors ExportVariable.VariableType but inferred
+	// rather than declared. Omitted when the inference returns
+	// unknown.
+	InferredType json.RawMessage `json:"inferred_type,omitempty"`
+	// Cycle is true when the transitive walk hit a `local.A → local.B
+	// → ... → local.A` loop. The walk terminates safely (each local
+	// is visited at most once) but consumers should treat the
+	// DependsOn graph as conservative — it's everything reachable
+	// before the cycle was hit, not the full set Terraform would
+	// actually reject.
+	Cycle    bool   `json:"cycle,omitempty"`
+	Location string `json:"location,omitempty"`
 }
 
 type ExportModuleCall struct {
@@ -509,7 +580,12 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode) Ex
 	if m == nil {
 		return out
 	}
-	rc := &renderCtx{m: m, ctx: m.EvalContext(), children: children}
+	rc := &renderCtx{
+		m:               m,
+		ctx:             m.EvalContext(),
+		children:        children,
+		resolvingLocals: map[string]bool{},
+	}
 	for _, e := range m.Entities() {
 		switch e.Kind {
 		case analysis.KindVariable:
@@ -581,6 +657,13 @@ type renderCtx struct {
 	ctx       *hcl.EvalContext
 	children  map[string]*loader.ModuleNode
 	iterators []iteratorScope
+	// resolvingLocals tracks the set of local names currently being
+	// resolved by resolveLocalTraversal so that a chain like
+	// `local.A → local.B → local.A` terminates with a nil result
+	// instead of recursing until stack overflow. Shared (map type)
+	// across pushIterator-derived renderCtxs so the protection
+	// survives iterator pushes mid-chain.
+	resolvingLocals map[string]bool
 }
 
 // iteratorScope is one dynamic-block iterator binding: the iterator
@@ -701,7 +784,7 @@ func exportTypeDefaults(d *typeexpr.Defaults) *ExportTypeDefaults {
 }
 
 func exportOutput(e analysis.Entity, rc *renderCtx) ExportOutput {
-	return ExportOutput{
+	out := ExportOutput{
 		Name:           e.Name,
 		Description:    e.Description,
 		Value:          exprToExport(e.ValueExpr, rc),
@@ -712,6 +795,14 @@ func exportOutput(e analysis.Entity, rc *renderCtx) ExportOutput {
 		Postconditions: exportConditionBlocks(e.Postconditions, rc, false),
 		Location:       e.Location(),
 	}
+	if e.ValueExpr != nil && e.ValueExpr.E != nil {
+		if t := resolveExprType(e.ValueExpr.E, rc); t != nil && t.HasCty() {
+			if raw, err := ctyjson.MarshalType(t.Cty); err == nil {
+				out.InferredType = raw
+			}
+		}
+	}
+	return out
 }
 
 // exportConditionBlocks converts the analysis-side ConditionBlock
@@ -881,11 +972,22 @@ func exportDynamicBlock(d *analysis.BodyDynamicBlock, rc *renderCtx, label strin
 }
 
 func exportLocal(e analysis.Entity, rc *renderCtx) ExportLocal {
-	return ExportLocal{
+	out := ExportLocal{
 		Name:     e.Name,
 		Value:    exprToExport(e.LocalExpr, rc),
 		Location: e.Location(),
 	}
+	deps, cycle := transitiveLocalRefs(e, rc.m)
+	out.DependsOn = deps
+	out.Cycle = cycle
+	if e.LocalExpr != nil && e.LocalExpr.E != nil {
+		if t := resolveExprType(e.LocalExpr.E, rc); t != nil && t.HasCty() {
+			if raw, err := ctyjson.MarshalType(t.Cty); err == nil {
+				out.InferredType = raw
+			}
+		}
+	}
+	return out
 }
 
 func exportModuleCall(e analysis.Entity, rc *renderCtx) ExportModuleCall {

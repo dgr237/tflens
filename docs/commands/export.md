@@ -43,7 +43,7 @@ tflens export .
 
 ```json
 {
-  "schema_version": "0.8.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "_experimental": true,
   "root": {
     "module": {

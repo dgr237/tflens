@@ -637,8 +637,16 @@ func resolveTraversalType(trav hcl.Traversal, rc *renderCtx) *analysis.TFType {
 // don't carry declared type constraints in Terraform, so we infer
 // the local's type from its value expression — recursively, since
 // locals can reference other locals / vars / iterators / module
-// outputs. Returns nil when the local isn't declared or its value
-// expression resolves to unknown.
+// outputs. Returns nil when the local isn't declared, its value
+// expression resolves to unknown, or the resolution chain hits a
+// cycle (`local.A → local.B → local.A`).
+//
+// Cycle protection: rc.resolvingLocals tracks the set of local names
+// currently mid-resolution. Re-entering one short-circuits to nil so
+// the caller treats the local as "type unknown" rather than recursing
+// to stack overflow. Terraform itself rejects local cycles at validate
+// time, so this only matters for in-development / partially-broken
+// configs that the export still has to terminate on.
 func resolveLocalTraversal(trav hcl.Traversal, rc *renderCtx) *analysis.TFType {
 	if rc == nil || rc.m == nil || len(trav) < 2 {
 		return nil
@@ -647,10 +655,18 @@ func resolveLocalTraversal(trav hcl.Traversal, rc *renderCtx) *analysis.TFType {
 	if !ok {
 		return nil
 	}
+	if rc.resolvingLocals[nameStep.Name] {
+		return nil
+	}
 	l, ok := rc.m.EntityByID((analysis.Entity{Kind: analysis.KindLocal, Name: nameStep.Name}).ID())
 	if !ok || l.LocalExpr == nil || l.LocalExpr.E == nil {
 		return nil
 	}
+	if rc.resolvingLocals == nil {
+		rc.resolvingLocals = map[string]bool{}
+	}
+	rc.resolvingLocals[nameStep.Name] = true
+	defer delete(rc.resolvingLocals, nameStep.Name)
 	t := resolveExprType(l.LocalExpr.E, rc)
 	return descendType(t, trav[2:])
 }

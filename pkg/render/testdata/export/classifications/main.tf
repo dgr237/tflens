@@ -153,6 +153,58 @@ resource "aws_iam_policy" "tagged" {
   for_each = var.enable_logs ? var.tag_overlay : {}
 }
 
+# Locals exercising the dependency graph + cycle marker. Chain:
+#   pure_const  →  (no deps)
+#   derived     →  pure_const + var.replicas
+#   layered     →  derived (transitively pulls var.replicas)
+#   cycle_a / cycle_b — deliberate cycle to exercise the marker
+locals {
+  pure_const = "static"
+  derived    = "${local.pure_const}-${var.replicas}"
+  layered    = "wrap-${local.derived}"
+  cycle_a    = local.cycle_b
+  cycle_b    = local.cycle_a
+}
+
+# Output exercising inferred_type — value resolves through a variable
+# whose declared type is map(string), so the output's inferred_type
+# should surface that without re-running inference downstream.
+output "tag_overlay_echo" {
+  value = var.tag_overlay
+}
+
+# Output exercising splat with attr_path — `aws_subnet.static[*].cidr`
+# projects each instance's `cidr` attribute, and the splat AST node
+# should carry attr_path: ["cidr"].
+output "splat_with_attr_path" {
+  value = aws_subnet.static[*].cidr
+}
+
+# For-expression exercising the explicit binder_count + kind markers.
+# Single-binder list form and two-binder object form.
+output "single_binder_list" {
+  value = [for x in var.regions : upper(x)]
+}
+
+output "two_binder_object" {
+  value = { for k, v in var.tag_overlay : k => upper(v) }
+}
+
+# Conditional pattern markers — one per recognised pattern. Each
+# output's value carries the conditional whose AST node should
+# surface the named pattern.
+output "pattern_drop_when_true" {
+  value = var.enable_logs ? null : var.env
+}
+
+output "pattern_drop_when_false" {
+  value = var.enable_logs ? var.env : null
+}
+
+output "pattern_null_check_lhs" {
+  value = var.env != null ? upper(var.env) : "default"
+}
+
 resource "aws_cloudwatch_metric_alarm" "stack" {
   alarm_name = "stack"
 

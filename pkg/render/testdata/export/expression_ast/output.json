@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.8.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "expression_ast",
@@ -176,6 +176,7 @@
                   }
                 },
                 "node": "conditional",
+                "pattern": "normal",
                 "true": {
                   "node": "literal_value",
                   "value": {
@@ -251,6 +252,9 @@
             "security_group_ids": {
               "text": "aws_security_group.sg[*].id",
               "ast": {
+                "attr_path": [
+                  "id"
+                ],
                 "each": {
                   "node": "relative_traversal",
                   "source": {
@@ -413,6 +417,7 @@
                     }
                   },
                   {
+                    "binder_count": 1,
                     "collection": {
                       "elements": [
                         {
@@ -439,6 +444,7 @@
                       ],
                       "node": "tuple_cons"
                     },
+                    "kind": "list",
                     "node": "for",
                     "value_result": {
                       "args": [

@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.8.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "classifications",
@@ -730,6 +730,9 @@
           "value": {
             "text": "aws_subnet.static[*].cidr",
             "ast": {
+              "attr_path": [
+                "cidr"
+              ],
               "each": {
                 "node": "relative_traversal",
                 "source": {
@@ -810,6 +813,381 @@
             }
           },
           "location": "main.tf:113"
+        },
+        {
+          "name": "pattern_drop_when_false",
+          "value": {
+            "text": "var.enable_logs ? var.env : null",
+            "ast": {
+              "condition": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "enable_logs",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "false": {
+                "node": "literal_value",
+                "value": null
+              },
+              "node": "conditional",
+              "pattern": "drop_when_false",
+              "true": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "env",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "enable_logs"
+                },
+                {
+                  "name": "env"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:200"
+        },
+        {
+          "name": "pattern_drop_when_true",
+          "value": {
+            "text": "var.enable_logs ? null : var.env",
+            "ast": {
+              "condition": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "enable_logs",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "false": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "env",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "node": "conditional",
+              "pattern": "drop_when_true",
+              "true": {
+                "node": "literal_value",
+                "value": null
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "enable_logs"
+                },
+                {
+                  "name": "env"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:196"
+        },
+        {
+          "name": "pattern_null_check_lhs",
+          "value": {
+            "text": "var.env != null ? upper(var.env) : \"default\"",
+            "ast": {
+              "condition": {
+                "lhs": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "env",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "node": "binary_op",
+                "op": "!=",
+                "rhs": {
+                  "node": "literal_value",
+                  "value": null
+                }
+              },
+              "false": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "default"
+                }
+              },
+              "node": "conditional",
+              "pattern": "null_check_lhs",
+              "true": {
+                "args": [
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "env",
+                        "step": "attr"
+                      }
+                    ]
+                  }
+                ],
+                "name": "upper",
+                "node": "function_call"
+              }
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "env"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:204"
+        },
+        {
+          "name": "single_binder_list",
+          "value": {
+            "text": "[for x in var.regions : upper(x)]",
+            "value": {
+              "type": [
+                "tuple",
+                [
+                  "string"
+                ]
+              ],
+              "value": [
+                "US-EAST-1"
+              ]
+            },
+            "ast": {
+              "binder_count": 1,
+              "collection": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "regions",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "kind": "list",
+              "node": "for",
+              "value_result": {
+                "args": [
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "x",
+                        "step": "root"
+                      }
+                    ]
+                  }
+                ],
+                "name": "upper",
+                "node": "function_call"
+              },
+              "value_var": "x"
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "regions"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:185"
+        },
+        {
+          "name": "splat_with_attr_path",
+          "value": {
+            "text": "aws_subnet.static[*].cidr",
+            "ast": {
+              "attr_path": [
+                "cidr"
+              ],
+              "each": {
+                "node": "relative_traversal",
+                "source": {
+                  "node": "anon_symbol"
+                },
+                "traversal": [
+                  {
+                    "name": "cidr",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "node": "splat",
+              "source": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "aws_subnet",
+                    "step": "root"
+                  },
+                  {
+                    "name": "static",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "references": {
+              "resources": [
+                {
+                  "type": "aws_subnet",
+                  "name": "static"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:179"
+        },
+        {
+          "name": "tag_overlay_echo",
+          "value": {
+            "text": "var.tag_overlay",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "var",
+                  "step": "root"
+                },
+                {
+                  "name": "tag_overlay",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "tag_overlay"
+                }
+              ]
+            }
+          },
+          "inferred_type": [
+            "map",
+            "string"
+          ],
+          "location": "main.tf:172"
+        },
+        {
+          "name": "two_binder_object",
+          "value": {
+            "text": "{ for k, v in var.tag_overlay : k =\u003e upper(v) }",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "binder_count": 2,
+              "collection": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "tag_overlay",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "key_result": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "k",
+                    "step": "root"
+                  }
+                ]
+              },
+              "key_var": "k",
+              "kind": "object",
+              "node": "for",
+              "value_result": {
+                "args": [
+                  {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "v",
+                        "step": "root"
+                      }
+                    ]
+                  }
+                ],
+                "name": "upper",
+                "node": "function_call"
+              },
+              "value_var": "v"
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "tag_overlay"
+                }
+              ]
+            }
+          },
+          "location": "main.tf:189"
         }
       ],
       "resources": [
@@ -844,6 +1222,7 @@
                 }
               },
               "node": "conditional",
+              "pattern": "normal",
               "true": {
                 "node": "literal_value",
                 "value": {
@@ -926,6 +1305,7 @@
                 "node": "tuple_cons"
               },
               "node": "conditional",
+              "pattern": "empty_fallback",
               "true": {
                 "node": "scope_traversal",
                 "traversal": [
@@ -1099,6 +1479,7 @@
                               "node": "tuple_cons"
                             },
                             "node": "conditional",
+                            "pattern": "empty_fallback",
                             "true": {
                               "node": "scope_traversal",
                               "traversal": [
@@ -1146,19 +1527,19 @@
                               }
                             }
                           },
-                          "location": "main.tf:172"
+                          "location": "main.tf:224"
                         },
-                        "location": "main.tf:170"
+                        "location": "main.tf:222"
                       }
                     ]
                   },
-                  "location": "main.tf:162"
+                  "location": "main.tf:214"
                 },
-                "location": "main.tf:160"
+                "location": "main.tf:212"
               }
             ]
           },
-          "location": "main.tf:156"
+          "location": "main.tf:208"
         },
         {
           "type": "aws_iam_policy",
@@ -1191,6 +1572,7 @@
                 "node": "object_cons"
               },
               "node": "conditional",
+              "pattern": "empty_fallback",
               "true": {
                 "node": "scope_traversal",
                 "traversal": [
@@ -1268,6 +1650,7 @@
                 }
               },
               "node": "conditional",
+              "pattern": "normal",
               "true": {
                 "node": "literal_value",
                 "value": {
@@ -1423,7 +1806,233 @@
         }
       ],
       "data_sources": [],
-      "locals": [],
+      "locals": [
+        {
+          "name": "cycle_a",
+          "value": {
+            "text": "local.cycle_b",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "local",
+                  "step": "root"
+                },
+                {
+                  "name": "cycle_b",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "cycle_b"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "locals": [
+              {
+                "name": "cycle_a"
+              },
+              {
+                "name": "cycle_b"
+              }
+            ]
+          },
+          "cycle": true,
+          "location": "main.tf:165"
+        },
+        {
+          "name": "cycle_b",
+          "value": {
+            "text": "local.cycle_a",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "local",
+                  "step": "root"
+                },
+                {
+                  "name": "cycle_a",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "cycle_a"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "locals": [
+              {
+                "name": "cycle_a"
+              },
+              {
+                "name": "cycle_b"
+              }
+            ]
+          },
+          "cycle": true,
+          "location": "main.tf:166"
+        },
+        {
+          "name": "derived",
+          "value": {
+            "text": "\"${local.pure_const}-${var.replicas}\"",
+            "value": {
+              "type": "string",
+              "value": "static-1"
+            },
+            "ast": {
+              "node": "template",
+              "parts": [
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "pure_const",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "-"
+                  }
+                },
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "replicas",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ]
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "replicas"
+                }
+              ],
+              "locals": [
+                {
+                  "name": "pure_const"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "variables": [
+              {
+                "name": "replicas"
+              }
+            ],
+            "locals": [
+              {
+                "name": "pure_const"
+              }
+            ]
+          },
+          "location": "main.tf:163"
+        },
+        {
+          "name": "layered",
+          "value": {
+            "text": "\"wrap-${local.derived}\"",
+            "value": {
+              "type": "string",
+              "value": "wrap-static-1"
+            },
+            "ast": {
+              "node": "template",
+              "parts": [
+                {
+                  "node": "literal_value",
+                  "value": {
+                    "type": "string",
+                    "value": "wrap-"
+                  }
+                },
+                {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "local",
+                      "step": "root"
+                    },
+                    {
+                      "name": "derived",
+                      "step": "attr"
+                    }
+                  ]
+                }
+              ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "derived"
+                }
+              ]
+            }
+          },
+          "depends_on": {
+            "variables": [
+              {
+                "name": "replicas"
+              }
+            ],
+            "locals": [
+              {
+                "name": "derived"
+              },
+              {
+                "name": "pure_const"
+              }
+            ]
+          },
+          "location": "main.tf:164"
+        },
+        {
+          "name": "pure_const",
+          "value": {
+            "text": "\"static\"",
+            "value": {
+              "type": "string",
+              "value": "static"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "static"
+              }
+            }
+          },
+          "location": "main.tf:162"
+        }
+      ],
       "module_calls": [
         {
           "name": "child",
@@ -1538,6 +2147,19 @@
       "terraform": {},
       "tracked_attributes": [],
       "dependencies": {
+        "local.cycle_a": [
+          "local.cycle_b"
+        ],
+        "local.cycle_b": [
+          "local.cycle_a"
+        ],
+        "local.derived": [
+          "local.pure_const",
+          "variable.replicas"
+        ],
+        "local.layered": [
+          "local.derived"
+        ],
         "module.child": [
           "variable.regions",
           "variable.replicas"
@@ -1547,6 +2169,29 @@
         ],
         "output.first_subnet": [
           "resource.aws_subnet.static"
+        ],
+        "output.pattern_drop_when_false": [
+          "variable.enable_logs",
+          "variable.env"
+        ],
+        "output.pattern_drop_when_true": [
+          "variable.enable_logs",
+          "variable.env"
+        ],
+        "output.pattern_null_check_lhs": [
+          "variable.env"
+        ],
+        "output.single_binder_list": [
+          "variable.regions"
+        ],
+        "output.splat_with_attr_path": [
+          "resource.aws_subnet.static"
+        ],
+        "output.tag_overlay_echo": [
+          "variable.tag_overlay"
+        ],
+        "output.two_binder_object": [
+          "variable.tag_overlay"
         ],
         "resource.aws_cloudwatch_log_group.logs": [
           "variable.enable_logs"
@@ -1643,6 +2288,7 @@
                   ]
                 }
               },
+              "inferred_type": "string",
               "location": "main.tf:14"
             }
           ],

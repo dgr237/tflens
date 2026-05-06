@@ -117,6 +117,7 @@ func expressionToAST(expr hclsyntax.Expression) any {
 	case *hclsyntax.ConditionalExpr:
 		return map[string]any{
 			"node":      "conditional",
+			"pattern":   conditionalPattern(e),
 			"condition": expressionToAST(e.Condition),
 			"true":      expressionToAST(e.TrueResult),
 			"false":     expressionToAST(e.FalseResult),
@@ -145,11 +146,15 @@ func expressionToAST(expr hclsyntax.Expression) any {
 		}
 
 	case *hclsyntax.SplatExpr:
-		return map[string]any{
+		out := map[string]any{
 			"node":   "splat",
 			"source": expressionToAST(e.Source),
 			"each":   expressionToAST(e.Each),
 		}
+		if path := splatAttrPath(e); path != nil {
+			out["attr_path"] = path
+		}
+		return out
 
 	case *hclsyntax.ObjectConsExpr:
 		items := make([]any, len(e.Items))
@@ -203,6 +208,8 @@ func expressionToAST(expr hclsyntax.Expression) any {
 			"value_var":    e.ValVar,
 			"collection":   expressionToAST(e.CollExpr),
 			"value_result": expressionToAST(e.ValExpr),
+			"binder_count": forBinderCount(e),
+			"kind":         forResultKind(e),
 		}
 		if e.KeyVar != "" {
 			out["key_var"] = e.KeyVar
@@ -304,4 +311,108 @@ func astFor(e *analysis.Expr) any {
 		return nil
 	}
 	return expressionToAST(e.E)
+}
+
+// conditionalPattern classifies a ConditionalExpr against the named
+// rewrite shapes downstream converters short-circuit on. Mirrors
+// composegen §4.11's table, with one synthetic catch-all:
+//
+//   - "drop_when_true"  — `cond ? null : X`  → emit X (filter out)
+//   - "drop_when_false" — `cond ? X : null`  → emit X (filter out)
+//   - "empty_fallback"  — `cond ? X : []`   or `cond ? X : {}`   → emit X
+//   - "null_check_lhs"  — `var.X != null ? a : b` → has(schema.spec.X)
+//   - "null_check_rhs"  — `null != var.X ? a : b` → has(schema.spec.X)
+//   - "normal"          — anything else
+//
+// drop_when_X takes precedence over empty_fallback when both could
+// match (e.g. `cond ? null : null` is degenerate but classifies as
+// drop_when_true). null_check_X is only emitted when the conditional
+// itself isn't already empty/null on either branch — the marker is
+// most useful for the "translate to has() check" rewrite, which only
+// applies to non-degenerate ternaries.
+func conditionalPattern(e *hclsyntax.ConditionalExpr) string {
+	tNull := isNullLiteral(e.TrueResult)
+	fNull := isNullLiteral(e.FalseResult)
+	switch {
+	case tNull && !fNull:
+		return "drop_when_true"
+	case fNull && !tNull:
+		return "drop_when_false"
+	}
+	if isEmptyTuple(e.TrueResult) || isEmptyObject(e.TrueResult) ||
+		isEmptyTuple(e.FalseResult) || isEmptyObject(e.FalseResult) {
+		return "empty_fallback"
+	}
+	if bin, ok := e.Condition.(*hclsyntax.BinaryOpExpr); ok && bin.Op == hclsyntax.OpNotEqual {
+		if isNullLiteral(bin.RHS) && !isNullLiteral(bin.LHS) {
+			return "null_check_lhs"
+		}
+		if isNullLiteral(bin.LHS) && !isNullLiteral(bin.RHS) {
+			return "null_check_rhs"
+		}
+	}
+	return "normal"
+}
+
+// isNullLiteral reports whether expr is the literal `null`. Used by
+// conditionalPattern to recognise drop_when_X and null_check_X shapes.
+func isNullLiteral(expr hclsyntax.Expression) bool {
+	lit, ok := expr.(*hclsyntax.LiteralValueExpr)
+	return ok && lit.Val.IsNull()
+}
+
+// splatAttrPath extracts the chain of attribute names from a
+// SplatExpr's Each side when it's just a series of TraverseAttr steps
+// (the common `aws_T.X[*].id` / `aws_T.X[*].network[0].id` shape — the
+// latter falls back to nil since indices break the pure-attr chain).
+// Returns nil when the each-expression is anything other than a pure
+// attribute traversal so consumers know to fall back to the AST.
+//
+// Lets converters render xs.map(it, it.attr1.attr2) directly without
+// AST inspection: source + attr_path is enough to project a list of
+// records to the leaf attribute.
+func splatAttrPath(e *hclsyntax.SplatExpr) []string {
+	rel, ok := e.Each.(*hclsyntax.RelativeTraversalExpr)
+	if !ok {
+		return nil
+	}
+	if _, ok := rel.Source.(*hclsyntax.AnonSymbolExpr); !ok {
+		return nil
+	}
+	out := make([]string, 0, len(rel.Traversal))
+	for _, step := range rel.Traversal {
+		attr, ok := step.(hcl.TraverseAttr)
+		if !ok {
+			return nil
+		}
+		out = append(out, attr.Name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// forBinderCount returns the number of iteration binders on a
+// ForExpr — 1 for `[for x in xs : ...]`, 2 for `[for k, v in xs :
+// ...]`. Implicit in KeyVar's presence today, but emitting it
+// explicitly lets consumers gate-check for the kro-incompatible
+// two-binder form without inspecting branch presence.
+func forBinderCount(e *hclsyntax.ForExpr) int {
+	if e.KeyVar != "" {
+		return 2
+	}
+	return 1
+}
+
+// forResultKind returns the result shape of a ForExpr — "list" for
+// `[for ... : value]`, "object" for `{for ... : key => value}`.
+// Implicit in KeyExpr's presence; emitting explicitly mirrors the
+// for_each_kind vocabulary so consumers can compare against a
+// uniform set of shape names.
+func forResultKind(e *hclsyntax.ForExpr) string {
+	if e.KeyExpr != nil {
+		return "object"
+	}
+	return "list"
 }
