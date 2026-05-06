@@ -582,16 +582,7 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode, sc
 		return out
 	}
 	resolver := m.Resolver().
-		WithChildModuleGetter(func(name string) *analysis.Module {
-			if children == nil {
-				return nil
-			}
-			cn, ok := children[name]
-			if !ok || cn == nil {
-				return nil
-			}
-			return cn.Module
-		}).
+		WithChildModuleGetter(makeChildModuleGetter(children)).
 		WithProviderSchema(schema)
 	rc := &renderCtx{
 		m:        m,
@@ -645,6 +636,29 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode, sc
 	})
 	sort.Slice(out.Tracked, func(i, j int) bool { return out.Tracked[i].Subject < out.Tracked[j].Subject })
 	return out
+}
+
+// makeChildModuleGetter builds a recursive analysis.ChildModuleGetter
+// rooted at the given children map. The returned getter resolves one
+// level (`module.<call> → child Module`) and supplies a fresh getter
+// closed over THAT child's own children, so resolveModuleTraversal
+// can chase cross-module references that themselves traverse into
+// grandchild outputs (`output "x" { value = module.grandchild.y }`).
+//
+// Returns a getter that always returns (nil, nil) when children is
+// nil or the requested name isn't a registered call — the resolver
+// short-circuits cleanly in either case.
+func makeChildModuleGetter(children map[string]*loader.ModuleNode) analysis.ChildModuleGetter {
+	return func(name string) (*analysis.Module, analysis.ChildModuleGetter) {
+		if children == nil {
+			return nil, nil
+		}
+		cn, ok := children[name]
+		if !ok || cn == nil {
+			return nil, nil
+		}
+		return cn.Module, makeChildModuleGetter(cn.Children)
+	}
 }
 
 // renderCtx bundles the per-module context every helper in export.go

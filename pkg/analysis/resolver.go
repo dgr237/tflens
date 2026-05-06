@@ -30,7 +30,7 @@ type Resolver struct {
 	m               *Module
 	iterators       []IteratorScope
 	resolvingLocals map[string]bool
-	childModuleFn   func(string) *Module
+	childModuleFn   ChildModuleGetter
 	// providerSchema is optional. When set, ResolveTraversalType
 	// resolves `<resource_type>.<name>(.path...)` and
 	// `data.<type>.<name>(.path...)` references through the provider's
@@ -40,6 +40,18 @@ type Resolver struct {
 	// callers running without `--provider-schema`.
 	providerSchema *providerschema.Schema
 }
+
+// ChildModuleGetter is the signature WithChildModuleGetter consumes:
+// given a module-call name, return both the called child Module AND
+// a getter for that child's own children (so resolveModuleTraversal
+// can recurse into grandchild outputs whose values themselves
+// reference other module outputs).
+//
+// Returning (nil, nil) signals "child not available" — typically an
+// unresolved git/registry source, or a name that doesn't match any
+// declared module call. Returning (child, nil) means the child has
+// no further children — valid; the recursive descent stops there.
+type ChildModuleGetter func(name string) (child *Module, grandchildren ChildModuleGetter)
 
 // IteratorScope is one dynamic-block iterator binding: the iterator
 // name (defaulting to the dynamic block's label when not explicitly
@@ -90,9 +102,8 @@ func (r *Resolver) ProviderSchema() *providerschema.Schema {
 // WithChildModuleGetter returns a copy of r with the given child
 // module getter installed. The getter is consulted by
 // ResolveTraversalType when it sees a `module.<call>.<output>(.path...)`
-// reference; returning nil indicates the child isn't available
-// (e.g. unresolved git/registry source) and the resolver short-circuits.
-func (r *Resolver) WithChildModuleGetter(f func(string) *Module) *Resolver {
+// reference. See ChildModuleGetter for the recursive-descent contract.
+func (r *Resolver) WithChildModuleGetter(f ChildModuleGetter) *Resolver {
 	if r == nil {
 		return nil
 	}
@@ -308,13 +319,22 @@ func (r *Resolver) resolveDataTraversal(trav hcl.Traversal) *TFType {
 // path is descended via descendType (which handles cty-level index /
 // attr steps for object / map / list / tuple types).
 //
-// Pure attr chains hit the leaf and return its type directly; mixed
-// attr+index chains (e.g. `tags["foo"]` where tags is a map) hit
-// the leaf at attr "tags", descend the remaining index step through
-// the map type, and return the element type. Mixed chains that need
-// to descend through a list/set/map nested block via index aren't
-// handled — those cases return nil rather than producing a wrong
-// type.
+// Mixed paths handled:
+//
+//   - Pure attr chains (`aws_X.y.cidr`) — hit the leaf, return its type.
+//   - Attr + index/key (`aws_X.y.tags["env"]`) — leaf at attr, then
+//     descendType walks the remaining index through the map/list type.
+//   - Attr + nested-block + index + attr (`aws_eks.x.kubernetes_network_config[0].service_ipv4_cidr`)
+//     — descend into the nested block, consume the index step when
+//     the nesting mode is collection-shaped (list/set/map), continue
+//     the attribute walk on the element block.
+//
+// The index-consumption branch is what lets the resolver chain past
+// list-shaped nested blocks; without it, every `block[N].attr`
+// reference past the first level returned nil. Collection nesting
+// modes that consume the index: list, set, map. Single / group
+// nesting modes do NOT — they're already an object at the cty level
+// and a `[N]` step against them would be a Terraform error.
 func (r *Resolver) resolveSchemaPath(typeName string, isData bool, steps []hcl.Traverser) *TFType {
 	var b *providerschema.Block
 	if isData {
@@ -326,8 +346,8 @@ func (r *Resolver) resolveSchemaPath(typeName string, isData bool, steps []hcl.T
 		return nil
 	}
 	cur := b
-	for i, step := range steps {
-		attrStep, ok := step.(hcl.TraverseAttr)
+	for i := 0; i < len(steps); {
+		attrStep, ok := steps[i].(hcl.TraverseAttr)
 		if !ok {
 			return nil
 		}
@@ -351,6 +371,20 @@ func (r *Resolver) resolveSchemaPath(typeName string, isData bool, steps []hcl.T
 				return blockToTFType(nb)
 			}
 			cur = nb.Block
+			i++
+			// Consume one index step for collection-nested blocks. The
+			// HCL `block[N]` (list/set) or `block["k"]` (map) reaches
+			// into one element; the remaining attribute walk applies
+			// to that element's schema. Without this, deep traversals
+			// through indexed nested blocks can't resolve.
+			if i < len(steps) {
+				if _, isIdx := steps[i].(hcl.TraverseIndex); isIdx {
+					switch nb.NestingMode {
+					case "list", "set", "map":
+						i++
+					}
+				}
+			}
 			continue
 		}
 		return nil
@@ -464,15 +498,19 @@ func (r *Resolver) resolveIteratorTraversal(name string, trav hcl.Traversal) *TF
 }
 
 // resolveModuleTraversal handles `module.<call>.<output>(.path...)`.
-// Looks up the called child module via the installed getter and
-// infers the type of the output's value expression in the child's
-// own module context (so var.X references inside the output value
-// resolve through the child's variables, not the parent's).
+// Looks up the called child module via the installed getter, then
+// constructs a child-rooted Resolver carrying the same provider
+// schema and a getter for the child's own children (so the recursion
+// reaches grandchild outputs cleanly). The output's value expression
+// is then resolved in the child's context — `var.X` resolves
+// through the CHILD's variables, `aws_T.Y.attr` through the same
+// global provider schema, and `module.M.N` through the grandchild
+// getter.
 //
-// Most outputs reference computed resource attributes whose types
-// the analyser can't infer, so this typically returns nil. Outputs
-// that pass a variable through (`output "x" { value = var.x }`) do
-// resolve cleanly though.
+// Pre-Phase: the older implementation called child.InferExprType
+// which is the schema-less Module-level inference; outputs that
+// referenced computed resource attributes returned nil even when a
+// schema was attached. The recursive Resolver+schema path lifts that.
 func (r *Resolver) resolveModuleTraversal(trav hcl.Traversal) *TFType {
 	if r.childModuleFn == nil || len(trav) < 3 {
 		return nil
@@ -485,7 +523,7 @@ func (r *Resolver) resolveModuleTraversal(trav hcl.Traversal) *TFType {
 	if !ok {
 		return nil
 	}
-	child := r.childModuleFn(callStep.Name)
+	child, grandchildFn := r.childModuleFn(callStep.Name)
 	if child == nil {
 		return nil
 	}
@@ -493,7 +531,10 @@ func (r *Resolver) resolveModuleTraversal(trav hcl.Traversal) *TFType {
 	if !ok || out.ValueExpr == nil || out.ValueExpr.E == nil {
 		return nil
 	}
-	t := child.InferExprType(out.ValueExpr.E)
+	childResolver := child.Resolver().
+		WithProviderSchema(r.providerSchema).
+		WithChildModuleGetter(grandchildFn)
+	t := childResolver.ResolveExprType(out.ValueExpr.E)
 	if t == nil || t.Kind == TypeUnknown {
 		return nil
 	}

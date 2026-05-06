@@ -1,0 +1,19 @@
+{
+  "format_version": "0.2",
+  "provider_schemas": {
+    "registry.terraform.io/hashicorp/aws": {
+      "resource_schemas": {
+        "aws_iam_role": {
+          "block": {
+            "attributes": {
+              "name":               {"type": "string", "required": true},
+              "assume_role_policy": {"type": "string", "required": true},
+              "arn":                {"type": "string", "computed": true},
+              "id":                 {"type": "string", "computed": true}
+            }
+          }
+        }
+      }
+    }
+  }
+}

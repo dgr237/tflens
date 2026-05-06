@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/providerschema"
 	"github.com/dgr237/tflens/pkg/render"
 )
 
@@ -41,6 +42,7 @@ func TestRendererExportCases(t *testing.T) {
 	for _, name := range exportCaseNames {
 		t.Run(name, func(t *testing.T) {
 			p := exportFixtureProject(t, name)
+			attachOptionalSchema(t, p, name)
 			exp := render.BuildExport(p, "test-version")
 			normalizeForGolden(&exp)
 
@@ -53,6 +55,30 @@ func TestRendererExportCases(t *testing.T) {
 	}
 }
 
+// attachOptionalSchema loads testdata/export/<name>/provider-schema.json
+// and installs it on the project when present. Per-fixture opt-in: a
+// fixture that exercises the schema-aware code paths drops a schema
+// JSON next to its main.tf; fixtures that don't care about schema are
+// unaffected (no file → no-op).
+//
+// The schema JSON is the same `terraform providers schema -json`
+// shape providerschema.Load expects in production; per-fixture files
+// stay tiny because they only need to declare the resource / data
+// types the fixture actually references.
+func attachOptionalSchema(t *testing.T, p *loader.Project, name string) {
+	t.Helper()
+	_, file, _, _ := runtime.Caller(0)
+	schemaPath := filepath.Join(filepath.Dir(file), "testdata", "export", name, "provider-schema.json")
+	if _, err := os.Stat(schemaPath); err != nil {
+		return
+	}
+	s, err := providerschema.Load(schemaPath)
+	if err != nil {
+		t.Fatalf("load provider-schema for %s: %v", name, err)
+	}
+	p.AttachProviderSchema(s)
+}
+
 // exportCaseNames lists each subdirectory under testdata/export/ that
 // the test should drive. One name → one fixture (main.tf and any
 // children) plus one expected output.json sitting beside it.
@@ -63,6 +89,8 @@ var exportCaseNames = []string{
 	"nested_modules",
 	"resource_attributes",
 	"nested_blocks_eks",
+	"nested_blocks_indexed",
+	"cross_module_resource_attr",
 	"expression_ast",
 	"dynamic_blocks",
 	"provider_aliases",
