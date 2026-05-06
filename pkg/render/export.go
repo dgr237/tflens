@@ -580,11 +580,21 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode) Ex
 	if m == nil {
 		return out
 	}
+	resolver := m.Resolver().WithChildModuleGetter(func(name string) *analysis.Module {
+		if children == nil {
+			return nil
+		}
+		cn, ok := children[name]
+		if !ok || cn == nil {
+			return nil
+		}
+		return cn.Module
+	})
 	rc := &renderCtx{
-		m:               m,
-		ctx:             m.EvalContext(),
-		children:        children,
-		resolvingLocals: map[string]bool{},
+		m:        m,
+		resolver: resolver,
+		ctx:      m.EvalContext(),
+		children: children,
 	}
 	for _, e := range m.Entities() {
 		switch e.Kind {
@@ -635,69 +645,38 @@ func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode) Ex
 }
 
 // renderCtx bundles the per-module context every helper in export.go
-// needs: the analysis Module (for entity lookups in extractReferences,
-// type inference in for_each_kind classification, child-module access
-// via the loader children map), the curated EvalContext (so expression
-// evaluation reuses one cached context per module), the loader
-// children (used by exportModuleCall to pull the called child's
-// declared variable types into argument bindings), and the per-scope
-// dynamic-block iterator stack (consulted by resolveTraversalType so
-// `<iter>.value(.path)` references inside dynamic content infer
-// against the iterator's element type rather than falling through to
-// "unknown").
+// needs: an analysis.Resolver (handles type inference / iterator
+// scope / for_each classification / cycle protection — see
+// pkg/analysis/resolver.go), the curated EvalContext for expression
+// evaluation, and the loader children map for module-call argument
+// child_variable_type lookup.
 //
-// One renderCtx per module is built at the top of exportModule and
-// threaded through every recursive helper. The iterator stack is
-// pushed only when descending into a dynamic block's content (via
-// pushIterator) and is left unchanged everywhere else, so threading a
-// struct rather than separate parameters keeps the per-call surface
-// stable while letting the iterator binding propagate down.
+// One renderCtx per module is built at the top of exportModule. The
+// iterator stack lives inside the resolver — pushIterator returns a
+// renderCtx wrapping the pushed resolver. The render-side fields
+// (ctx, children) are shared by reference so siblings see the same
+// underlying state.
 type renderCtx struct {
-	m         *analysis.Module
-	ctx       *hcl.EvalContext
-	children  map[string]*loader.ModuleNode
-	iterators []iteratorScope
-	// resolvingLocals tracks the set of local names currently being
-	// resolved by resolveLocalTraversal so that a chain like
-	// `local.A → local.B → local.A` terminates with a nil result
-	// instead of recursing until stack overflow. Shared (map type)
-	// across pushIterator-derived renderCtxs so the protection
-	// survives iterator pushes mid-chain.
-	resolvingLocals map[string]bool
+	m        *analysis.Module
+	resolver *analysis.Resolver
+	ctx      *hcl.EvalContext
+	children map[string]*loader.ModuleNode
 }
 
-// iteratorScope is one dynamic-block iterator binding: the iterator
-// name (defaulting to the dynamic block's label when not explicitly
-// renamed) and the element type of the for_each source. Only the
-// element type is captured because `<iter>.value` is the iteration's
-// per-step value (an element of the source); `<iter>.key` is always
-// a string for map iteration so we don't bother typing it explicitly.
-//
-// Stacked innermost-last: classifyForEach walks the stack so a
-// shadowing inner iterator wins over an outer one of the same name.
-type iteratorScope struct {
-	name        string
-	elementType *analysis.TFType
-}
-
-// pushIterator returns a new renderCtx whose iterator stack ends with
-// the given binding. Returns rc unchanged when scope.name is empty
-// (malformed dynamic block) or scope.elementType is nil (we couldn't
-// infer the for_each source's element type, in which case the
-// binding wouldn't help downstream resolution anyway).
-//
-// The new stack is allocated independently so siblings don't share a
-// growing append-target slice — important because exportBlock recurses
-// into multiple branches that each need their own scope view.
-func (rc *renderCtx) pushIterator(scope iteratorScope) *renderCtx {
-	if scope.name == "" || scope.elementType == nil {
+// pushIterator returns a new renderCtx whose resolver has the given
+// iterator binding pushed. Returns rc unchanged when scope is empty
+// (malformed dynamic block) or its ElementType is nil (resolver
+// PushIterator no-ops in that case).
+func (rc *renderCtx) pushIterator(scope analysis.IteratorScope) *renderCtx {
+	if rc == nil {
 		return rc
 	}
-	stack := make([]iteratorScope, len(rc.iterators)+1)
-	copy(stack, rc.iterators)
-	stack[len(rc.iterators)] = scope
+	pushed := rc.resolver.PushIterator(scope)
+	if pushed == rc.resolver {
+		return rc
+	}
 	out := *rc
-	out.iterators = stack
+	out.resolver = pushed
 	return &out
 }
 
@@ -861,7 +840,7 @@ func exportResource(e analysis.Entity, rc *renderCtx) ExportResource {
 	bodyRC := rc
 	if e.ForEachExpr != nil && e.ForEachExpr.E != nil {
 		if elem := iteratorElementType(e.ForEachExpr.E, rc); elem != nil {
-			bodyRC = rc.pushIterator(iteratorScope{name: "each", elementType: elem})
+			bodyRC = rc.pushIterator(analysis.IteratorScope{Name: "each", ElementType: elem})
 		}
 	}
 	if len(e.BodyAttrs) > 0 {
@@ -962,7 +941,7 @@ func exportDynamicBlock(d *analysis.BodyDynamicBlock, rc *renderCtx, label strin
 	contentRC := rc
 	if d.ForEach != nil && d.ForEach.E != nil {
 		if elem := iteratorElementType(d.ForEach.E, rc); elem != nil {
-			contentRC = rc.pushIterator(iteratorScope{name: iterName, elementType: elem})
+			contentRC = rc.pushIterator(analysis.IteratorScope{Name: iterName, ElementType: elem})
 		}
 	}
 	if d.Content != nil {

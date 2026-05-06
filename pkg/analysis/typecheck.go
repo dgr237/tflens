@@ -793,6 +793,103 @@ func descendDeclaredType(t *TFType, attrPath []string) *TFType {
 	return cur
 }
 
+// typeCheckDynamicBlocks walks every resource/data entity's nested
+// dynamic blocks with a Resolver carrying the iterator-scope chain.
+// For each dynamic block's `for_each` expression, calls
+// Resolver.ClassifyForEach and emits a TypeCheckError when the
+// classification is "invalid" (the §7 conditional-rule mismatch or
+// the singleton-object cascade).
+//
+// The iterator stack is built top-down: each resource pushes an
+// `each` binding when it has resource-level for_each; each dynamic
+// block pushes a binding named after its iterator (defaulting to
+// the block label) before recursing into content. This is exactly
+// the same scope chain the export-side classifier uses, so the
+// classification surface at validate matches what consumers see in
+// the export's for_each_kind field.
+//
+// Module-call dynamic blocks aren't currently typechecked (Terraform
+// doesn't allow `dynamic` inside module blocks).
+func typeCheckDynamicBlocks(m *Module) {
+	resolver := m.Resolver()
+	for _, e := range m.entities {
+		if e.Kind != KindResource && e.Kind != KindData {
+			continue
+		}
+		bodyResolver := resolver
+		if e.HasForEach && e.ForEachExpr != nil && e.ForEachExpr.E != nil {
+			if elem := resolver.IteratorElementType(e.ForEachExpr.E); elem != nil {
+				bodyResolver = resolver.PushIterator(IteratorScope{Name: "each", ElementType: elem})
+			}
+		}
+		for name, instances := range e.BodyDynamicBlocks {
+			for _, d := range instances {
+				m.checkDynamicBlock(e.ID(), name, d, bodyResolver)
+			}
+		}
+		for _, instances := range e.BodyBlocks {
+			for _, b := range instances {
+				m.checkBodyBlockDynamics(e.ID(), b, bodyResolver)
+			}
+		}
+	}
+}
+
+// checkBodyBlockDynamics descends into a static nested block's own
+// dynamic blocks, recursively. Static blocks don't bind iterators
+// themselves (nothing on the body resolves through them), so the
+// resolver passes through unchanged.
+func (m *Module) checkBodyBlockDynamics(entityID string, b *BodyBlock, resolver *Resolver) {
+	if b == nil {
+		return
+	}
+	for name, instances := range b.DynamicBlocks {
+		for _, d := range instances {
+			m.checkDynamicBlock(entityID, name, d, resolver)
+		}
+	}
+	for _, instances := range b.Blocks {
+		for _, sub := range instances {
+			m.checkBodyBlockDynamics(entityID, sub, resolver)
+		}
+	}
+}
+
+// checkDynamicBlock validates one dynamic block's for_each and
+// recurses into its content. The iterator binding is pushed before
+// descending so nested dynamic blocks resolve `<iter>.value(.path)`
+// references through this block's element type. Iterator name
+// defaults to the block label when not explicitly renamed.
+func (m *Module) checkDynamicBlock(entityID, label string, d *BodyDynamicBlock, resolver *Resolver) {
+	if d == nil {
+		return
+	}
+	if d.ForEach != nil && d.ForEach.E != nil {
+		if c := resolver.ClassifyForEach(d.ForEach); c != nil && c.Kind == "invalid" {
+			m.typeErrs = append(m.typeErrs, TypeCheckError{
+				EntityID: entityID,
+				Attr:     "for_each",
+				Pos:      posFromRange(d.ForEach.E.Range()),
+				Msg: fmt.Sprintf("dynamic %q for_each %s (in %s)",
+					label, c.Reason, entityID),
+			})
+		}
+	}
+	contentResolver := resolver
+	if d.ForEach != nil && d.ForEach.E != nil {
+		iterName := d.Iterator
+		if iterName == "" {
+			iterName = label
+		}
+		if elem := resolver.IteratorElementType(d.ForEach.E); elem != nil {
+			contentResolver = resolver.PushIterator(IteratorScope{Name: iterName, ElementType: elem})
+		}
+	}
+	if d.Content != nil {
+		m.checkBodyBlockDynamics(entityID, d.Content, contentResolver)
+	}
+}
+
 // blockEntityID returns the canonical entity ID for a resource/data/module
 // block. Returns an empty string if the block has the wrong label count.
 func blockEntityID(block *hclsyntax.Block) string {

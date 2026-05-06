@@ -555,6 +555,11 @@ func AnalyseFiles(files []*File) *Module {
 	for _, f := range files {
 		typeCheckBodies(m, f)
 	}
+	// typeCheckDynamicBlocks runs after the main typecheck pass and
+	// after entity collection populates BodyDynamicBlocks, since it
+	// walks each resource/data entity's nested dynamic blocks with a
+	// resolver carrying the iterator-scope chain.
+	typeCheckDynamicBlocks(m)
 	for _, f := range files {
 		m.tracked = append(m.tracked, collectTrackedAttributes(f)...)
 	}

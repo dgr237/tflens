@@ -216,6 +216,19 @@ var typecheckCases = []typecheckCase{
 	{Name: "for_each_correct_singleton_wrap_ok", WantNoErrors: true},
 	{Name: "for_each_correct_collection_in_ternary_ok", WantNoErrors: true},
 
+	// ---- §7 conditional rule (nested dynamic blocks via iterator scope) ----
+	{
+		Name:                 "for_each_dynamic_singleton_in_ternary_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"dynamic \"metric_stat\"", "object", "empty list"},
+	},
+	{
+		Name:                 "for_each_dynamic_iterator_chain_singleton_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"dynamic \"metric\"", "single object"},
+	},
+	{Name: "for_each_dynamic_correct_singleton_wrap_ok", WantNoErrors: true},
+
 	// ---- built-in function return types ----
 	{
 		Name:                 "for_each_with_keys_fails",
