@@ -132,6 +132,7 @@ Less commonly used; documented inline since the one-line description is sufficie
 | `fmt <file.tf>` | Print normalised HCL; `-w` rewrites in place, `--check` exits 1 when unformatted |
 | `cache info` | Show the cache location, entry count, and total size |
 | `cache clear` | Delete every cached module |
+| `refresh-force-new` | Fetch a Crossplane runtime IR and extract a force-new override JSON for `--immutable-table-override`; see [`diff` docs](docs/commands/diff.md#force-new-attribute-changes-embedded-table) |
 
 `<path>` is either a single `.tf` file or a directory (in which case all `.tf` files in it are merged into a single module view, matching Terraform's own behaviour).
 
@@ -204,7 +205,7 @@ Bearer tokens are sent **only** to requests whose `URL.Host` exactly matches a c
 These are not bugs but deliberate boundaries:
 
 - **No Terraform execution.** This is a static analyser. Anything that requires planning, applying, or querying a provider is out of scope.
-- **No provider schemas.** We do not embed AWS/GCP/Azure/etc. provider schemas. Resource attribute types, required-vs-optional attributes, and deprecations of resource types are invisible to us. Running `terraform validate` in addition to this tool catches those.
+- **No provider schemas — except for force-new.** We do not embed AWS/GCP/Azure/etc. provider schemas for type / required-vs-optional / deprecation info; running `terraform validate` in addition to this tool catches those. The one exception is a compact force-new attribute table (`pkg/forcenew`) extracted from Crossplane's runtime IR — ~1000 upjet-supported AWS resources, ~4632 attribute paths — that drives automatic Breaking classification on destroy+recreate changes. Resources outside this set need `--immutable-table-override` or [`# tflens:track` markers](docs/commands/tracked-attributes.md).
 - **Limited expression evaluation.** Conditionals, arithmetic, string interpolation, and a curated set of ~46 Terraform built-in functions (see [Static evaluation surface](#static-evaluation-surface)) ARE evaluated when every reference resolves to a known constant — this powers the effective-value-collapse for tracked attributes and statediff sensitive locals. Anything that reaches a computed attribute (`aws_vpc.main.id` is always `TypeUnknown`), a data source, or a non-curated function (`templatefile`, `jsondecode`, `regex`, `try`, …) falls back to text comparison.
 - **Caller awareness only at module-call boundaries.** `whatif` and the local-source path of `diff` cross-validate a parent module's `module "x" { ... }` block against the candidate child's variables and outputs. Beyond that — e.g. whether some external repo that pinned to an old version still works after a registry-module change — is out of scope; we'd need to analyse those callers too.
 - **Mid-expression comments are dropped.** Line and block comments at statement boundaries round-trip correctly; comments embedded inside a function call argument list split across lines, or inside a multi-line object/tuple literal, are lost by `fmt`.

@@ -10,6 +10,10 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 - **`scripts/release.sh` now anchors CHANGELOG promotion on an `<!-- unreleased-anchor -->` HTML-comment marker placed directly under `## [Unreleased]`.** Fixes the merge-anchoring bug that hit v0.17.0 → v0.18.0 and v0.18.0 → v0.19.0 transitions: a PR opened before a release and merged after would land its `[Unreleased]` entries under the just-promoted `[vX.Y.Z]` section because git's three-way merge anchored against the (now-moved) `## [Unreleased]` header. The sentinel is a unique, stable string git can match unambiguously across both branches. `release.sh` fails loudly if the sentinel is missing from `[Unreleased]` rather than silently producing a release with empty notes; it preserves the sentinel across promotions so subsequent PRs continue to have a stable anchor. PR template + CONTRIBUTING updated to point contributors at adding entries below the marker. `scripts/test-release-anchor.sh` simulates the cross-release-boundary merge and asserts the entry lands under `[Unreleased]`; wired into `ci.yml`.
 
+### Documentation
+
+- **Force-new classifier and override flow now documented.** `docs/commands/diff.md` gains a new "Force-new attribute changes (embedded table)" section covering the ~1000 upjet-supported resource types in the embedded table, the `--immutable-table-override` merge flag, the `tflens refresh-force-new` subcommand, and the known coverage gaps (in-place-but-disruptive changes, non-upjet providers). `docs/commands/tracked-attributes.md` reframes its intro with a three-way decision table (embedded table vs override vs tracked-marker) so module developers know which tool to reach for; the doc is now positioned as the operational-impact-but-not-replacement complement to the IR-derived force-new detection. `README.md` adds `refresh-force-new` to the utility commands list and updates the "no provider schemas" limitation bullet to note the force-new exception. v0.19.0 shipped the code but left the user-facing docs stale — this catches them up.
+
 ## [0.19.0] — 2026-05-10
 
 ### Added
