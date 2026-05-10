@@ -127,16 +127,39 @@ Most breaking changes carry a one-line `hint:` with the conventional fix. Hints 
 
 The JSON output emits the same string under a `"hint"` key (omitted when empty).
 
+## Force-new attribute changes (embedded table)
+
+`tflens diff` ships with an embedded table of attributes that force destroy+recreate on apply, derived from a Crossplane runtime IR (`pkg/forcenew/data/force_new_table.json` — 1004 resource types, 4632 attribute paths covering the upjet-supported AWS surface). When a resource attribute changes between the old and new versions AND the path is in the table, the change is classified as **Breaking** with `Source: "force-new"`:
+
+```
+resource.aws_eks_cluster.primary: force-replace attribute changed: role_arn = "arn:aws:iam::111:role/eks-old" → "arn:aws:iam::111:role/eks-new" (destroy + recreate)
+  hint: this attribute is immutable on the underlying resource; expect a destroy+create on apply
+```
+
+The classifier walks static nested blocks (first-instance pairing for repeated blocks) and skips dynamic blocks. Comparison is text-only — a cosmetic refactor like `name = "foo"` → `name = local.cluster_name` (with `local.cluster_name = "foo"`) still produces a finding; conservative-by-design because tflens can't always evaluate the new expression to confirm equivalence.
+
+**Extending coverage:** resources outside the embedded table return `known=false` from the classifier and produce no finding. Two ways to add coverage:
+
+- `--immutable-table-override path/to/extra.json` — merge a user-supplied JSON over the embedded table at startup. Same shape as the embedded file; user paths are unioned (deduped) with embedded paths per resource type. Eagerly validated — a missing path or malformed JSON fails CLI startup with a clear error rather than silently producing wrong classifications.
+- `tflens refresh-force-new --url <runtime-ir-url> --source <label> --output path.json` — fetches a Crossplane runtime IR over HTTP, runs the same extraction the build-time tool uses, writes a JSON file suitable for `--immutable-table-override`. Refer to your provider distribution's release artifacts for the canonical URL; 5-minute HTTP timeout for the ~15 MB IR.
+
+**Coverage gaps to know about:**
+
+- **In-place but disruptive changes** (an EKS `cluster_version` bump, an RDS `engine_version` jump) are NOT in the force-new table — they don't destroy+recreate, just update with consequences. Use [`# tflens:track` markers](tracked-attributes.md) for these.
+- **Non-upjet providers** (Azure, GCP, Snowflake, Datadog, …) aren't in the embedded table. The override flag is the workaround.
+
+> **Not the same as `--provider-schema`.** tflens also accepts a separate `--provider-schema path/to/schema.json` flag pointing at the output of `terraform providers schema -json`. That flag enables resource-attribute name validation (catching typos like `aws_vpc.cidr-block`) and richer type inference for cross-module references — but the Terraform schema-json format does NOT include force-new metadata, so it can't drive the breaking-change classifier here. The two flags are complementary: `--provider-schema` for validation/types, `--immutable-table-override` for force-new classification.
+
 ## Plan enrichment
 
-`tflens diff` is fundamentally a static analyser — it doesn't embed provider schemas, so changes to resource attributes (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`, `instance_type` modifications, force-new attribute changes) are normally invisible. The `--enrich-with-plan` flag bridges that gap by reading the JSON output of `terraform show -json <plan>`:
+`tflens diff` is fundamentally a static analyser. The embedded force-new table covers the *attribute-is-immutable* case for upjet-supported resources, but other attribute changes (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`, `instance_type` modifications on resources outside the table) are still invisible. The `--enrich-with-plan` flag bridges that gap by reading the JSON output of `terraform show -json <plan>`:
 
 ```bash
 terraform plan -out=tfplan && terraform show -json tfplan > plan.json
 tflens diff --ref main --enrich-with-plan plan.json
 ```
 
-> **Module-developer CI note:** plan enrichment is best for **consumer-side CI** (where a real plan exists). For the module-developer workflow — running `tflens diff` in the module repo itself — the source-only [`# tflens:track` marker](tracked-attributes.md) is the right tool. It opts specific attributes into the diff with no plan, no credentials, no consuming workspace.
+> **Module-developer CI note:** plan enrichment is best for **consumer-side CI** (where a real plan exists). For the module-developer workflow — running `tflens diff` in the module repo itself — the embedded force-new table already handles destroy+recreate detection on upjet-supported resources without needing a plan. For attributes the table doesn't cover (in-place-but-disruptive changes like `cluster_version` bumps, or resources outside upjet's coverage), [`# tflens:track` markers](tracked-attributes.md) opt specific attributes into the diff with no plan, no credentials, no consuming workspace.
 
 **Classification:** force-new attributes (those Terraform marks in the plan's `replace_paths`) become Breaking; other attribute changes become Informational; resource creates become Informational; resource deletes and explicit replaces (destroy + recreate) become Breaking. The CI exit code refreshes to include plan-derived Breaking findings — so a plan-only force-new change still gates the merge even when the source-side text doesn't differ.
 

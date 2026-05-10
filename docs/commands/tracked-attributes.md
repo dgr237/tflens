@@ -1,23 +1,29 @@
 # `# tflens:track` — tracked attributes
 
-Not a command; a comment marker that opts specific resource attributes into the [`tflens diff`](diff.md) output. The source-only alternative to `--enrich-with-plan` — runs in module-developer CI without a plan, credentials, or any consuming workspace.
+Not a command; a comment marker that opts specific resource attributes into the [`tflens diff`](diff.md) output. Source-only — runs in module-developer CI without a plan, credentials, or any consuming workspace.
 
 ## When to use it
 
-`diff` deliberately ignores most resource-block attribute changes — they're noise relative to the public API surface. But some attributes are load-bearing for *operations*. Two broad classes are worth pulling out:
+`diff` deliberately ignores most resource-block attribute changes — they're noise relative to the public API surface. The cases worth flagging fall into three buckets, with three different tools:
 
-- **In-place but disruptive** — an EKS `cluster_version` bump, an RDS `engine_version` jump, an EC2 `instance_class` resize. The resource is updated in place but the change has real-world consequences (downtime, add-on compatibility, cost).
-- **Force-new (destroy + recreate)** — an EKS `cluster_name`, an RDS `identifier`, an `aws_db_subnet_group.name`. Terraform's plan will show `# forces replacement` for these, but only after `terraform plan` runs against an applied state. At PR-review time the diff looks like an innocent string change. Worse, the value is usually computed (`"${var.env}-${local.suffix}"`), so the literal text in the resource block doesn't change at all when `local.suffix` flips from `"primary"` to `"secondary"`.
+| Case | Best tool | Why |
+|---|---|---|
+| **Force-new** on an upjet-supported AWS resource (`aws_eks_cluster.role_arn`, `aws_s3_bucket.bucket`, …) | Nothing — the [embedded force-new table](diff.md#force-new-attribute-changes-embedded-table) auto-flags it | tflens ships with ~1000 resource types' force-new metadata extracted from Crossplane's runtime IR |
+| **Force-new** on a non-upjet provider (Azure, GCP, Snowflake, custom) OR an upjet resource the IR doesn't cover yet | `--immutable-table-override` with a user-supplied JSON, OR `# tflens:track` markers | The IR-derived table only covers what upjet ships |
+| **In-place but disruptive** changes (EKS `cluster_version` bump, RDS `engine_version` jump, EC2 `instance_class` resize) | `# tflens:track` markers | Not force-new; not in any provider schema as a "warn me" flag. Pure domain knowledge owned by the module developer. |
 
-These are easy to merge by accident and hard to roll back. Module developers own the resource modules; they're the people who know which attributes need a second pair of eyes.
+Tracked markers shine in the third category — the operational-impact-but-not-replacement cases that no automated source detects. They're also the fallback for the second category when you don't want to maintain a separate override JSON.
 
-## Why it exists (and why not just `--enrich-with-plan`?)
+## Why it exists alongside the embedded table
 
-`tflens` does NOT load provider schemas — no `terraform init`, no provider binaries, no credentials, no network. Loading them would defeat the "runs in seconds, no setup" property that makes tflens viable in module-developer CI. Without provider schemas, tflens has no way to independently know which attributes are force-new, sensitive, or computed — that knowledge lives inside the provider plugin.
+The embedded force-new table answers the question *"does the provider treat this attribute as immutable?"* mechanically, for resources upjet has coverage on. Tracked attributes answer a different question: *"is this attribute load-bearing for this module's operational contract?"*. Examples:
 
-The marker is the explicit alternative: the module developer encodes their domain knowledge in source — *"this attribute is part of my API contract"* — and the dev knows their module's contract better than any external schema can.
+- An EKS `cluster_version` change isn't force-new (the cluster upgrades in place), but it's a stop-the-presses event for module consumers — add-on compatibility, control-plane downtime, kubectl client version. The module dev's `# tflens:track: bump only after add-on compatibility check` encodes this in source.
+- A `tags["environment"]` value that downstream selectors filter on might be safe to change at the provider level but breaks the module's documented behaviour.
 
-`--enrich-with-plan` is the consumer-side corroboration when a plan is available. It's harder to wire into module-dev CI because it needs the module to already exist at the upstream ref AND a plan generated against the new version. The track marker has none of those constraints — it works from source against any git ref.
+Provider schemas can't tell tflens any of this — it lives in the module's domain.
+
+`--enrich-with-plan` is the consumer-side corroboration when a plan is available. It catches everything that *would actually replace*, including changes outside the embedded table's coverage. But it needs the module to already exist at the upstream ref AND a plan generated against the new version, so it's a poor fit for the module-developer workflow. Track markers and the embedded table both work from source against any git ref.
 
 ## Quick example
 

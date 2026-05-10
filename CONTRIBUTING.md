@@ -131,6 +131,8 @@ Add a `release:patch`, `release:minor`, or `release:major` label to a PR before 
 
 **PRs without a release label are silently skipped** — `[Unreleased]` entries accumulate until the next release-labelled PR triggers a bump.
 
+**Where to add `[Unreleased]` entries:** directly below the `<!-- unreleased-anchor -->` marker in `CHANGELOG.md`. The marker is a stable anchor for git's three-way merge — without it, a PR opened before a release and merged after can land its entries under the just-promoted `[vX.Y.Z]` section instead of `[Unreleased]`. `scripts/release.sh` fails loudly if the marker is missing.
+
 ### Path 2 — Manual via GitHub UI
 
 For releases that aren't tied to a single PR (e.g. cutting a release that bundles several already-merged PRs), or to retry a failed auto-release:

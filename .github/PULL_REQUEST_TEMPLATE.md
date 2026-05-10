@@ -23,8 +23,10 @@ Delete this comment block before submitting.
 ## CHANGELOG
 
 <!-- User-visible changes need an entry under `## [Unreleased]` in
-     CHANGELOG.md (grouped by Added / Changed / Deprecated / Removed /
-     Fixed / Security).
+     CHANGELOG.md, placed BELOW the `<!-- unreleased-anchor -->` marker
+     (grouped by Added / Changed / Deprecated / Removed / Fixed /
+     Security). The marker is a stable anchor for git merges across
+     release boundaries — release.sh fails if it's missing.
 
      If the change is purely internal (refactor, test-only, dep bump
      with no behaviour change, etc.), apply the `no-changelog` label
