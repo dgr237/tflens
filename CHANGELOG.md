@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-05-10
+
 ### Added
 
 - **`tflens export`: cross-module schema-aware `inferred_type` resolution.** When a parent's expression references `module.<call>.<output>`, the child output's value is now resolved through a child-rooted `Resolver` carrying the same provider schema and a recursive child-getter for grandchildren — so `output { value = module.child.role_arn }` resolves to `string` when the child's output value is `aws_iam_role.this.arn`. Pre-fix, `resolveModuleTraversal` called the schema-less `Module.InferExprType`, which returned nil for any output threading through a computed resource attribute (i.e. essentially every cross-module output in real-world modules). On terraform-aws-modules/terraform-aws-ecs v6.9.0 the change closes 17 of 21 previously-unresolved `module.X.Y` outputs (output coverage 60.3% → 85.3%). The recursive descent lets a chain like parent → child → grandchild resolve cleanly without any per-level schema re-attachment. The `WithChildModuleGetter` signature changed from `func(string) *Module` to `func(string) (*Module, ChildModuleGetter)`; the only in-tree caller (`pkg/render/export.go`) updated to a recursive closure that re-roots at each child's own children map.
@@ -333,7 +335,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/dgr237/tflens/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/dgr237/tflens/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/dgr237/tflens/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/dgr237/tflens/compare/v0.16.1...v0.16.2
