@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/dgr237/tflens/pkg/forcenew"
 )
 
 var rootCmd = &cobra.Command{
@@ -26,6 +28,15 @@ fetches — local paths and .terraform/modules/modules.json entries are
 still resolved.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	// PersistentPreRunE runs before every subcommand so the force-new
+	// override (if any) is loaded once at startup. forcenew.Init is a
+	// no-op for an empty path; for a non-empty path it eagerly opens
+	// and parses the override file, so a bad path fails the CLI early
+	// rather than silently producing wrong classifications later.
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		override, _ := cmd.Flags().GetString("immutable-table-override")
+		return forcenew.Init(override)
+	},
 }
 
 func init() {
@@ -35,6 +46,8 @@ func init() {
 		"disable registry and git fetches; only local paths and .terraform/modules/modules.json are resolved")
 	rootCmd.PersistentFlags().String("provider-schema", "",
 		"path to a `terraform providers schema -json` output file; enables resource-attribute validation and richer type inference (omit for schema-less behaviour)")
+	rootCmd.PersistentFlags().String("immutable-table-override", "",
+		"path to a JSON force-new table to merge over the embedded one (use `tflens refresh-force-new` to fetch from a Crossplane runtime IR)")
 }
 
 // Execute runs the CLI. It is called from main().

@@ -547,6 +547,9 @@ func diffStatefulEntities(oldMod, newMod *analysis.Module, changes *[]Change) {
 		if oe.Kind == analysis.KindResource {
 			diffLifecycle(id, oe, ne, changes)
 		}
+		// Force-new attribute changes (resources / data — looks up the
+		// embedded immutable-attribute table from pkg/forcenew).
+		diffResourceForceNew(id, oe, ne, changes)
 		// depends_on (any stateful entity)
 		diffDependsOn(id, oe, ne, changes)
 		// Module source / version changes (module blocks only).

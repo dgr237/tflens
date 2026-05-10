@@ -16,3 +16,8 @@ Thumbs.db
 # Go
 *.test
 *.out
+
+# Crossplane runtime IR — fetched by `tflens refresh-force-new` or
+# downloaded manually for local extraction. The extracted table is
+# committed; the multi-megabyte source IR is not.
+runtime-ir-*.json
