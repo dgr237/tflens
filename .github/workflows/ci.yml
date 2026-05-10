@@ -40,3 +40,12 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Release-anchor test
+        # Verifies that scripts/release.sh's sentinel-marker mechanism
+        # produces either a correct auto-merge or an explicit conflict
+        # when a PR's CHANGELOG entries are merged across a release
+        # boundary — the failure mode that caused silent mis-attribution
+        # on v0.17→v0.18 and v0.18→v0.19.
+        shell: bash
+        run: bash scripts/test-release-anchor.sh

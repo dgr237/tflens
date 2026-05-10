@@ -4,6 +4,12 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+<!-- unreleased-anchor — leave this line in place; PR entries go below it -->
+
+### Changed
+
+- **`scripts/release.sh` now anchors CHANGELOG promotion on an `<!-- unreleased-anchor -->` HTML-comment marker placed directly under `## [Unreleased]`.** Fixes the merge-anchoring bug that hit v0.17.0 → v0.18.0 and v0.18.0 → v0.19.0 transitions: a PR opened before a release and merged after would land its `[Unreleased]` entries under the just-promoted `[vX.Y.Z]` section because git's three-way merge anchored against the (now-moved) `## [Unreleased]` header. The sentinel is a unique, stable string git can match unambiguously across both branches. `release.sh` fails loudly if the sentinel is missing from `[Unreleased]` rather than silently producing a release with empty notes; it preserves the sentinel across promotions so subsequent PRs continue to have a stable anchor. PR template + CONTRIBUTING updated to point contributors at adding entries below the marker. `scripts/test-release-anchor.sh` simulates the cross-release-boundary merge and asserts the entry lands under `[Unreleased]`; wired into `ci.yml`.
+
 ## [0.19.0] — 2026-05-10
 
 ### Added
