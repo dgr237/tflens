@@ -150,22 +150,49 @@ awk -v ver="$VERSION" -v today="$TODAY" '
 # With:
 #   [Unreleased]: .../compare/v<version>...HEAD
 #   [<version>]: .../compare/v<previous>...v<version>
+#
+# Using awk instead of sed -e "s|...|...\n...|": GNU sed expands `\n`
+# in the replacement to a newline, BSD sed (macOS) emits a literal `n`.
+# awk's `print` is portable across both.
 if [[ -n "$PREVIOUS_TAG" ]]; then
-    sed -i.bak \
-        -e "s|^\[Unreleased\]: \(.*\)/compare/${PREVIOUS_TAG}\.\.\.HEAD|[Unreleased]: \1/compare/v${VERSION}...HEAD\n[${VERSION}]: \1/compare/${PREVIOUS_TAG}...v${VERSION}|" \
-        "$tmp"
-    rm -f "${tmp}.bak"
+    awk -v prev="$PREVIOUS_TAG" -v ver="$VERSION" '
+        $0 ~ "^\\[Unreleased\\]: " && index($0, "/compare/" prev "...HEAD") {
+            url = $0
+            sub(/^\[Unreleased\]: /, "", url)
+            sub(/\/compare\/.*$/, "", url)
+            print "[Unreleased]: " url "/compare/v" ver "...HEAD"
+            print "[" ver "]: " url "/compare/" prev "...v" ver
+            next
+        }
+        { print }
+    ' "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
 fi
 
 mv "$tmp" CHANGELOG.md
 trap - EXIT
 
 # Extract the new section's body for the tag annotation ---------------
+#
+# Trim leading/trailing blank lines in awk rather than `sed '1{/^$/d}'`:
+# BSD sed (macOS) rejects the GNU shorthand with "extra characters at
+# the end of d command". The portable POSIX form splits the brace
+# block across lines, which is fiddly to embed in a here-string; awk
+# is cleaner and works on both.
 TAG_BODY="$(awk -v ver="$VERSION" '
     $0 == "## [" ver "] — '"$TODAY"'" { in_section=1; next }
     in_section && /^## \[/ { in_section=0 }
-    in_section { print }
-' CHANGELOG.md | sed -e '1{/^$/d}' -e '${/^$/d}')"
+    in_section {
+        if (!started && NF == 0) next
+        started = 1
+        if (NF == 0) {
+            pending++
+        } else {
+            while (pending-- > 0) print ""
+            pending = 0
+            print
+        }
+    }
+' CHANGELOG.md)"
 
 # Commit + tag --------------------------------------------------------
 git add CHANGELOG.md
