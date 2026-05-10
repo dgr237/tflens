@@ -192,6 +192,43 @@ var typecheckCases = []typecheckCase{
 	{Name: "unknown_type_constraint_tolerated", WantNoErrors: true},
 	{Name: "for_each_unknown_type_allowed", WantNoErrors: true},
 
+	// ---- §7 conditional rule (top-level for_each) ----
+	{
+		Name:                 "for_each_singleton_object_in_ternary_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"single object", "empty list"},
+	},
+	{
+		Name:                 "for_each_indexed_singleton_object_in_ternary_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"single object", "empty list"},
+	},
+	{
+		Name:                 "for_each_singleton_scalar_in_ternary_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"string", "empty list"},
+	},
+	{
+		Name:                 "for_each_singleton_scalar_in_object_fallback_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"string", "empty object"},
+	},
+	{Name: "for_each_correct_singleton_wrap_ok", WantNoErrors: true},
+	{Name: "for_each_correct_collection_in_ternary_ok", WantNoErrors: true},
+
+	// ---- §7 conditional rule (nested dynamic blocks via iterator scope) ----
+	{
+		Name:                 "for_each_dynamic_singleton_in_ternary_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"dynamic \"metric_stat\"", "object", "empty list"},
+	},
+	{
+		Name:                 "for_each_dynamic_iterator_chain_singleton_fails",
+		WantErrorAttr:        "for_each",
+		WantErrorMsgContains: []string{"dynamic \"metric\"", "single object"},
+	},
+	{Name: "for_each_dynamic_correct_singleton_wrap_ok", WantNoErrors: true},
+
 	// ---- built-in function return types ----
 	{
 		Name:                 "for_each_with_keys_fails",

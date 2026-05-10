@@ -14,16 +14,17 @@ import "github.com/spf13/cobra"
 // Settings rather than being read ad-hoc with cmd.Flags().GetX.
 func FromCommand(cmd *cobra.Command, opts ...Option) Settings {
 	s := Settings{
-		Out:       cmd.OutOrStdout(),
-		Err:       cmd.ErrOrStderr(),
-		Offline:   getBool(cmd, "offline"),
-		JSON:      getString(cmd, "format") == "json",
-		Markdown:  getString(cmd, "format") == "markdown",
-		BaseRef:   getString(cmd, "ref"),
-		StatePath: getString(cmd, "state"),
-		PlanPath:  getString(cmd, "enrich-with-plan"),
-		Write:     getBool(cmd, "write"),
-		Check:     getBool(cmd, "check"),
+		Out:                cmd.OutOrStdout(),
+		Err:                cmd.ErrOrStderr(),
+		Offline:            getBool(cmd, "offline"),
+		JSON:               getString(cmd, "format") == "json",
+		Markdown:           getString(cmd, "format") == "markdown",
+		BaseRef:            getString(cmd, "ref"),
+		StatePath:          getString(cmd, "state"),
+		PlanPath:           getString(cmd, "enrich-with-plan"),
+		Write:              getBool(cmd, "write"),
+		Check:              getBool(cmd, "check"),
+		ProviderSchemaPath: getString(cmd, "provider-schema"),
 	}
 	for _, opt := range opts {
 		opt(&s)

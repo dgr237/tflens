@@ -1,0 +1,1155 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.9.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "ecs_chain",
+    "module": {
+      "variables": [
+        {
+          "name": "autoscaling_policies",
+          "type": "map(object(...))",
+          "variable_type": [
+            "map",
+            [
+              "object",
+              {
+                "policy_type": "string",
+                "predictive_scaling_policy_configuration": [
+                  "object",
+                  {
+                    "metric_specification": [
+                      "list",
+                      [
+                        "object",
+                        {
+                          "customized_capacity_metric_specification": [
+                            "object",
+                            {
+                              "metric_data_query": [
+                                "list",
+                                [
+                                  "object",
+                                  {
+                                    "id": "string",
+                                    "metric_stat": [
+                                      "object",
+                                      {
+                                        "metric": [
+                                          "object",
+                                          {
+                                            "metric_name": "string"
+                                          }
+                                        ],
+                                        "stat": "string"
+                                      }
+                                    ]
+                                  },
+                                  [
+                                    "metric_stat"
+                                  ]
+                                ]
+                              ]
+                            }
+                          ],
+                          "customized_load_metric_specification": [
+                            "object",
+                            {
+                              "metric_data_query": [
+                                "list",
+                                [
+                                  "object",
+                                  {
+                                    "id": "string",
+                                    "metric_stat": [
+                                      "object",
+                                      {
+                                        "metric": [
+                                          "object",
+                                          {
+                                            "metric_name": "string"
+                                          }
+                                        ],
+                                        "stat": "string"
+                                      }
+                                    ]
+                                  },
+                                  [
+                                    "metric_stat"
+                                  ]
+                                ]
+                              ]
+                            }
+                          ],
+                          "customized_scaling_metric_specification": [
+                            "object",
+                            {
+                              "metric_data_query": [
+                                "list",
+                                [
+                                  "object",
+                                  {
+                                    "id": "string",
+                                    "metric_stat": [
+                                      "object",
+                                      {
+                                        "metric": [
+                                          "object",
+                                          {
+                                            "metric_name": "string"
+                                          }
+                                        ],
+                                        "stat": "string"
+                                      }
+                                    ]
+                                  },
+                                  [
+                                    "metric_stat"
+                                  ]
+                                ]
+                              ]
+                            }
+                          ],
+                          "target_value": "number"
+                        },
+                        [
+                          "customized_capacity_metric_specification",
+                          "customized_load_metric_specification",
+                          "customized_scaling_metric_specification"
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              },
+              [
+                "policy_type",
+                "predictive_scaling_policy_configuration"
+              ]
+            ]
+          ],
+          "variable_type_defaults": {
+            "element": {
+              "values": {
+                "policy_type": {
+                  "type": "string",
+                  "value": "TargetTrackingScaling"
+                }
+              }
+            }
+          },
+          "has_default": true,
+          "default": {
+            "text": "{}",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "items": [],
+              "node": "object_cons"
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:16"
+        },
+        {
+          "name": "enable_autoscaling",
+          "type": "bool",
+          "variable_type": "bool",
+          "has_default": true,
+          "default": {
+            "text": "true",
+            "value": {
+              "type": "bool",
+              "value": true
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "bool",
+                "value": true
+              }
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:61"
+        }
+      ],
+      "outputs": [],
+      "resources": [
+        {
+          "type": "aws_appautoscaling_policy",
+          "name": "this",
+          "for_each": {
+            "text": "{ for k, v in var.autoscaling_policies : k =\u003e v if var.enable_autoscaling }",
+            "value": {
+              "type": [
+                "object",
+                {}
+              ],
+              "value": {}
+            },
+            "ast": {
+              "binder_count": 2,
+              "collection": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "autoscaling_policies",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "cond": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "enable_autoscaling",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "key_result": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "k",
+                    "step": "root"
+                  }
+                ]
+              },
+              "key_var": "k",
+              "kind": "object",
+              "node": "for",
+              "value_result": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "v",
+                    "step": "root"
+                  }
+                ]
+              },
+              "value_var": "v"
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "autoscaling_policies"
+                },
+                {
+                  "name": "enable_autoscaling"
+                }
+              ]
+            }
+          },
+          "for_each_kind": {
+            "kind": "object"
+          },
+          "attributes": {
+            "name": {
+              "text": "each.key",
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "each",
+                    "step": "root"
+                  },
+                  {
+                    "name": "key",
+                    "step": "attr"
+                  }
+                ]
+              }
+            },
+            "policy_type": {
+              "text": "each.value.policy_type",
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "each",
+                    "step": "root"
+                  },
+                  {
+                    "name": "value",
+                    "step": "attr"
+                  },
+                  {
+                    "name": "policy_type",
+                    "step": "attr"
+                  }
+                ]
+              }
+            }
+          },
+          "dynamic_blocks": {
+            "predictive_scaling_policy_configuration": [
+              {
+                "for_each": {
+                  "text": "each.value.policy_type == \"PredictiveScaling\" \u0026\u0026 each.value.predictive_scaling_policy_configuration != null ? [each.value.predictive_scaling_policy_configuration] : []",
+                  "ast": {
+                    "condition": {
+                      "lhs": {
+                        "lhs": {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "each",
+                              "step": "root"
+                            },
+                            {
+                              "name": "value",
+                              "step": "attr"
+                            },
+                            {
+                              "name": "policy_type",
+                              "step": "attr"
+                            }
+                          ]
+                        },
+                        "node": "binary_op",
+                        "op": "==",
+                        "rhs": {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "PredictiveScaling"
+                          }
+                        }
+                      },
+                      "node": "binary_op",
+                      "op": "\u0026\u0026",
+                      "rhs": {
+                        "lhs": {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "each",
+                              "step": "root"
+                            },
+                            {
+                              "name": "value",
+                              "step": "attr"
+                            },
+                            {
+                              "name": "predictive_scaling_policy_configuration",
+                              "step": "attr"
+                            }
+                          ]
+                        },
+                        "node": "binary_op",
+                        "op": "!=",
+                        "rhs": {
+                          "node": "literal_value",
+                          "value": null
+                        }
+                      }
+                    },
+                    "false": {
+                      "elements": [],
+                      "node": "tuple_cons"
+                    },
+                    "node": "conditional",
+                    "pattern": "empty_fallback",
+                    "true": {
+                      "elements": [
+                        {
+                          "node": "scope_traversal",
+                          "traversal": [
+                            {
+                              "name": "each",
+                              "step": "root"
+                            },
+                            {
+                              "name": "value",
+                              "step": "attr"
+                            },
+                            {
+                              "name": "predictive_scaling_policy_configuration",
+                              "step": "attr"
+                            }
+                          ]
+                        }
+                      ],
+                      "node": "tuple_cons"
+                    }
+                  }
+                },
+                "for_each_kind": {
+                  "kind": "list"
+                },
+                "content": {
+                  "dynamic_blocks": {
+                    "metric_specification": [
+                      {
+                        "for_each": {
+                          "text": "predictive_scaling_policy_configuration.value.metric_specification",
+                          "ast": {
+                            "node": "scope_traversal",
+                            "traversal": [
+                              {
+                                "name": "predictive_scaling_policy_configuration",
+                                "step": "root"
+                              },
+                              {
+                                "name": "value",
+                                "step": "attr"
+                              },
+                              {
+                                "name": "metric_specification",
+                                "step": "attr"
+                              }
+                            ]
+                          }
+                        },
+                        "for_each_kind": {
+                          "kind": "list"
+                        },
+                        "content": {
+                          "dynamic_blocks": {
+                            "customized_capacity_metric_specification": [
+                              {
+                                "for_each": {
+                                  "text": "metric_specification.value.customized_capacity_metric_specification != null ? [metric_specification.value.customized_capacity_metric_specification] : []",
+                                  "ast": {
+                                    "condition": {
+                                      "lhs": {
+                                        "node": "scope_traversal",
+                                        "traversal": [
+                                          {
+                                            "name": "metric_specification",
+                                            "step": "root"
+                                          },
+                                          {
+                                            "name": "value",
+                                            "step": "attr"
+                                          },
+                                          {
+                                            "name": "customized_capacity_metric_specification",
+                                            "step": "attr"
+                                          }
+                                        ]
+                                      },
+                                      "node": "binary_op",
+                                      "op": "!=",
+                                      "rhs": {
+                                        "node": "literal_value",
+                                        "value": null
+                                      }
+                                    },
+                                    "false": {
+                                      "elements": [],
+                                      "node": "tuple_cons"
+                                    },
+                                    "node": "conditional",
+                                    "pattern": "empty_fallback",
+                                    "true": {
+                                      "elements": [
+                                        {
+                                          "node": "scope_traversal",
+                                          "traversal": [
+                                            {
+                                              "name": "metric_specification",
+                                              "step": "root"
+                                            },
+                                            {
+                                              "name": "value",
+                                              "step": "attr"
+                                            },
+                                            {
+                                              "name": "customized_capacity_metric_specification",
+                                              "step": "attr"
+                                            }
+                                          ]
+                                        }
+                                      ],
+                                      "node": "tuple_cons"
+                                    }
+                                  }
+                                },
+                                "for_each_kind": {
+                                  "kind": "list"
+                                },
+                                "content": {
+                                  "dynamic_blocks": {
+                                    "metric_data_query": [
+                                      {
+                                        "for_each": {
+                                          "text": "customized_capacity_metric_specification.value.metric_data_query",
+                                          "ast": {
+                                            "node": "scope_traversal",
+                                            "traversal": [
+                                              {
+                                                "name": "customized_capacity_metric_specification",
+                                                "step": "root"
+                                              },
+                                              {
+                                                "name": "value",
+                                                "step": "attr"
+                                              },
+                                              {
+                                                "name": "metric_data_query",
+                                                "step": "attr"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "for_each_kind": {
+                                          "kind": "list"
+                                        },
+                                        "content": {
+                                          "attributes": {
+                                            "id": {
+                                              "text": "metric_data_query.value.id",
+                                              "ast": {
+                                                "node": "scope_traversal",
+                                                "traversal": [
+                                                  {
+                                                    "name": "metric_data_query",
+                                                    "step": "root"
+                                                  },
+                                                  {
+                                                    "name": "value",
+                                                    "step": "attr"
+                                                  },
+                                                  {
+                                                    "name": "id",
+                                                    "step": "attr"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "dynamic_blocks": {
+                                            "metric_stat_buggy_capacity": [
+                                              {
+                                                "for_each": {
+                                                  "text": "metric_data_query.value.metric_stat != null ? metric_data_query.value.metric_stat : []",
+                                                  "ast": {
+                                                    "condition": {
+                                                      "lhs": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_data_query",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "metric_stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      },
+                                                      "node": "binary_op",
+                                                      "op": "!=",
+                                                      "rhs": {
+                                                        "node": "literal_value",
+                                                        "value": null
+                                                      }
+                                                    },
+                                                    "false": {
+                                                      "elements": [],
+                                                      "node": "tuple_cons"
+                                                    },
+                                                    "node": "conditional",
+                                                    "pattern": "empty_fallback",
+                                                    "true": {
+                                                      "node": "scope_traversal",
+                                                      "traversal": [
+                                                        {
+                                                          "name": "metric_data_query",
+                                                          "step": "root"
+                                                        },
+                                                        {
+                                                          "name": "value",
+                                                          "step": "attr"
+                                                        },
+                                                        {
+                                                          "name": "metric_stat",
+                                                          "step": "attr"
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                },
+                                                "for_each_kind": {
+                                                  "kind": "invalid",
+                                                  "reason": "non-empty branch is object but fallback is empty list — Terraform would iterate the object's attributes as a single-key map, not list",
+                                                  "expected": "list"
+                                                },
+                                                "content": {
+                                                  "attributes": {
+                                                    "stat": {
+                                                      "text": "metric_stat_buggy_capacity.value.stat",
+                                                      "ast": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_stat_buggy_capacity",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  "dynamic_blocks": {
+                                                    "metric_inner_buggy_capacity": [
+                                                      {
+                                                        "for_each": {
+                                                          "text": "metric_stat_buggy_capacity.value.metric",
+                                                          "ast": {
+                                                            "node": "scope_traversal",
+                                                            "traversal": [
+                                                              {
+                                                                "name": "metric_stat_buggy_capacity",
+                                                                "step": "root"
+                                                              },
+                                                              {
+                                                                "name": "value",
+                                                                "step": "attr"
+                                                              },
+                                                              {
+                                                                "name": "metric",
+                                                                "step": "attr"
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        "for_each_kind": {
+                                                          "kind": "invalid",
+                                                          "reason": "for_each source is a single object — Terraform would iterate the object's attributes, not the object itself"
+                                                        },
+                                                        "content": {
+                                                          "attributes": {
+                                                            "metric_name": {
+                                                              "text": "metric_inner_buggy_capacity.value.metric_name",
+                                                              "ast": {
+                                                                "node": "scope_traversal",
+                                                                "traversal": [
+                                                                  {
+                                                                    "name": "metric_inner_buggy_capacity",
+                                                                    "step": "root"
+                                                                  },
+                                                                  {
+                                                                    "name": "value",
+                                                                    "step": "attr"
+                                                                  },
+                                                                  {
+                                                                    "name": "metric_name",
+                                                                    "step": "attr"
+                                                                  }
+                                                                ]
+                                                              }
+                                                            }
+                                                          },
+                                                          "location": "main.tf:104"
+                                                        },
+                                                        "location": "main.tf:102"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "location": "main.tf:94"
+                                                },
+                                                "location": "main.tf:92"
+                                              }
+                                            ]
+                                          },
+                                          "location": "main.tf:87"
+                                        },
+                                        "location": "main.tf:84"
+                                      }
+                                    ]
+                                  },
+                                  "location": "main.tf:83"
+                                },
+                                "location": "main.tf:80"
+                              }
+                            ],
+                            "customized_load_metric_specification": [
+                              {
+                                "for_each": {
+                                  "text": "metric_specification.value.customized_load_metric_specification != null ? [metric_specification.value.customized_load_metric_specification] : []",
+                                  "ast": {
+                                    "condition": {
+                                      "lhs": {
+                                        "node": "scope_traversal",
+                                        "traversal": [
+                                          {
+                                            "name": "metric_specification",
+                                            "step": "root"
+                                          },
+                                          {
+                                            "name": "value",
+                                            "step": "attr"
+                                          },
+                                          {
+                                            "name": "customized_load_metric_specification",
+                                            "step": "attr"
+                                          }
+                                        ]
+                                      },
+                                      "node": "binary_op",
+                                      "op": "!=",
+                                      "rhs": {
+                                        "node": "literal_value",
+                                        "value": null
+                                      }
+                                    },
+                                    "false": {
+                                      "elements": [],
+                                      "node": "tuple_cons"
+                                    },
+                                    "node": "conditional",
+                                    "pattern": "empty_fallback",
+                                    "true": {
+                                      "elements": [
+                                        {
+                                          "node": "scope_traversal",
+                                          "traversal": [
+                                            {
+                                              "name": "metric_specification",
+                                              "step": "root"
+                                            },
+                                            {
+                                              "name": "value",
+                                              "step": "attr"
+                                            },
+                                            {
+                                              "name": "customized_load_metric_specification",
+                                              "step": "attr"
+                                            }
+                                          ]
+                                        }
+                                      ],
+                                      "node": "tuple_cons"
+                                    }
+                                  }
+                                },
+                                "for_each_kind": {
+                                  "kind": "list"
+                                },
+                                "content": {
+                                  "dynamic_blocks": {
+                                    "metric_data_query": [
+                                      {
+                                        "for_each": {
+                                          "text": "customized_load_metric_specification.value.metric_data_query",
+                                          "ast": {
+                                            "node": "scope_traversal",
+                                            "traversal": [
+                                              {
+                                                "name": "customized_load_metric_specification",
+                                                "step": "root"
+                                              },
+                                              {
+                                                "name": "value",
+                                                "step": "attr"
+                                              },
+                                              {
+                                                "name": "metric_data_query",
+                                                "step": "attr"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "for_each_kind": {
+                                          "kind": "list"
+                                        },
+                                        "content": {
+                                          "attributes": {
+                                            "id": {
+                                              "text": "metric_data_query.value.id",
+                                              "ast": {
+                                                "node": "scope_traversal",
+                                                "traversal": [
+                                                  {
+                                                    "name": "metric_data_query",
+                                                    "step": "root"
+                                                  },
+                                                  {
+                                                    "name": "value",
+                                                    "step": "attr"
+                                                  },
+                                                  {
+                                                    "name": "id",
+                                                    "step": "attr"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "dynamic_blocks": {
+                                            "metric_stat_buggy_load": [
+                                              {
+                                                "for_each": {
+                                                  "text": "metric_data_query.value.metric_stat != null ? metric_data_query.value.metric_stat : []",
+                                                  "ast": {
+                                                    "condition": {
+                                                      "lhs": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_data_query",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "metric_stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      },
+                                                      "node": "binary_op",
+                                                      "op": "!=",
+                                                      "rhs": {
+                                                        "node": "literal_value",
+                                                        "value": null
+                                                      }
+                                                    },
+                                                    "false": {
+                                                      "elements": [],
+                                                      "node": "tuple_cons"
+                                                    },
+                                                    "node": "conditional",
+                                                    "pattern": "empty_fallback",
+                                                    "true": {
+                                                      "node": "scope_traversal",
+                                                      "traversal": [
+                                                        {
+                                                          "name": "metric_data_query",
+                                                          "step": "root"
+                                                        },
+                                                        {
+                                                          "name": "value",
+                                                          "step": "attr"
+                                                        },
+                                                        {
+                                                          "name": "metric_stat",
+                                                          "step": "attr"
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                },
+                                                "for_each_kind": {
+                                                  "kind": "invalid",
+                                                  "reason": "non-empty branch is object but fallback is empty list — Terraform would iterate the object's attributes as a single-key map, not list",
+                                                  "expected": "list"
+                                                },
+                                                "content": {
+                                                  "attributes": {
+                                                    "stat": {
+                                                      "text": "metric_stat_buggy_load.value.stat",
+                                                      "ast": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_stat_buggy_load",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  "location": "main.tf:129"
+                                                },
+                                                "location": "main.tf:127"
+                                              }
+                                            ]
+                                          },
+                                          "location": "main.tf:122"
+                                        },
+                                        "location": "main.tf:119"
+                                      }
+                                    ]
+                                  },
+                                  "location": "main.tf:118"
+                                },
+                                "location": "main.tf:115"
+                              }
+                            ],
+                            "customized_scaling_metric_specification": [
+                              {
+                                "for_each": {
+                                  "text": "metric_specification.value.customized_scaling_metric_specification != null ? [metric_specification.value.customized_scaling_metric_specification] : []",
+                                  "ast": {
+                                    "condition": {
+                                      "lhs": {
+                                        "node": "scope_traversal",
+                                        "traversal": [
+                                          {
+                                            "name": "metric_specification",
+                                            "step": "root"
+                                          },
+                                          {
+                                            "name": "value",
+                                            "step": "attr"
+                                          },
+                                          {
+                                            "name": "customized_scaling_metric_specification",
+                                            "step": "attr"
+                                          }
+                                        ]
+                                      },
+                                      "node": "binary_op",
+                                      "op": "!=",
+                                      "rhs": {
+                                        "node": "literal_value",
+                                        "value": null
+                                      }
+                                    },
+                                    "false": {
+                                      "elements": [],
+                                      "node": "tuple_cons"
+                                    },
+                                    "node": "conditional",
+                                    "pattern": "empty_fallback",
+                                    "true": {
+                                      "elements": [
+                                        {
+                                          "node": "scope_traversal",
+                                          "traversal": [
+                                            {
+                                              "name": "metric_specification",
+                                              "step": "root"
+                                            },
+                                            {
+                                              "name": "value",
+                                              "step": "attr"
+                                            },
+                                            {
+                                              "name": "customized_scaling_metric_specification",
+                                              "step": "attr"
+                                            }
+                                          ]
+                                        }
+                                      ],
+                                      "node": "tuple_cons"
+                                    }
+                                  }
+                                },
+                                "for_each_kind": {
+                                  "kind": "list"
+                                },
+                                "content": {
+                                  "dynamic_blocks": {
+                                    "metric_data_query": [
+                                      {
+                                        "for_each": {
+                                          "text": "customized_scaling_metric_specification.value.metric_data_query",
+                                          "ast": {
+                                            "node": "scope_traversal",
+                                            "traversal": [
+                                              {
+                                                "name": "customized_scaling_metric_specification",
+                                                "step": "root"
+                                              },
+                                              {
+                                                "name": "value",
+                                                "step": "attr"
+                                              },
+                                              {
+                                                "name": "metric_data_query",
+                                                "step": "attr"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "for_each_kind": {
+                                          "kind": "list"
+                                        },
+                                        "content": {
+                                          "attributes": {
+                                            "id": {
+                                              "text": "metric_data_query.value.id",
+                                              "ast": {
+                                                "node": "scope_traversal",
+                                                "traversal": [
+                                                  {
+                                                    "name": "metric_data_query",
+                                                    "step": "root"
+                                                  },
+                                                  {
+                                                    "name": "value",
+                                                    "step": "attr"
+                                                  },
+                                                  {
+                                                    "name": "id",
+                                                    "step": "attr"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "dynamic_blocks": {
+                                            "metric_stat_correct_scaling": [
+                                              {
+                                                "for_each": {
+                                                  "text": "metric_data_query.value.metric_stat != null ? [metric_data_query.value.metric_stat] : []",
+                                                  "ast": {
+                                                    "condition": {
+                                                      "lhs": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_data_query",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "metric_stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      },
+                                                      "node": "binary_op",
+                                                      "op": "!=",
+                                                      "rhs": {
+                                                        "node": "literal_value",
+                                                        "value": null
+                                                      }
+                                                    },
+                                                    "false": {
+                                                      "elements": [],
+                                                      "node": "tuple_cons"
+                                                    },
+                                                    "node": "conditional",
+                                                    "pattern": "empty_fallback",
+                                                    "true": {
+                                                      "elements": [
+                                                        {
+                                                          "node": "scope_traversal",
+                                                          "traversal": [
+                                                            {
+                                                              "name": "metric_data_query",
+                                                              "step": "root"
+                                                            },
+                                                            {
+                                                              "name": "value",
+                                                              "step": "attr"
+                                                            },
+                                                            {
+                                                              "name": "metric_stat",
+                                                              "step": "attr"
+                                                            }
+                                                          ]
+                                                        }
+                                                      ],
+                                                      "node": "tuple_cons"
+                                                    }
+                                                  }
+                                                },
+                                                "for_each_kind": {
+                                                  "kind": "list"
+                                                },
+                                                "content": {
+                                                  "attributes": {
+                                                    "stat": {
+                                                      "text": "metric_stat_correct_scaling.value.stat",
+                                                      "ast": {
+                                                        "node": "scope_traversal",
+                                                        "traversal": [
+                                                          {
+                                                            "name": "metric_stat_correct_scaling",
+                                                            "step": "root"
+                                                          },
+                                                          {
+                                                            "name": "value",
+                                                            "step": "attr"
+                                                          },
+                                                          {
+                                                            "name": "stat",
+                                                            "step": "attr"
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  },
+                                                  "location": "main.tf:152"
+                                                },
+                                                "location": "main.tf:150"
+                                              }
+                                            ]
+                                          },
+                                          "location": "main.tf:145"
+                                        },
+                                        "location": "main.tf:142"
+                                      }
+                                    ]
+                                  },
+                                  "location": "main.tf:141"
+                                },
+                                "location": "main.tf:138"
+                              }
+                            ]
+                          },
+                          "location": "main.tf:79"
+                        },
+                        "location": "main.tf:76"
+                      }
+                    ]
+                  },
+                  "location": "main.tf:75"
+                },
+                "location": "main.tf:72"
+              }
+            ]
+          },
+          "location": "main.tf:66"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {},
+      "tracked_attributes": [],
+      "dependencies": {
+        "resource.aws_appautoscaling_policy.this": [
+          "variable.autoscaling_policies",
+          "variable.enable_autoscaling"
+        ]
+      }
+    }
+  }
+}

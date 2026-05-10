@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "scalar_entities",
@@ -208,6 +208,13 @@
                   "step": "attr"
                 }
               ]
+            },
+            "references": {
+              "locals": [
+                {
+                  "name": "image"
+                }
+              ]
             }
           },
           "location": "main.tf:47"
@@ -228,8 +235,16 @@
                   "step": "attr"
                 }
               ]
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "instance_count"
+                }
+              ]
             }
           },
+          "inferred_type": "number",
           "sensitive": true,
           "location": "main.tf:52"
         }
@@ -321,7 +336,29 @@
                   "step": "attr"
                 }
               ]
+            },
+            "references": {
+              "data_sources": [
+                {
+                  "type": "aws_ami",
+                  "name": "latest",
+                  "path": [
+                    "id"
+                  ]
+                }
+              ]
             }
+          },
+          "depends_on": {
+            "data_sources": [
+              {
+                "type": "aws_ami",
+                "name": "latest",
+                "path": [
+                  "id"
+                ]
+              }
+            ]
           },
           "location": "main.tf:40"
         }

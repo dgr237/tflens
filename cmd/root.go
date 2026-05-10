@@ -33,6 +33,8 @@ func init() {
 		"output format: text or json. When json, structured output goes to stdout; warnings stay on stderr")
 	rootCmd.PersistentFlags().Bool("offline", false,
 		"disable registry and git fetches; only local paths and .terraform/modules/modules.json are resolved")
+	rootCmd.PersistentFlags().String("provider-schema", "",
+		"path to a `terraform providers schema -json` output file; enables resource-attribute validation and richer type inference (omit for schema-less behaviour)")
 }
 
 // Execute runs the CLI. It is called from main().

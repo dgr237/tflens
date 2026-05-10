@@ -14,6 +14,7 @@ import (
 
 	"github.com/dgr237/tflens/pkg/analysis"
 	"github.com/dgr237/tflens/pkg/loader"
+	"github.com/dgr237/tflens/pkg/providerschema"
 )
 
 // ---- Experimental: export schema ----
@@ -32,6 +33,81 @@ import (
 // The top-level _experimental flag and schema_version are explicit
 // so consumers can detect breakage without guessing.
 
+// 0.9.0-prototype adds five further fields/markers, all targeted at
+// downstream converters that today re-implement classification on top
+// of the raw export. Pure additions — every prior fixture round-trips
+// unchanged apart from the schema bump.
+//
+//   - ExportLocal.DependsOn / InferredType / Cycle: transitive
+//     reference graph (every var/resource/data/module/local reachable
+//     through chains of `local.X → local.Y → ...`), inferred type via
+//     the same machinery used for variables, and a cycle marker when
+//     the walk hits `local.A → ... → local.A`. Replaces composegen's
+//     resolveLocal recursive walker with a single field read and
+//     gives consumers a structured failure mode for cycles. Also
+//     enables the for_each_kind classifier to recognise local refs
+//     it previously couldn't trace.
+//
+//   - ExportOutput.InferredType: cty/json type marker for the
+//     output's value expression. Mirrors ExportVariable.VariableType
+//     but inferred rather than declared. Lets schema renderers (kro
+//     status fields, Crossplane composite outputs) emit properly
+//     typed outputs without re-running inference.
+//
+//   - ConditionalExpr.pattern (in ast): named-shape hint —
+//     "drop_when_true" / "drop_when_false" / "empty_fallback" /
+//     "null_check_lhs" / "null_check_rhs" / "normal" — so consumers
+//     short-circuit to the right rewrite without re-inspecting
+//     branches. Mirrors composegen §4.11's conditional table.
+//
+//   - SplatExpr.attr_path (in ast): chain of attribute names when
+//     the splat's projection is a pure `.attr1.attr2` traversal
+//     (the common `aws_T.X[*].id` shape). Lets consumers render
+//     CEL/JS projections directly without ASCII-pattern detection.
+//
+//   - ForExpr.binder_count + kind (in ast): explicit `1`|`2` and
+//     `"list"`|`"object"` markers (today implicit in key_var /
+//     key_result presence). Lets consumers gate-check against the
+//     kro-incompatible two-binder form without inspecting branches.
+//
+// 0.8.0-prototype adds five fields targeted at downstream converters
+// that today re-implement the same classification logic on top of the
+// raw AST. All are pure additions — old consumers ignore them and
+// every prior fixture round-trips unchanged apart from the schema bump.
+//
+//   - ExportExpression.References: pre-computed reference index per
+//     expression, replacing the per-converter AST walk that extracts
+//     var.X / aws_T.Y / module.M.O / data.aws_T.X / local.L. Surfaces
+//     the post-prefix attribute path and (for resources) any leading
+//     index/splat so consumers building schemas know whether the
+//     expression is per-instance or collection-shaped.
+//
+//   - ExportResource.CountKind / ExportModuleCall.CountKind: classifies
+//     count = ... as include_when (cond ? 1 : 0 either order, with the
+//     condition surfaced separately), scalar (literal number), or
+//     expression (anything else). Collapses the pair of parallel
+//     classifiers downstream converters keep in sync today.
+//
+//   - ExportResource.ForEachKind / ExportDynamicBlock.ForEachKind /
+//     ExportModuleCall.ForEachKind: emits {kind: list|map|set|object|
+//     tuple|invalid|unknown, reason?} from the same TFType the analyser
+//     already infers, so converters don't redo the list-vs-map walk
+//     against the per-RGD variableTypes map. Catches the
+//     ternary-empty-fallback object pattern at the producer side.
+//
+//   - ExportConditionBlock.Folded (validations only): named-shape hint
+//     for common validation patterns — enum (contains([...], var.X)),
+//     min_length / max_length / length_range, minimum / maximum,
+//     pattern (regex). Falls back to {kind: "complex"} so the AST is
+//     still the source of truth.
+//
+//   - ExportModuleCallArgument.ChildVariableType: when the called
+//     child module is loaded, each argument carries the child's
+//     declared type constraint as cty/json — so converters can render
+//     argument expressions correctly without resolving the child path
+//     themselves. Omitted when the child isn't available (offline
+//     runs / unresolved git or registry sources).
+//
 // 0.7.0-prototype adds ExportVariable.VariableTypeDefaults: a recursive
 // tree of the per-attribute default values declared via the two-arg
 // `optional(T, default)` form. The variable_type field already encodes
@@ -90,7 +166,7 @@ import (
 // wherever an HCL expression appears in the export. Schema bumped
 // from 0.1.0-prototype because the *_text string fields were
 // removed in favour of nested objects.
-const ExportSchemaVersion = "0.7.0-prototype"
+const ExportSchemaVersion = "0.9.0-prototype"
 
 type Export struct {
 	Experimental  bool       `json:"_experimental"`
@@ -175,9 +251,20 @@ type ExportTypeDefaults struct {
 }
 
 type ExportOutput struct {
-	Name           string                 `json:"name"`
-	Description    string                 `json:"description,omitempty"`
-	Value          *ExportExpression      `json:"value,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Value       *ExportExpression `json:"value,omitempty"`
+	// InferredType is the cty/json type marker for this output's value
+	// expression — same machinery the variable / for_each classifiers
+	// use, applied to outputs. Lets schema renderers (e.g. kro status
+	// fields, Crossplane composite outputs) emit properly-typed
+	// outputs without re-running inference. Mirrors
+	// ExportVariable.VariableType but inferred rather than declared.
+	// Omitted when the inference returns unknown — most outputs
+	// reference computed resource attributes whose types the analyser
+	// can't statically determine, so absence of this field is the
+	// common case rather than the exception.
+	InferredType   json.RawMessage        `json:"inferred_type,omitempty"`
 	Sensitive      bool                   `json:"sensitive,omitempty"`
 	Ephemeral      bool                   `json:"ephemeral,omitempty"`
 	DependsOn      *ExportExpression      `json:"depends_on,omitempty"`
@@ -192,10 +279,20 @@ type ExportOutput struct {
 // (converters, generators, schema validators) can decide whether to
 // translate the boolean check into the target's native validation
 // primitive or keep the source text.
+//
+// Folded is set only on `validation` blocks (not preconditions /
+// postconditions) and carries a named-shape hint for the common
+// patterns downstream converters today re-derive from the AST: enum
+// (`contains([…], var.X)`), min_length / max_length / length_range
+// (length(x) bounds), minimum / maximum (numeric bounds), pattern
+// (regex). Anything that doesn't match a recognised shape gets
+// {kind: "complex"} so the AST stays the source of truth — Folded is
+// purely a convenience field.
 type ExportConditionBlock struct {
-	Condition    *ExportExpression `json:"condition,omitempty"`
-	ErrorMessage *ExportExpression `json:"error_message,omitempty"`
-	Location     string            `json:"location,omitempty"`
+	Condition    *ExportExpression       `json:"condition,omitempty"`
+	ErrorMessage *ExportExpression       `json:"error_message,omitempty"`
+	Folded       *ExportValidationFolded `json:"folded,omitempty"`
+	Location     string                  `json:"location,omitempty"`
 }
 
 type ExportResource struct {
@@ -204,6 +301,8 @@ type ExportResource struct {
 	Provider            *ExportExpression               `json:"provider,omitempty"`
 	Count               *ExportExpression               `json:"count,omitempty"`
 	ForEach             *ExportExpression               `json:"for_each,omitempty"`
+	CountKind           *ExportCountKind                `json:"count_kind,omitempty"`
+	ForEachKind         *ExportForEachKind              `json:"for_each_kind,omitempty"`
 	DependsOn           *ExportExpression               `json:"depends_on,omitempty"`
 	PreventDestroy      bool                            `json:"prevent_destroy,omitempty"`
 	CreateBeforeDestroy bool                            `json:"create_before_destroy,omitempty"`
@@ -226,7 +325,7 @@ type ExportResource struct {
 // ExportExpression is the shared shape for every HCL expression that
 // appears in the export — resource attributes, count/for_each/
 // depends_on, lifecycle ignore_changes / replace_triggered_by,
-// module-call arguments, locals, outputs, variable defaults. Three
+// module-call arguments, locals, outputs, variable defaults. Four
 // complementary fields:
 //
 //   - text:  the source as written. Always present. Lossless for
@@ -240,14 +339,20 @@ type ExportResource struct {
 //     the target language without re-parsing the text. Especially
 //     valuable for non-Go consumers that don't want to embed an HCL
 //     parser. See export_ast.go for the supported node kinds.
+//   - references: pre-computed index of every var.X / aws_T.Y /
+//     module.M.O / data.aws_T.X / local.L referenced anywhere in
+//     this expression, with the post-prefix attribute path and (for
+//     resources) any leading `[k]` index or splat. Lets consumers
+//     do reference work without walking the AST. See export_refs.go.
 //
 // Renamed from ExportAttribute in 0.2.0-prototype: same shape, but
 // "expression" describes its scope better now that count/for_each/
 // arguments/locals/etc. all use it too.
 type ExportExpression struct {
-	Text  string         `json:"text"`
-	Value *ExportCtyJSON `json:"value,omitempty"`
-	AST   any            `json:"ast,omitempty"`
+	Text       string            `json:"text"`
+	Value      *ExportCtyJSON    `json:"value,omitempty"`
+	AST        any               `json:"ast,omitempty"`
+	References *ExportReferences `json:"references,omitempty"`
 }
 
 // ExportBlock is one nested block instance — recursive, since blocks
@@ -286,26 +391,70 @@ type ExportBlock struct {
 // inside-dynamic (and static-inside-dynamic) work via the same
 // recursion.
 type ExportDynamicBlock struct {
-	ForEach  *ExportExpression `json:"for_each,omitempty"`
-	Iterator string            `json:"iterator,omitempty"`
-	Content  ExportBlock       `json:"content"`
-	Location string            `json:"location,omitempty"`
+	ForEach     *ExportExpression  `json:"for_each,omitempty"`
+	ForEachKind *ExportForEachKind `json:"for_each_kind,omitempty"`
+	Iterator    string             `json:"iterator,omitempty"`
+	Content     ExportBlock        `json:"content"`
+	Location    string             `json:"location,omitempty"`
 }
 
 type ExportLocal struct {
-	Name     string            `json:"name"`
-	Value    *ExportExpression `json:"value,omitempty"`
-	Location string            `json:"location,omitempty"`
+	Name  string            `json:"name"`
+	Value *ExportExpression `json:"value,omitempty"`
+	// DependsOn is the *transitive* reference index for this local —
+	// every var / resource / data source / module / local reachable
+	// through chains of `local.X → local.Y → ...`. Distinct from
+	// Value.References (which is direct only): consumers walking a
+	// local's dependency graph (e.g. composegen's resolveLocal) can
+	// read DependsOn instead of recursing through sub-locals
+	// themselves.
+	DependsOn *ExportReferences `json:"depends_on,omitempty"`
+	// InferredType is the cty/json type marker for this local's value,
+	// computed via Module.InferExprType against the value expression
+	// (same machinery the variable / for_each classifiers use). Lets
+	// consumers gate-check the local's shape without re-running
+	// inference. Mirrors ExportVariable.VariableType but inferred
+	// rather than declared. Omitted when the inference returns
+	// unknown.
+	InferredType json.RawMessage `json:"inferred_type,omitempty"`
+	// Cycle is true when the transitive walk hit a `local.A → local.B
+	// → ... → local.A` loop. The walk terminates safely (each local
+	// is visited at most once) but consumers should treat the
+	// DependsOn graph as conservative — it's everything reachable
+	// before the cycle was hit, not the full set Terraform would
+	// actually reject.
+	Cycle    bool   `json:"cycle,omitempty"`
+	Location string `json:"location,omitempty"`
 }
 
 type ExportModuleCall struct {
-	Name      string                      `json:"name"`
-	Source    string                      `json:"source,omitempty"`
-	Version   string                      `json:"version,omitempty"`
-	Arguments map[string]ExportExpression `json:"arguments,omitempty"`
-	Count     *ExportExpression           `json:"count,omitempty"`
-	ForEach   *ExportExpression           `json:"for_each,omitempty"`
-	Location  string                      `json:"location,omitempty"`
+	Name        string                              `json:"name"`
+	Source      string                              `json:"source,omitempty"`
+	Version     string                              `json:"version,omitempty"`
+	Arguments   map[string]ExportModuleCallArgument `json:"arguments,omitempty"`
+	Count       *ExportExpression                   `json:"count,omitempty"`
+	ForEach     *ExportExpression                   `json:"for_each,omitempty"`
+	CountKind   *ExportCountKind                    `json:"count_kind,omitempty"`
+	ForEachKind *ExportForEachKind                  `json:"for_each_kind,omitempty"`
+	Location    string                              `json:"location,omitempty"`
+}
+
+// ExportModuleCallArgument is one argument passed to a module call.
+// Embeds ExportExpression so the {text, value?, ast?, references?}
+// shape stays identical to every other expression in the export, then
+// adds ChildVariableType: the called child module's declared type
+// constraint for the argument's name (in the same cty/json shape used
+// by ExportVariable.VariableType). Only populated when the called
+// child is loaded — omitted otherwise so consumers can detect "child
+// type unknown" vs "child has no such variable" via the field's
+// presence rather than parsing a sentinel value.
+//
+// Marshalled as a flat object via json.Marshaler so consumers see
+// `{ "text": ..., "child_variable_type": ... }` rather than a nested
+// expression object.
+type ExportModuleCallArgument struct {
+	ExportExpression
+	ChildVariableType json.RawMessage `json:"child_variable_type,omitempty"`
 }
 
 type ExportTerraform struct {
@@ -393,16 +542,16 @@ func BuildExport(p *loader.Project, tflensVersion string) Export {
 	if p == nil || p.Root == nil {
 		return exp
 	}
-	exp.Root = exportNode(p.Root, "", "")
+	exp.Root = exportNode(p.Root, "", "", p.ProviderSchema)
 	return exp
 }
 
-func exportNode(n *loader.ModuleNode, source, version string) ExportNode {
+func exportNode(n *loader.ModuleNode, source, version string, schema *providerschema.Schema) ExportNode {
 	out := ExportNode{
 		Dir:     n.Dir,
 		Source:  source,
 		Version: version,
-		Module:  exportModule(n.Module),
+		Module:  exportModule(n.Module, n.Children, schema),
 	}
 	if len(n.Children) > 0 {
 		out.Children = make(map[string]ExportNode, len(n.Children))
@@ -412,13 +561,13 @@ func exportNode(n *loader.ModuleNode, source, version string) ExportNode {
 				cs = n.Module.ModuleSource(name)
 				cv = n.Module.ModuleVersion(name)
 			}
-			out.Children[name] = exportNode(child, cs, cv)
+			out.Children[name] = exportNode(child, cs, cv, schema)
 		}
 	}
 	return out
 }
 
-func exportModule(m *analysis.Module) ExportModule {
+func exportModule(m *analysis.Module, children map[string]*loader.ModuleNode, schema *providerschema.Schema) ExportModule {
 	out := ExportModule{
 		Variables:    []ExportVariable{},
 		Outputs:      []ExportOutput{},
@@ -432,21 +581,29 @@ func exportModule(m *analysis.Module) ExportModule {
 	if m == nil {
 		return out
 	}
-	ctx := m.EvalContext()
+	resolver := m.Resolver().
+		WithChildModuleGetter(makeChildModuleGetter(children)).
+		WithProviderSchema(schema)
+	rc := &renderCtx{
+		m:        m,
+		resolver: resolver,
+		ctx:      m.EvalContext(),
+		children: children,
+	}
 	for _, e := range m.Entities() {
 		switch e.Kind {
 		case analysis.KindVariable:
-			out.Variables = append(out.Variables, exportVariable(e, ctx))
+			out.Variables = append(out.Variables, exportVariable(e, rc))
 		case analysis.KindOutput:
-			out.Outputs = append(out.Outputs, exportOutput(e, ctx))
+			out.Outputs = append(out.Outputs, exportOutput(e, rc))
 		case analysis.KindResource:
-			out.Resources = append(out.Resources, exportResource(e, ctx))
+			out.Resources = append(out.Resources, exportResource(e, rc))
 		case analysis.KindData:
-			out.DataSources = append(out.DataSources, exportResource(e, ctx))
+			out.DataSources = append(out.DataSources, exportResource(e, rc))
 		case analysis.KindLocal:
-			out.Locals = append(out.Locals, exportLocal(e, ctx))
+			out.Locals = append(out.Locals, exportLocal(e, rc))
 		case analysis.KindModule:
-			out.ModuleCalls = append(out.ModuleCalls, exportModuleCall(e, m, ctx))
+			out.ModuleCalls = append(out.ModuleCalls, exportModuleCall(e, rc))
 		}
 		// Dependency adjacency — emitted for every entity, not just one
 		// kind, so converters get the full graph.
@@ -456,8 +613,8 @@ func exportModule(m *analysis.Module) ExportModule {
 			out.Dependencies[e.ID()] = sorted
 		}
 	}
-	out.Terraform = exportTerraform(m, ctx)
-	out.Tracked = exportTrackedAttributes(m, ctx)
+	out.Terraform = exportTerraform(rc)
+	out.Tracked = exportTrackedAttributes(m)
 
 	// Stable per-section ordering — converters depend on deterministic output.
 	sortByName := func(less func(i, j int) bool) func(int, int) bool { return less }
@@ -481,25 +638,85 @@ func exportModule(m *analysis.Module) ExportModule {
 	return out
 }
 
+// makeChildModuleGetter builds a recursive analysis.ChildModuleGetter
+// rooted at the given children map. The returned getter resolves one
+// level (`module.<call> → child Module`) and supplies a fresh getter
+// closed over THAT child's own children, so resolveModuleTraversal
+// can chase cross-module references that themselves traverse into
+// grandchild outputs (`output "x" { value = module.grandchild.y }`).
+//
+// Returns a getter that always returns (nil, nil) when children is
+// nil or the requested name isn't a registered call — the resolver
+// short-circuits cleanly in either case.
+func makeChildModuleGetter(children map[string]*loader.ModuleNode) analysis.ChildModuleGetter {
+	return func(name string) (*analysis.Module, analysis.ChildModuleGetter) {
+		if children == nil {
+			return nil, nil
+		}
+		cn, ok := children[name]
+		if !ok || cn == nil {
+			return nil, nil
+		}
+		return cn.Module, makeChildModuleGetter(cn.Children)
+	}
+}
+
+// renderCtx bundles the per-module context every helper in export.go
+// needs: an analysis.Resolver (handles type inference / iterator
+// scope / for_each classification / cycle protection — see
+// pkg/analysis/resolver.go), the curated EvalContext for expression
+// evaluation, and the loader children map for module-call argument
+// child_variable_type lookup.
+//
+// One renderCtx per module is built at the top of exportModule. The
+// iterator stack lives inside the resolver — pushIterator returns a
+// renderCtx wrapping the pushed resolver. The render-side fields
+// (ctx, children) are shared by reference so siblings see the same
+// underlying state.
+type renderCtx struct {
+	m        *analysis.Module
+	resolver *analysis.Resolver
+	ctx      *hcl.EvalContext
+	children map[string]*loader.ModuleNode
+}
+
+// pushIterator returns a new renderCtx whose resolver has the given
+// iterator binding pushed. Returns rc unchanged when scope is empty
+// (malformed dynamic block) or its ElementType is nil (resolver
+// PushIterator no-ops in that case).
+func (rc *renderCtx) pushIterator(scope analysis.IteratorScope) *renderCtx {
+	if rc == nil {
+		return rc
+	}
+	pushed := rc.resolver.PushIterator(scope)
+	if pushed == rc.resolver {
+		return rc
+	}
+	out := *rc
+	out.resolver = pushed
+	return &out
+}
+
 // exprToExport is the universal builder for ExportExpression — every
 // place that emits an HCL expression goes through this so the {text,
-// value?, ast?} contract is identical across attributes, count,
-// for_each, depends_on, lifecycle, module-call arguments, locals,
-// outputs, variable defaults, etc. Returns nil for a nil/empty *Expr
-// so callers can plug it directly into pointer-typed export fields
-// (the zero result then disappears thanks to omitempty).
-func exprToExport(e *analysis.Expr, ctx *hcl.EvalContext) *ExportExpression {
+// value?, ast?, references?} contract is identical across attributes,
+// count, for_each, depends_on, lifecycle, module-call arguments,
+// locals, outputs, variable defaults, etc. Returns nil for a nil/empty
+// *Expr so callers can plug it directly into pointer-typed export
+// fields (the zero result then disappears thanks to omitempty).
+func exprToExport(e *analysis.Expr, rc *renderCtx) *ExportExpression {
 	if e == nil || e.E == nil {
 		return nil
 	}
 	return &ExportExpression{
-		Text:  e.Text(),
-		Value: evalToExport(e, ctx),
-		AST:   astFor(e),
+		Text:       e.Text(),
+		Value:      evalToExport(e, rc.ctx),
+		AST:        astFor(e),
+		References: extractReferences(e, rc.m),
 	}
 }
 
-func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
+func exportVariable(e analysis.Entity, rc *renderCtx) ExportVariable {
 	v := ExportVariable{
 		Name:        e.Name,
 		Description: e.Description,
@@ -507,7 +724,7 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 		Sensitive:   e.Sensitive,
 		Ephemeral:   e.Ephemeral,
 		Nullable:    !e.NonNullable,
-		Validations: exportConditionBlocks(e.Validations, ctx),
+		Validations: exportConditionBlocks(e.Validations, rc, true),
 		Location:    e.Location(),
 	}
 	if e.DeclaredType != nil {
@@ -519,7 +736,7 @@ func exportVariable(e analysis.Entity, ctx *hcl.EvalContext) ExportVariable {
 		}
 		v.VariableTypeDefaults = exportTypeDefaults(e.DeclaredType.Defaults)
 	}
-	v.Default = exprToExport(e.DefaultExpr, ctx)
+	v.Default = exprToExport(e.DefaultExpr, rc)
 	return v
 }
 
@@ -562,35 +779,49 @@ func exportTypeDefaults(d *typeexpr.Defaults) *ExportTypeDefaults {
 	return out
 }
 
-func exportOutput(e analysis.Entity, ctx *hcl.EvalContext) ExportOutput {
-	return ExportOutput{
+func exportOutput(e analysis.Entity, rc *renderCtx) ExportOutput {
+	out := ExportOutput{
 		Name:           e.Name,
 		Description:    e.Description,
-		Value:          exprToExport(e.ValueExpr, ctx),
+		Value:          exprToExport(e.ValueExpr, rc),
 		Sensitive:      e.Sensitive,
 		Ephemeral:      e.Ephemeral,
-		DependsOn:      exprToExport(e.DependsOnExpr, ctx),
-		Preconditions:  exportConditionBlocks(e.Preconditions, ctx),
-		Postconditions: exportConditionBlocks(e.Postconditions, ctx),
+		DependsOn:      exprToExport(e.DependsOnExpr, rc),
+		Preconditions:  exportConditionBlocks(e.Preconditions, rc, false),
+		Postconditions: exportConditionBlocks(e.Postconditions, rc, false),
 		Location:       e.Location(),
 	}
+	if e.ValueExpr != nil && e.ValueExpr.E != nil {
+		if t := resolveExprType(e.ValueExpr.E, rc); t != nil && t.HasCty() {
+			if raw, err := ctyjson.MarshalType(t.Cty); err == nil {
+				out.InferredType = raw
+			}
+		}
+	}
+	return out
 }
 
 // exportConditionBlocks converts the analysis-side ConditionBlock
 // slice into the wire-format ExportConditionBlock list. Both inner
 // expressions go through exprToExport so consumers get the same
-// {text, value?, ast?} triple they get for every other expression in
-// the export. Nil/empty input → nil output (so the omitempty tag
-// drops the whole field).
-func exportConditionBlocks(blocks []analysis.ConditionBlock, ctx *hcl.EvalContext) []ExportConditionBlock {
+// {text, value?, ast?, references?} shape they get for every other
+// expression in the export. When isValidation is true, the per-block
+// folded hint is computed (only validation blocks get the structured
+// fold; precondition / postcondition blocks describe runtime invariants
+// that don't map cleanly to a fixed schema vocabulary). Nil/empty
+// input → nil output so the omitempty tag drops the whole field.
+func exportConditionBlocks(blocks []analysis.ConditionBlock, rc *renderCtx, isValidation bool) []ExportConditionBlock {
 	if len(blocks) == 0 {
 		return nil
 	}
 	out := make([]ExportConditionBlock, len(blocks))
 	for i, b := range blocks {
 		entry := ExportConditionBlock{
-			Condition:    exprToExport(b.Condition, ctx),
-			ErrorMessage: exprToExport(b.ErrorMessage, ctx),
+			Condition:    exprToExport(b.Condition, rc),
+			ErrorMessage: exprToExport(b.ErrorMessage, rc),
+		}
+		if isValidation {
+			entry.Folded = foldValidation(b.Condition)
 		}
 		if b.Pos.File != "" {
 			entry.Location = filepath.Base(b.Pos.File) + ":" + strconv.Itoa(b.Pos.Line)
@@ -600,26 +831,39 @@ func exportConditionBlocks(blocks []analysis.ConditionBlock, ctx *hcl.EvalContex
 	return out
 }
 
-func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
+func exportResource(e analysis.Entity, rc *renderCtx) ExportResource {
 	r := ExportResource{
 		Type:                e.Type,
 		Name:                e.Name,
-		Provider:            exprToExport(e.ProviderExpr, ctx),
-		Count:               exprToExport(e.CountExpr, ctx),
-		ForEach:             exprToExport(e.ForEachExpr, ctx),
-		DependsOn:           exprToExport(e.DependsOnExpr, ctx),
+		Provider:            exprToExport(e.ProviderExpr, rc),
+		Count:               exprToExport(e.CountExpr, rc),
+		ForEach:             exprToExport(e.ForEachExpr, rc),
+		CountKind:           classifyCount(e.CountExpr),
+		ForEachKind:         classifyForEach(e.ForEachExpr, rc),
+		DependsOn:           exprToExport(e.DependsOnExpr, rc),
 		PreventDestroy:      e.PreventDestroy,
 		CreateBeforeDestroy: e.CreateBeforeDestroy,
-		IgnoreChanges:       exprToExport(e.IgnoreChangesExpr, ctx),
-		ReplaceTriggeredBy:  exprToExport(e.ReplaceTriggeredByExpr, ctx),
-		Preconditions:       exportConditionBlocks(e.Preconditions, ctx),
-		Postconditions:      exportConditionBlocks(e.Postconditions, ctx),
+		IgnoreChanges:       exprToExport(e.IgnoreChangesExpr, rc),
+		ReplaceTriggeredBy:  exprToExport(e.ReplaceTriggeredByExpr, rc),
+		Preconditions:       exportConditionBlocks(e.Preconditions, rc, false),
+		Postconditions:      exportConditionBlocks(e.Postconditions, rc, false),
 		Location:            e.Location(),
+	}
+	// Resource-level for_each binds `each.value` / `each.key` for the
+	// entire resource body — including all nested dynamic blocks. Push
+	// the binding so traversals like `each.value.foo` deep inside a
+	// dynamic chain resolve through the same iterator-scope mechanism
+	// dynamic blocks use.
+	bodyRC := rc
+	if e.ForEachExpr != nil && e.ForEachExpr.E != nil {
+		if elem := iteratorElementType(e.ForEachExpr.E, rc); elem != nil {
+			bodyRC = rc.pushIterator(analysis.IteratorScope{Name: "each", ElementType: elem})
+		}
 	}
 	if len(e.BodyAttrs) > 0 {
 		r.Attributes = make(map[string]ExportExpression, len(e.BodyAttrs))
 		for name, expr := range e.BodyAttrs {
-			r.Attributes[name] = *exprToExport(expr, ctx)
+			r.Attributes[name] = *exprToExport(expr, bodyRC)
 		}
 	}
 	if len(e.BodyBlocks) > 0 {
@@ -627,7 +871,7 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 		for name, instances := range e.BodyBlocks {
 			out := make([]ExportBlock, 0, len(instances))
 			for _, b := range instances {
-				out = append(out, exportBlock(b, ctx))
+				out = append(out, exportBlock(b, bodyRC))
 			}
 			r.Blocks[name] = out
 		}
@@ -637,7 +881,7 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 		for name, instances := range e.BodyDynamicBlocks {
 			out := make([]ExportDynamicBlock, 0, len(instances))
 			for _, d := range instances {
-				out = append(out, exportDynamicBlock(d, ctx))
+				out = append(out, exportDynamicBlock(d, bodyRC, name))
 			}
 			r.DynamicBlocks[name] = out
 		}
@@ -648,7 +892,7 @@ func exportResource(e analysis.Entity, ctx *hcl.EvalContext) ExportResource {
 // exportBlock recursively converts a *analysis.BodyBlock into an
 // ExportBlock. Mirrors the parent-resource shape (attributes +
 // nested blocks) so consumers walk one type at every depth.
-func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
+func exportBlock(b *analysis.BodyBlock, rc *renderCtx) ExportBlock {
 	out := ExportBlock{}
 	if b == nil {
 		return out
@@ -659,7 +903,7 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 	if len(b.Attrs) > 0 {
 		out.Attributes = make(map[string]ExportExpression, len(b.Attrs))
 		for name, expr := range b.Attrs {
-			out.Attributes[name] = *exprToExport(expr, ctx)
+			out.Attributes[name] = *exprToExport(expr, rc)
 		}
 	}
 	if len(b.Blocks) > 0 {
@@ -667,7 +911,7 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 		for name, instances := range b.Blocks {
 			children := make([]ExportBlock, 0, len(instances))
 			for _, c := range instances {
-				children = append(children, exportBlock(c, ctx))
+				children = append(children, exportBlock(c, rc))
 			}
 			out.Blocks[name] = children
 		}
@@ -677,7 +921,7 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 		for name, instances := range b.DynamicBlocks {
 			children := make([]ExportDynamicBlock, 0, len(instances))
 			for _, d := range instances {
-				children = append(children, exportDynamicBlock(d, ctx))
+				children = append(children, exportDynamicBlock(d, rc, name))
 			}
 			out.DynamicBlocks[name] = children
 		}
@@ -694,47 +938,97 @@ func exportBlock(b *analysis.BodyBlock, ctx *hcl.EvalContext) ExportBlock {
 // statically — converters need the structural shape to translate
 // to the target system's iteration primitive (kro for-each, crossplane
 // composition, …).
-func exportDynamicBlock(d *analysis.BodyDynamicBlock, ctx *hcl.EvalContext) ExportDynamicBlock {
+func exportDynamicBlock(d *analysis.BodyDynamicBlock, rc *renderCtx, label string) ExportDynamicBlock {
 	out := ExportDynamicBlock{
-		ForEach:  exprToExport(d.ForEach, ctx),
-		Iterator: d.Iterator,
+		ForEach:     exprToExport(d.ForEach, rc),
+		ForEachKind: classifyForEach(d.ForEach, rc),
+		Iterator:    d.Iterator,
 	}
 	if d.Pos.File != "" {
 		out.Location = filepath.Base(d.Pos.File) + ":" + strconv.Itoa(d.Pos.Line)
 	}
+	// The iterator name defaults to the block label when the source
+	// doesn't explicitly rename via `iterator = <name>`. Push it onto
+	// the renderCtx so references to `<iter>.value(.path)` inside the
+	// content body resolve through the for_each source's element type.
+	iterName := d.Iterator
+	if iterName == "" {
+		iterName = label
+	}
+	contentRC := rc
+	if d.ForEach != nil && d.ForEach.E != nil {
+		if elem := iteratorElementType(d.ForEach.E, rc); elem != nil {
+			contentRC = rc.pushIterator(analysis.IteratorScope{Name: iterName, ElementType: elem})
+		}
+	}
 	if d.Content != nil {
-		out.Content = exportBlock(d.Content, ctx)
+		out.Content = exportBlock(d.Content, contentRC)
 	}
 	return out
 }
 
-func exportLocal(e analysis.Entity, ctx *hcl.EvalContext) ExportLocal {
-	return ExportLocal{
+func exportLocal(e analysis.Entity, rc *renderCtx) ExportLocal {
+	out := ExportLocal{
 		Name:     e.Name,
-		Value:    exprToExport(e.LocalExpr, ctx),
+		Value:    exprToExport(e.LocalExpr, rc),
 		Location: e.Location(),
 	}
+	deps, cycle := transitiveLocalRefs(e, rc.m)
+	out.DependsOn = deps
+	out.Cycle = cycle
+	if e.LocalExpr != nil && e.LocalExpr.E != nil {
+		if t := resolveExprType(e.LocalExpr.E, rc); t != nil && t.HasCty() {
+			if raw, err := ctyjson.MarshalType(t.Cty); err == nil {
+				out.InferredType = raw
+			}
+		}
+	}
+	return out
 }
 
-func exportModuleCall(e analysis.Entity, m *analysis.Module, ctx *hcl.EvalContext) ExportModuleCall {
+func exportModuleCall(e analysis.Entity, rc *renderCtx) ExportModuleCall {
 	c := ExportModuleCall{
-		Name:     e.Name,
-		Source:   m.ModuleSource(e.Name),
-		Version:  m.ModuleVersion(e.Name),
-		Count:    exprToExport(e.CountExpr, ctx),
-		ForEach:  exprToExport(e.ForEachExpr, ctx),
-		Location: e.Location(),
+		Name:        e.Name,
+		Source:      rc.m.ModuleSource(e.Name),
+		Version:     rc.m.ModuleVersion(e.Name),
+		Count:       exprToExport(e.CountExpr, rc),
+		ForEach:     exprToExport(e.ForEachExpr, rc),
+		CountKind:   classifyCount(e.CountExpr),
+		ForEachKind: classifyForEach(e.ForEachExpr, rc),
+		Location:    e.Location(),
+	}
+	// childMod is the analysed child module (when loaded) — used to
+	// pull each argument's declared variable_type into the wire shape
+	// so converters don't have to resolve module sources themselves.
+	// Nil when the child wasn't loaded (offline runs / unresolvable
+	// source), in which case child_variable_type is omitted per arg.
+	var childMod *analysis.Module
+	if rc.children != nil {
+		if cn, ok := rc.children[e.Name]; ok && cn != nil {
+			childMod = cn.Module
+		}
 	}
 	if len(e.ModuleArgs) > 0 {
-		c.Arguments = make(map[string]ExportExpression, len(e.ModuleArgs))
+		c.Arguments = make(map[string]ExportModuleCallArgument, len(e.ModuleArgs))
 		for k, v := range e.ModuleArgs {
-			c.Arguments[k] = *exprToExport(v, ctx)
+			arg := ExportModuleCallArgument{ExportExpression: *exprToExport(v, rc)}
+			if childMod != nil {
+				if cv, ok := childMod.EntityByID((analysis.Entity{Kind: analysis.KindVariable, Name: k}).ID()); ok {
+					if cv.DeclaredType != nil && cv.DeclaredType.HasCty() {
+						if raw, err := ctyjson.MarshalType(cv.DeclaredType.Cty); err == nil {
+							arg.ChildVariableType = raw
+						}
+					}
+				}
+			}
+			c.Arguments[k] = arg
 		}
 	}
 	return c
 }
 
-func exportTerraform(m *analysis.Module, ctx *hcl.EvalContext) ExportTerraform {
+func exportTerraform(rc *renderCtx) ExportTerraform {
+	m := rc.m
 	t := ExportTerraform{
 		RequiredVersion: m.RequiredVersion(),
 	}
@@ -760,7 +1054,7 @@ func exportTerraform(m *analysis.Module, ctx *hcl.EvalContext) ExportTerraform {
 			if len(p.Config) > 0 {
 				ep.Config = make(map[string]ExportExpression, len(p.Config))
 				for name, expr := range p.Config {
-					ep.Config[name] = *exprToExport(expr, ctx)
+					ep.Config[name] = *exprToExport(expr, rc)
 				}
 			}
 			t.Providers = append(t.Providers, ep)
@@ -769,7 +1063,7 @@ func exportTerraform(m *analysis.Module, ctx *hcl.EvalContext) ExportTerraform {
 	return t
 }
 
-func exportTrackedAttributes(m *analysis.Module, _ *hcl.EvalContext) []ExportTracked {
+func exportTrackedAttributes(m *analysis.Module) []ExportTracked {
 	// Note: TrackedAttribute exposes ExprText (canonical text) but not
 	// the raw expression — that's an internal of pkg/analysis. The
 	// export emits the text only; converters can re-parse if they want

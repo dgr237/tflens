@@ -1,0 +1,542 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.9.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "cross_module_resource_attr",
+    "module": {
+      "variables": [
+        {
+          "name": "name",
+          "type": "string",
+          "variable_type": "string",
+          "has_default": true,
+          "default": {
+            "text": "\"demo\"",
+            "value": {
+              "type": "string",
+              "value": "demo"
+            },
+            "ast": {
+              "node": "literal_value",
+              "value": {
+                "type": "string",
+                "value": "demo"
+              }
+            }
+          },
+          "nullable": true,
+          "location": "main.tf:7"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "child_name",
+          "value": {
+            "text": "module.child.name",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "module",
+                  "step": "root"
+                },
+                {
+                  "name": "child",
+                  "step": "attr"
+                },
+                {
+                  "name": "name",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "modules": [
+                {
+                  "call": "child",
+                  "output": "name"
+                }
+              ]
+            }
+          },
+          "inferred_type": "string",
+          "location": "main.tf:38"
+        },
+        {
+          "name": "child_role_arn",
+          "value": {
+            "text": "module.child.role_arn",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "module",
+                  "step": "root"
+                },
+                {
+                  "name": "child",
+                  "step": "attr"
+                },
+                {
+                  "name": "role_arn",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "modules": [
+                {
+                  "call": "child",
+                  "output": "role_arn"
+                }
+              ]
+            }
+          },
+          "inferred_type": "string",
+          "location": "main.tf:22"
+        },
+        {
+          "name": "grandchild_arn",
+          "value": {
+            "text": "module.child.grandchild_role_arn",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "module",
+                  "step": "root"
+                },
+                {
+                  "name": "child",
+                  "step": "attr"
+                },
+                {
+                  "name": "grandchild_role_arn",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "modules": [
+                {
+                  "call": "child",
+                  "output": "grandchild_role_arn"
+                }
+              ]
+            }
+          },
+          "inferred_type": "string",
+          "location": "main.tf:31"
+        }
+      ],
+      "resources": [],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [
+        {
+          "name": "child",
+          "source": "./child",
+          "arguments": {
+            "name": {
+              "text": "var.name",
+              "value": {
+                "type": "string",
+                "value": "demo"
+              },
+              "ast": {
+                "node": "scope_traversal",
+                "traversal": [
+                  {
+                    "name": "var",
+                    "step": "root"
+                  },
+                  {
+                    "name": "name",
+                    "step": "attr"
+                  }
+                ]
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "name"
+                  }
+                ]
+              },
+              "child_variable_type": "string"
+            }
+          },
+          "location": "main.tf:17"
+        }
+      ],
+      "terraform": {
+        "required_providers": {
+          "aws": {
+            "source": "hashicorp/aws"
+          }
+        }
+      },
+      "tracked_attributes": [],
+      "dependencies": {
+        "module.child": [
+          "variable.name"
+        ],
+        "output.child_name": [
+          "module.child"
+        ],
+        "output.child_role_arn": [
+          "module.child"
+        ],
+        "output.grandchild_arn": [
+          "module.child"
+        ]
+      }
+    },
+    "children": {
+      "child": {
+        "dir": "child",
+        "source": "./child",
+        "module": {
+          "variables": [
+            {
+              "name": "name",
+              "type": "string",
+              "variable_type": "string",
+              "has_default": false,
+              "nullable": true,
+              "location": "main.tf:1"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "grandchild_role_arn",
+              "value": {
+                "text": "module.grandchild.role_arn",
+                "ast": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "module",
+                      "step": "root"
+                    },
+                    {
+                      "name": "grandchild",
+                      "step": "attr"
+                    },
+                    {
+                      "name": "role_arn",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "references": {
+                  "modules": [
+                    {
+                      "call": "grandchild",
+                      "output": "role_arn"
+                    }
+                  ]
+                }
+              },
+              "inferred_type": "string",
+              "location": "main.tf:19"
+            },
+            {
+              "name": "name",
+              "value": {
+                "text": "var.name",
+                "ast": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "var",
+                      "step": "root"
+                    },
+                    {
+                      "name": "name",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "name"
+                    }
+                  ]
+                }
+              },
+              "inferred_type": "string",
+              "location": "main.tf:24"
+            },
+            {
+              "name": "role_arn",
+              "value": {
+                "text": "aws_iam_role.this.arn",
+                "ast": {
+                  "node": "scope_traversal",
+                  "traversal": [
+                    {
+                      "name": "aws_iam_role",
+                      "step": "root"
+                    },
+                    {
+                      "name": "this",
+                      "step": "attr"
+                    },
+                    {
+                      "name": "arn",
+                      "step": "attr"
+                    }
+                  ]
+                },
+                "references": {
+                  "resources": [
+                    {
+                      "type": "aws_iam_role",
+                      "name": "this",
+                      "path": [
+                        "arn"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "inferred_type": "string",
+              "location": "main.tf:14"
+            }
+          ],
+          "resources": [
+            {
+              "type": "aws_iam_role",
+              "name": "this",
+              "attributes": {
+                "assume_role_policy": {
+                  "text": "\"{}\"",
+                  "value": {
+                    "type": "string",
+                    "value": "{}"
+                  },
+                  "ast": {
+                    "node": "literal_value",
+                    "value": {
+                      "type": "string",
+                      "value": "{}"
+                    }
+                  }
+                },
+                "name": {
+                  "text": "var.name",
+                  "ast": {
+                    "node": "scope_traversal",
+                    "traversal": [
+                      {
+                        "name": "var",
+                        "step": "root"
+                      },
+                      {
+                        "name": "name",
+                        "step": "attr"
+                      }
+                    ]
+                  },
+                  "references": {
+                    "variables": [
+                      {
+                        "name": "name"
+                      }
+                    ]
+                  }
+                }
+              },
+              "location": "main.tf:3"
+            }
+          ],
+          "data_sources": [],
+          "locals": [],
+          "module_calls": [
+            {
+              "name": "grandchild",
+              "source": "./grandchild",
+              "arguments": {
+                "name": {
+                  "text": "\"${var.name}-gc\"",
+                  "ast": {
+                    "node": "template",
+                    "parts": [
+                      {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "var",
+                            "step": "root"
+                          },
+                          {
+                            "name": "name",
+                            "step": "attr"
+                          }
+                        ]
+                      },
+                      {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "-gc"
+                        }
+                      }
+                    ]
+                  },
+                  "references": {
+                    "variables": [
+                      {
+                        "name": "name"
+                      }
+                    ]
+                  },
+                  "child_variable_type": "string"
+                }
+              },
+              "location": "main.tf:8"
+            }
+          ],
+          "terraform": {},
+          "tracked_attributes": [],
+          "dependencies": {
+            "module.grandchild": [
+              "variable.name"
+            ],
+            "output.grandchild_role_arn": [
+              "module.grandchild"
+            ],
+            "output.name": [
+              "variable.name"
+            ],
+            "output.role_arn": [
+              "resource.aws_iam_role.this"
+            ],
+            "resource.aws_iam_role.this": [
+              "variable.name"
+            ]
+          }
+        },
+        "children": {
+          "grandchild": {
+            "dir": "grandchild",
+            "source": "./grandchild",
+            "module": {
+              "variables": [
+                {
+                  "name": "name",
+                  "type": "string",
+                  "variable_type": "string",
+                  "has_default": false,
+                  "nullable": true,
+                  "location": "main.tf:1"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "role_arn",
+                  "value": {
+                    "text": "aws_iam_role.this.arn",
+                    "ast": {
+                      "node": "scope_traversal",
+                      "traversal": [
+                        {
+                          "name": "aws_iam_role",
+                          "step": "root"
+                        },
+                        {
+                          "name": "this",
+                          "step": "attr"
+                        },
+                        {
+                          "name": "arn",
+                          "step": "attr"
+                        }
+                      ]
+                    },
+                    "references": {
+                      "resources": [
+                        {
+                          "type": "aws_iam_role",
+                          "name": "this",
+                          "path": [
+                            "arn"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "inferred_type": "string",
+                  "location": "main.tf:8"
+                }
+              ],
+              "resources": [
+                {
+                  "type": "aws_iam_role",
+                  "name": "this",
+                  "attributes": {
+                    "assume_role_policy": {
+                      "text": "\"{}\"",
+                      "value": {
+                        "type": "string",
+                        "value": "{}"
+                      },
+                      "ast": {
+                        "node": "literal_value",
+                        "value": {
+                          "type": "string",
+                          "value": "{}"
+                        }
+                      }
+                    },
+                    "name": {
+                      "text": "var.name",
+                      "ast": {
+                        "node": "scope_traversal",
+                        "traversal": [
+                          {
+                            "name": "var",
+                            "step": "root"
+                          },
+                          {
+                            "name": "name",
+                            "step": "attr"
+                          }
+                        ]
+                      },
+                      "references": {
+                        "variables": [
+                          {
+                            "name": "name"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "location": "main.tf:3"
+                }
+              ],
+              "data_sources": [],
+              "locals": [],
+              "module_calls": [],
+              "terraform": {},
+              "tracked_attributes": [],
+              "dependencies": {
+                "output.role_arn": [
+                  "resource.aws_iam_role.this"
+                ],
+                "resource.aws_iam_role.this": [
+                  "variable.name"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

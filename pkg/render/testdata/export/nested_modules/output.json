@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "nested_modules",
@@ -57,7 +57,15 @@
                     "step": "attr"
                   }
                 ]
-              }
+              },
+              "references": {
+                "variables": [
+                  {
+                    "name": "region"
+                  }
+                ]
+              },
+              "child_variable_type": "string"
             }
           },
           "location": "main.tf:6"
@@ -103,8 +111,16 @@
                       "step": "attr"
                     }
                   ]
+                },
+                "references": {
+                  "variables": [
+                    {
+                      "name": "region"
+                    }
+                  ]
                 }
               },
+              "inferred_type": "string",
               "location": "main.tf:5"
             }
           ],

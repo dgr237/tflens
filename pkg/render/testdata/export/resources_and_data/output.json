@@ -1,7 +1,7 @@
 {
   "_experimental": true,
   "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
-  "schema_version": "0.7.0-prototype",
+  "schema_version": "0.9.0-prototype",
   "tflens_version": "test-version",
   "root": {
     "dir": "resources_and_data",
@@ -44,7 +44,17 @@
               ],
               "name": "toset",
               "node": "function_call"
+            },
+            "references": {
+              "variables": [
+                {
+                  "name": "regions"
+                }
+              ]
             }
+          },
+          "for_each_kind": {
+            "kind": "set"
           },
           "prevent_destroy": true,
           "ignore_changes": {
@@ -82,6 +92,10 @@
                 "value": 2
               }
             }
+          },
+          "count_kind": {
+            "kind": "scalar",
+            "count_expr_text": "2"
           },
           "location": "main.tf:13"
         }

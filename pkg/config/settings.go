@@ -66,6 +66,14 @@ type Settings struct {
 	// visible alongside the static-analysis findings. Empty means
 	// "no plan supplied".
 	PlanPath string
+	// ProviderSchemaPath is an optional path to a `terraform providers
+	// schema -json` output file. When set, validate / export / diff
+	// run schema-aware passes — most importantly attribute-reference
+	// validation (`aws_subnet.x.typo` flagged), and the export's
+	// inferred_type fields populate for resource-attribute references
+	// like `aws_subnet.x.cidr` rather than falling back to unknown.
+	// Empty means "no schema supplied" — every pass behaves as before.
+	ProviderSchemaPath string
 	// Write makes fmt rewrite the input file in place.
 	Write bool
 	// Check makes fmt exit non-zero when the input is not already

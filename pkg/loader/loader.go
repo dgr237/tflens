@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	"github.com/dgr237/tflens/pkg/analysis"
+	"github.com/dgr237/tflens/pkg/providerschema"
 	"github.com/dgr237/tflens/pkg/resolver"
 	"github.com/dgr237/tflens/pkg/token"
 )
@@ -110,8 +111,16 @@ func LoadAny(path string) (*analysis.Module, []FileError, error) {
 }
 
 // Project is a fully loaded Terraform project tree rooted at a single directory.
+//
+// ProviderSchema is optional. When set (typically by the CLI from a
+// `--provider-schema=<path>` flag), it's threaded into the analyser's
+// Resolver so resource/data-source attribute references resolve to
+// their declared cty types — see pkg/analysis/resolver.go and
+// pkg/providerschema. Nil means schema-aware features are disabled,
+// which is the default and matches pre-schema behaviour.
 type Project struct {
-	Root *ModuleNode
+	Root           *ModuleNode
+	ProviderSchema *providerschema.Schema
 }
 
 // ModuleNode is a loaded Terraform module together with its direct child modules.
@@ -119,6 +128,25 @@ type ModuleNode struct {
 	Dir      string
 	Module   *analysis.Module
 	Children map[string]*ModuleNode // keyed by module call name
+}
+
+// AttachProviderSchema installs the provider schema on the project
+// AND runs analysis.CheckResourceAttrRefs against every module in
+// the tree. Called from the CLI after LoadProject when the user
+// supplies `--provider-schema`. No-op when schema is nil.
+//
+// Resource attribute reference errors flow through Module.Validate()
+// alongside the existing undefined-reference findings, so the
+// validate command picks them up without further wiring.
+func (p *Project) AttachProviderSchema(schema *providerschema.Schema) {
+	if p == nil || schema == nil {
+		return
+	}
+	p.ProviderSchema = schema
+	p.Walk(func(n *ModuleNode) bool {
+		analysis.CheckResourceAttrRefs(n.Module, schema)
+		return true
+	})
 }
 
 // Walk calls fn for every module node in the tree (pre-order: root first).

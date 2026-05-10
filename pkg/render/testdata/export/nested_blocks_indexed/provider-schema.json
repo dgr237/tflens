@@ -1,0 +1,37 @@
+{
+  "format_version": "0.2",
+  "provider_schemas": {
+    "registry.terraform.io/hashicorp/aws": {
+      "resource_schemas": {
+        "aws_eks_cluster": {
+          "block": {
+            "attributes": {
+              "name":     {"type": "string", "required": true},
+              "role_arn": {"type": "string", "required": true}
+            },
+            "block_types": {
+              "vpc_config": {
+                "nesting_mode": "list",
+                "max_items":    1,
+                "block": {
+                  "attributes": {
+                    "subnet_ids": {"type": ["list", "string"], "required": true}
+                  }
+                }
+              },
+              "kubernetes_network_config": {
+                "nesting_mode": "list",
+                "max_items":    1,
+                "block": {
+                  "attributes": {
+                    "service_ipv4_cidr": {"type": "string", "optional": true}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

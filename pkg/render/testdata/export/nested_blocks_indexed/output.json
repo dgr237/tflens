@@ -1,0 +1,269 @@
+{
+  "_experimental": true,
+  "_warning": "Output shape is experimental and subject to change. Do not depend on field stability across minor versions.",
+  "schema_version": "0.9.0-prototype",
+  "tflens_version": "test-version",
+  "root": {
+    "dir": "nested_blocks_indexed",
+    "module": {
+      "variables": [],
+      "outputs": [
+        {
+          "name": "cluster_name",
+          "value": {
+            "text": "aws_eks_cluster.this.name",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "aws_eks_cluster",
+                  "step": "root"
+                },
+                {
+                  "name": "this",
+                  "step": "attr"
+                },
+                {
+                  "name": "name",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "resources": [
+                {
+                  "type": "aws_eks_cluster",
+                  "name": "this",
+                  "path": [
+                    "name"
+                  ]
+                }
+              ]
+            }
+          },
+          "inferred_type": "string",
+          "location": "main.tf:35"
+        },
+        {
+          "name": "service_cidr",
+          "value": {
+            "text": "aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "aws_eks_cluster",
+                  "step": "root"
+                },
+                {
+                  "name": "this",
+                  "step": "attr"
+                },
+                {
+                  "name": "kubernetes_network_config",
+                  "step": "attr"
+                },
+                {
+                  "key": {
+                    "type": "number",
+                    "value": 0
+                  },
+                  "step": "index"
+                },
+                {
+                  "name": "service_ipv4_cidr",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "resources": [
+                {
+                  "type": "aws_eks_cluster",
+                  "name": "this",
+                  "path": [
+                    "kubernetes_network_config",
+                    "service_ipv4_cidr"
+                  ]
+                }
+              ]
+            }
+          },
+          "inferred_type": "string",
+          "location": "main.tf:24"
+        },
+        {
+          "name": "vpc_block",
+          "value": {
+            "text": "aws_eks_cluster.this.vpc_config",
+            "ast": {
+              "node": "scope_traversal",
+              "traversal": [
+                {
+                  "name": "aws_eks_cluster",
+                  "step": "root"
+                },
+                {
+                  "name": "this",
+                  "step": "attr"
+                },
+                {
+                  "name": "vpc_config",
+                  "step": "attr"
+                }
+              ]
+            },
+            "references": {
+              "resources": [
+                {
+                  "type": "aws_eks_cluster",
+                  "name": "this",
+                  "path": [
+                    "vpc_config"
+                  ]
+                }
+              ]
+            }
+          },
+          "inferred_type": [
+            "list",
+            [
+              "object",
+              {
+                "subnet_ids": [
+                  "list",
+                  "string"
+                ]
+              }
+            ]
+          ],
+          "location": "main.tf:30"
+        }
+      ],
+      "resources": [
+        {
+          "type": "aws_eks_cluster",
+          "name": "this",
+          "attributes": {
+            "name": {
+              "text": "\"demo\"",
+              "value": {
+                "type": "string",
+                "value": "demo"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "demo"
+                }
+              }
+            },
+            "role_arn": {
+              "text": "\"arn:aws:iam::000000000000:role/r\"",
+              "value": {
+                "type": "string",
+                "value": "arn:aws:iam::000000000000:role/r"
+              },
+              "ast": {
+                "node": "literal_value",
+                "value": {
+                  "type": "string",
+                  "value": "arn:aws:iam::000000000000:role/r"
+                }
+              }
+            }
+          },
+          "blocks": {
+            "kubernetes_network_config": [
+              {
+                "attributes": {
+                  "service_ipv4_cidr": {
+                    "text": "\"10.100.0.0/16\"",
+                    "value": {
+                      "type": "string",
+                      "value": "10.100.0.0/16"
+                    },
+                    "ast": {
+                      "node": "literal_value",
+                      "value": {
+                        "type": "string",
+                        "value": "10.100.0.0/16"
+                      }
+                    }
+                  }
+                },
+                "location": "main.tf:15"
+              }
+            ],
+            "vpc_config": [
+              {
+                "attributes": {
+                  "subnet_ids": {
+                    "text": "[\"subnet-1\", \"subnet-2\"]",
+                    "value": {
+                      "type": [
+                        "tuple",
+                        [
+                          "string",
+                          "string"
+                        ]
+                      ],
+                      "value": [
+                        "subnet-1",
+                        "subnet-2"
+                      ]
+                    },
+                    "ast": {
+                      "elements": [
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "subnet-1"
+                          }
+                        },
+                        {
+                          "node": "literal_value",
+                          "value": {
+                            "type": "string",
+                            "value": "subnet-2"
+                          }
+                        }
+                      ],
+                      "node": "tuple_cons"
+                    }
+                  }
+                },
+                "location": "main.tf:11"
+              }
+            ]
+          },
+          "location": "main.tf:7"
+        }
+      ],
+      "data_sources": [],
+      "locals": [],
+      "module_calls": [],
+      "terraform": {
+        "required_providers": {
+          "aws": {
+            "source": "hashicorp/aws"
+          }
+        }
+      },
+      "tracked_attributes": [],
+      "dependencies": {
+        "output.cluster_name": [
+          "resource.aws_eks_cluster.this"
+        ],
+        "output.service_cidr": [
+          "resource.aws_eks_cluster.this"
+        ],
+        "output.vpc_block": [
+          "resource.aws_eks_cluster.this"
+        ]
+      }
+    }
+  }
+}

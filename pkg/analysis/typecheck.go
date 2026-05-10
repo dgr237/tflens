@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
@@ -500,16 +501,226 @@ func typeCheckBodies(m *Module, file *File) {
 
 func (m *Module) checkForEach(entityID string, attr *hclsyntax.Attribute) {
 	t := m.inferValueType(attr.Expr)
-	if isForEachCompatible(t) {
+	if !isForEachCompatible(t) {
+		m.typeErrs = append(m.typeErrs, TypeCheckError{
+			EntityID: entityID,
+			Attr:     "for_each",
+			Pos:      posFromRange(attr.Expr.Range()),
+			Msg: fmt.Sprintf("for_each must be a map or set, got %s (in %s)",
+				t, entityID),
+		})
 		return
 	}
-	m.typeErrs = append(m.typeErrs, TypeCheckError{
-		EntityID: entityID,
-		Attr:     "for_each",
-		Pos:      posFromRange(attr.Expr.Range()),
-		Msg: fmt.Sprintf("for_each must be a map or set, got %s (in %s)",
-			t, entityID),
-	})
+	// Top-level §7 conditional rule: catch ternary-fallback patterns
+	// that pass the basic type check but smuggle a single value where
+	// a collection was clearly intended (the empty-`[]` fallback names
+	// the user's expectation). Iterator-scope cases inside dynamic
+	// blocks aren't handled here — they need the per-block scope stack
+	// the export-side classifier maintains. Top-level resource for_each
+	// is the most common surface and the easiest gain.
+	if err := m.checkForEachConditionalShape(entityID, attr.Expr); err != nil {
+		m.typeErrs = append(m.typeErrs, *err)
+	}
+}
+
+// checkForEachConditionalShape applies the §7 conditional rule to a
+// resource/data/module's `for_each` expression. Recognises ternaries
+// where one branch is an empty list `[]` or empty object `{}` literal
+// (the fallback shape that names the user's expected iteration kind)
+// and flags the case where the non-empty branch resolves to a
+// non-collection type. Mirrors the export-side classifyConditionalForEach
+// rule but emits a TypeCheckError instead of an export-shape kind.
+//
+// Returns nil when the expression isn't a recognised ternary shape, or
+// when the non-empty branch's type can't be statically resolved
+// (TypeUnknown / TypeAny — the conservative interpretation: don't
+// false-positive on inputs we can't verify).
+func (m *Module) checkForEachConditionalShape(entityID string, expr hclsyntax.Expression) *TypeCheckError {
+	cond, ok := expr.(*hclsyntax.ConditionalExpr)
+	if !ok {
+		return nil
+	}
+	tEmptyTup := isEmptyTupleLit(cond.TrueResult)
+	fEmptyTup := isEmptyTupleLit(cond.FalseResult)
+	tEmptyObj := isEmptyObjectLit(cond.TrueResult)
+	fEmptyObj := isEmptyObjectLit(cond.FalseResult)
+
+	var nonEmpty hclsyntax.Expression
+	var expected string
+	switch {
+	case tEmptyTup && fEmptyTup, tEmptyObj && fEmptyObj:
+		// Both branches empty — degenerate, just an empty iteration
+		return nil
+	case tEmptyTup || fEmptyTup:
+		expected = "list"
+		nonEmpty = cond.TrueResult
+		if tEmptyTup {
+			nonEmpty = cond.FalseResult
+		}
+	case tEmptyObj || fEmptyObj:
+		expected = "object"
+		nonEmpty = cond.TrueResult
+		if tEmptyObj {
+			nonEmpty = cond.FalseResult
+		}
+	default:
+		return nil
+	}
+
+	nt := m.inferTraversalType(nonEmpty)
+	if nt == nil || nt.Kind == TypeUnknown || nt.Kind == TypeAny {
+		return nil
+	}
+
+	switch {
+	case expected == "list" && nt.Kind == TypeObject:
+		return &TypeCheckError{
+			EntityID: entityID,
+			Attr:     "for_each",
+			Pos:      posFromRange(expr.Range()),
+			Msg: fmt.Sprintf("for_each ternary's non-empty branch is a single object but fallback is empty list — Terraform would iterate the object's attributes, not a collection (in %s); wrap as [X] if a single-element iteration was intended",
+				entityID),
+		}
+	case expected == "list" && (nt.Kind == TypeString || nt.Kind == TypeNumber || nt.Kind == TypeBool):
+		return &TypeCheckError{
+			EntityID: entityID,
+			Attr:     "for_each",
+			Pos:      posFromRange(expr.Range()),
+			Msg: fmt.Sprintf("for_each ternary's non-empty branch is a %s but fallback is empty list — single value used where a collection is required (in %s)",
+				typeKindFriendly(nt.Kind), entityID),
+		}
+	case expected == "object" && (nt.Kind == TypeString || nt.Kind == TypeNumber || nt.Kind == TypeBool):
+		return &TypeCheckError{
+			EntityID: entityID,
+			Attr:     "for_each",
+			Pos:      posFromRange(expr.Range()),
+			Msg: fmt.Sprintf("for_each ternary's non-empty branch is a %s but fallback is empty object — Terraform expects a map or object (in %s)",
+				typeKindFriendly(nt.Kind), entityID),
+		}
+	}
+	return nil
+}
+
+// inferTraversalType is the index-aware counterpart of inferValueType.
+// Where inferValueType uses traversalParts (which truncates at the
+// first non-attr step), this walks every step in order so shapes like
+// `var.X["primary"].field` resolve to the field's type instead of
+// stopping at the index. Same scope as inferValueType — only `var.X`
+// roots are resolved against declared types; iterator-scope and
+// local-recursion are deferred to the export-side resolver.
+//
+// Returns TypeUnknown for any non-traversal expression or for
+// traversals whose root isn't `var`.
+func (m *Module) inferTraversalType(expr hclsyntax.Expression) *TFType {
+	if t := InferLiteralType(expr); t != nil && t.Kind != TypeUnknown {
+		return t
+	}
+	stv, ok := expr.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(stv.Traversal) < 2 {
+		return &TFType{Kind: TypeUnknown}
+	}
+	root, ok := stv.Traversal[0].(hcl.TraverseRoot)
+	if !ok || root.Name != "var" {
+		return &TFType{Kind: TypeUnknown}
+	}
+	nameStep, ok := stv.Traversal[1].(hcl.TraverseAttr)
+	if !ok {
+		return &TFType{Kind: TypeUnknown}
+	}
+	v, ok := m.byID[(Entity{Kind: KindVariable, Name: nameStep.Name}).ID()]
+	if !ok || v.DeclaredType == nil {
+		return &TFType{Kind: TypeUnknown}
+	}
+	return descendTraversal(v.DeclaredType, stv.Traversal[2:])
+}
+
+// descendTraversal walks the post-prefix steps of a traversal into a
+// declared type, descending through attribute steps (object fields,
+// map elements) and index steps (list/map/set elements, tuple
+// positions, object fields by string-literal key). Returns TypeUnknown
+// when any step doesn't apply to the current type.
+func descendTraversal(cur *TFType, steps []hcl.Traverser) *TFType {
+	for _, step := range steps {
+		if cur == nil {
+			return &TFType{Kind: TypeUnknown}
+		}
+		switch s := step.(type) {
+		case hcl.TraverseAttr:
+			switch cur.Kind {
+			case TypeObject:
+				cur = cur.Fields[s.Name]
+			case TypeMap:
+				cur = cur.Elem
+			case TypeAny:
+				return &TFType{Kind: TypeAny}
+			default:
+				return &TFType{Kind: TypeUnknown}
+			}
+		case hcl.TraverseIndex:
+			switch cur.Kind {
+			case TypeMap, TypeList, TypeSet:
+				cur = cur.Elem
+			case TypeObject:
+				if s.Key.Type() == cty.String && !s.Key.IsNull() && s.Key.IsKnown() {
+					cur = cur.Fields[s.Key.AsString()]
+				} else {
+					return &TFType{Kind: TypeUnknown}
+				}
+			case TypeTuple:
+				if s.Key.Type() == cty.Number && !s.Key.IsNull() && s.Key.IsKnown() {
+					n, _ := s.Key.AsBigFloat().Int64()
+					if n >= 0 && int(n) < len(cur.Elems) {
+						cur = cur.Elems[n]
+					} else {
+						return &TFType{Kind: TypeUnknown}
+					}
+				} else {
+					return &TFType{Kind: TypeUnknown}
+				}
+			case TypeAny:
+				return &TFType{Kind: TypeAny}
+			default:
+				return &TFType{Kind: TypeUnknown}
+			}
+		default:
+			return &TFType{Kind: TypeUnknown}
+		}
+	}
+	if cur == nil {
+		return &TFType{Kind: TypeUnknown}
+	}
+	return cur
+}
+
+// isEmptyTupleLit reports whether expr is the literal `[]`. Used by
+// checkForEachConditionalShape to recognise the fallback branch.
+func isEmptyTupleLit(expr hclsyntax.Expression) bool {
+	t, ok := expr.(*hclsyntax.TupleConsExpr)
+	return ok && len(t.Exprs) == 0
+}
+
+// isEmptyObjectLit reports whether expr is the literal `{}`. Used by
+// checkForEachConditionalShape when the expected shape is object/map.
+func isEmptyObjectLit(expr hclsyntax.Expression) bool {
+	o, ok := expr.(*hclsyntax.ObjectConsExpr)
+	return ok && len(o.Items) == 0
+}
+
+// typeKindFriendly returns the user-facing name of a scalar type kind.
+// Only used in checkForEachConditionalShape error messages — TFType
+// has String() but it returns "string" / "number" / "bool" already
+// for these cases, so this is essentially a guard against rendering
+// an unexpected kind into the message.
+func typeKindFriendly(k TypeKind) string {
+	switch k {
+	case TypeString:
+		return "string"
+	case TypeNumber:
+		return "number"
+	case TypeBool:
+		return "bool"
+	}
+	return "scalar"
 }
 
 func (m *Module) checkCount(entityID string, attr *hclsyntax.Attribute) {
@@ -580,6 +791,103 @@ func descendDeclaredType(t *TFType, attrPath []string) *TFType {
 		}
 	}
 	return cur
+}
+
+// typeCheckDynamicBlocks walks every resource/data entity's nested
+// dynamic blocks with a Resolver carrying the iterator-scope chain.
+// For each dynamic block's `for_each` expression, calls
+// Resolver.ClassifyForEach and emits a TypeCheckError when the
+// classification is "invalid" (the §7 conditional-rule mismatch or
+// the singleton-object cascade).
+//
+// The iterator stack is built top-down: each resource pushes an
+// `each` binding when it has resource-level for_each; each dynamic
+// block pushes a binding named after its iterator (defaulting to
+// the block label) before recursing into content. This is exactly
+// the same scope chain the export-side classifier uses, so the
+// classification surface at validate matches what consumers see in
+// the export's for_each_kind field.
+//
+// Module-call dynamic blocks aren't currently typechecked (Terraform
+// doesn't allow `dynamic` inside module blocks).
+func typeCheckDynamicBlocks(m *Module) {
+	resolver := m.Resolver()
+	for _, e := range m.entities {
+		if e.Kind != KindResource && e.Kind != KindData {
+			continue
+		}
+		bodyResolver := resolver
+		if e.HasForEach && e.ForEachExpr != nil && e.ForEachExpr.E != nil {
+			if elem := resolver.IteratorElementType(e.ForEachExpr.E); elem != nil {
+				bodyResolver = resolver.PushIterator(IteratorScope{Name: "each", ElementType: elem})
+			}
+		}
+		for name, instances := range e.BodyDynamicBlocks {
+			for _, d := range instances {
+				m.checkDynamicBlock(e.ID(), name, d, bodyResolver)
+			}
+		}
+		for _, instances := range e.BodyBlocks {
+			for _, b := range instances {
+				m.checkBodyBlockDynamics(e.ID(), b, bodyResolver)
+			}
+		}
+	}
+}
+
+// checkBodyBlockDynamics descends into a static nested block's own
+// dynamic blocks, recursively. Static blocks don't bind iterators
+// themselves (nothing on the body resolves through them), so the
+// resolver passes through unchanged.
+func (m *Module) checkBodyBlockDynamics(entityID string, b *BodyBlock, resolver *Resolver) {
+	if b == nil {
+		return
+	}
+	for name, instances := range b.DynamicBlocks {
+		for _, d := range instances {
+			m.checkDynamicBlock(entityID, name, d, resolver)
+		}
+	}
+	for _, instances := range b.Blocks {
+		for _, sub := range instances {
+			m.checkBodyBlockDynamics(entityID, sub, resolver)
+		}
+	}
+}
+
+// checkDynamicBlock validates one dynamic block's for_each and
+// recurses into its content. The iterator binding is pushed before
+// descending so nested dynamic blocks resolve `<iter>.value(.path)`
+// references through this block's element type. Iterator name
+// defaults to the block label when not explicitly renamed.
+func (m *Module) checkDynamicBlock(entityID, label string, d *BodyDynamicBlock, resolver *Resolver) {
+	if d == nil {
+		return
+	}
+	if d.ForEach != nil && d.ForEach.E != nil {
+		if c := resolver.ClassifyForEach(d.ForEach); c != nil && c.Kind == "invalid" {
+			m.typeErrs = append(m.typeErrs, TypeCheckError{
+				EntityID: entityID,
+				Attr:     "for_each",
+				Pos:      posFromRange(d.ForEach.E.Range()),
+				Msg: fmt.Sprintf("dynamic %q for_each %s (in %s)",
+					label, c.Reason, entityID),
+			})
+		}
+	}
+	contentResolver := resolver
+	if d.ForEach != nil && d.ForEach.E != nil {
+		iterName := d.Iterator
+		if iterName == "" {
+			iterName = label
+		}
+		if elem := resolver.IteratorElementType(d.ForEach.E); elem != nil {
+			contentResolver = resolver.PushIterator(IteratorScope{Name: iterName, ElementType: elem})
+		}
+	}
+	if d.Content != nil {
+		m.checkBodyBlockDynamics(entityID, d.Content, contentResolver)
+	}
 }
 
 // blockEntityID returns the canonical entity ID for a resource/data/module
