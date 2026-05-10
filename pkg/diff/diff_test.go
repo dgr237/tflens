@@ -678,6 +678,24 @@ var diffCases = []diffCase{
 		WantKind: diff.Breaking,
 	},
 
+	// ---- force-new attribute classifier (pkg/forcenew table) ----
+	{
+		Name:           "force_new_top_level_attr_changed",
+		Subject:        "resource.aws_eks_cluster.primary",
+		WantKind:       diff.Breaking,
+		DetailContains: []string{"force-replace", "role_arn", "destroy + recreate"},
+	},
+	{
+		Name:           "force_new_nested_block_attr_changed",
+		Subject:        "resource.aws_eks_cluster.primary",
+		WantKind:       diff.Breaking,
+		DetailContains: []string{"force-replace", "kubernetes_network_config.service_ipv4_cidr"},
+	},
+	{
+		Name:          "force_new_non_immutable_attr_changed",
+		WantNoChanges: true,
+	},
+
 	// ---- sorting ----
 	{
 		Name: "changes_sorted_breaking_first",
