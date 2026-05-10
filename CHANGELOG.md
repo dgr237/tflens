@@ -4,6 +4,8 @@ All notable changes to tflens are documented here. The format is loosely based o
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-05-10
+
 ### Added
 
 - **`tflens diff`: classify resource attribute changes as Breaking when the underlying attribute forces destroy+recreate.** New `pkg/forcenew` package carries an embedded force-new attribute table (1004 resource types, 4632 attribute paths, ~270 KB JSON) extracted from a Crossplane runtime IR by `internal/tools/cpir-extract`. The diff classifier now emits a `Breaking` change with `Source: "force-new"` when an in-HCL attribute value differs and the path is in the table — e.g. `aws_eks_cluster.role_arn` or nested `kubernetes_network_config.service_ipv4_cidr`. Walks static nested blocks (first-instance pairing for repeated blocks); skips dynamic blocks. Removes the previous reliance on `# tflens:track` markers to approximate ForceNew for the resource types upjet covers. Extraction unions specSchema's `forceNew: true` paths with `externalName.identifierFields` / `omittedFields` so identity attributes Crossplane elides from spec (e.g. `aws_eks_cluster.name`) are still classified. `region`, empty strings, and the malformed `_prefix` token are filtered. Resources outside the table return `known=false` from `forcenew.IsForceNew`, leaving downstream classifiers to decide whether to treat unknowns as safe or to ask for an override.
@@ -341,7 +343,8 @@ First tagged release of tflens — a static Terraform analyser focused on breaki
 - **Fix hints** on Breaking changes with the conventional fix (e.g. required-variable-added → suggest `default = ...`, resource removed → suggest `removed {}` block, backend changes → `terraform init -migrate-state`).
 - **Private registry credentials** from `~/.terraformrc` (`$TF_CLI_CONFIG_FILE`, `%APPDATA%\terraform.rc` on Windows). Tokens are sent only to host-exact matches — never leaked across redirects to a third-party CDN.
 
-[Unreleased]: https://github.com/dgr237/tflens/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/dgr237/tflens/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/dgr237/tflens/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/dgr237/tflens/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/dgr237/tflens/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/dgr237/tflens/compare/v0.16.2...v0.16.3
