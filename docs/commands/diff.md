@@ -148,6 +148,8 @@ The classifier walks static nested blocks (first-instance pairing for repeated b
 - **In-place but disruptive changes** (an EKS `cluster_version` bump, an RDS `engine_version` jump) are NOT in the force-new table — they don't destroy+recreate, just update with consequences. Use [`# tflens:track` markers](tracked-attributes.md) for these.
 - **Non-upjet providers** (Azure, GCP, Snowflake, Datadog, …) aren't in the embedded table. The override flag is the workaround.
 
+> **Not the same as `--provider-schema`.** tflens also accepts a separate `--provider-schema path/to/schema.json` flag pointing at the output of `terraform providers schema -json`. That flag enables resource-attribute name validation (catching typos like `aws_vpc.cidr-block`) and richer type inference for cross-module references — but the Terraform schema-json format does NOT include force-new metadata, so it can't drive the breaking-change classifier here. The two flags are complementary: `--provider-schema` for validation/types, `--immutable-table-override` for force-new classification.
+
 ## Plan enrichment
 
 `tflens diff` is fundamentally a static analyser. The embedded force-new table covers the *attribute-is-immutable* case for upjet-supported resources, but other attribute changes (`cidr_block = "10.0.0.0/16"` → `"10.1.0.0/16"`, `instance_type` modifications on resources outside the table) are still invisible. The `--enrich-with-plan` flag bridges that gap by reading the JSON output of `terraform show -json <plan>`:
